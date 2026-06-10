@@ -1,0 +1,47 @@
+[
+  {
+    "id": "cf_001",
+    "data": "2026-05-31",
+    "descricao": "Reserva de caixa — Fechamento Maio/2026",
+    "origem": "Fechamento Automático",
+    "tipo": "entrada_automatica",
+    "valor": 1112.40,
+    "saldoAcumulado": 1112.40
+  },
+  {
+    "id": "cf_002",
+    "data": "2026-06-01",
+    "descricao": "Aporte inicial dos sócios",
+    "origem": "Manual",
+    "tipo": "entrada_manual",
+    "valor": 5000,
+    "saldoAcumulado": 6112.40
+  },
+  {
+    "id": "cf_003",
+    "data": "2026-06-03",
+    "descricao": "Reembolso — Bruno Ferreira (Mentoria Elite)",
+    "origem": "Reembolso Automático",
+    "tipo": "saida_reembolso",
+    "valor": 1497,
+    "saldoAcumulado": 4615.40
+  },
+  {
+    "id": "cf_004",
+    "data": "2026-06-05",
+    "descricao": "Pagamento Contador",
+    "origem": "Manual",
+    "tipo": "saida_manual",
+    "valor": 900,
+    "saldoAcumulado": 3715.40
+  },
+  {
+    "id": "cf_005",
+    "data": "2026-06-07",
+    "descricao": "Receita avulsa — Consultoria",
+    "origem": "Manual",
+    "tipo": "entrada_manual",
+    "valor": 2500,
+    "saldoAcumulado": 6215.40
+  }
+]

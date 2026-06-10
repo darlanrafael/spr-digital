@@ -1,0 +1,42 @@
+[
+  {
+    "id": "prod_1",
+    "nome": "Curso Tráfego Pago Pro",
+    "plataforma": "Kiwify",
+    "aliquota": 13,
+    "projetoId": "proj_1",
+    "preco": 997
+  },
+  {
+    "id": "prod_2",
+    "nome": "Mentoria Elite — Mensal",
+    "plataforma": "Hubla",
+    "aliquota": 13,
+    "projetoId": "proj_2",
+    "preco": 1497
+  },
+  {
+    "id": "prod_3",
+    "nome": "Ebook Ads Masterclass",
+    "plataforma": "Kiwify",
+    "aliquota": 3,
+    "projetoId": "proj_3",
+    "preco": 47
+  },
+  {
+    "id": "prod_4",
+    "nome": "Curso Tráfego Pago Pro — Upsell",
+    "plataforma": "Kiwify",
+    "aliquota": 13,
+    "projetoId": "proj_1",
+    "preco": 497
+  },
+  {
+    "id": "prod_5",
+    "nome": "Mentoria Elite — Trimestral",
+    "plataforma": "Hubla",
+    "aliquota": 13,
+    "projetoId": "proj_2",
+    "preco": 3997
+  }
+]

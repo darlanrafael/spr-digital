@@ -1,0 +1,58 @@
+[
+  {
+    "id": "close_1",
+    "data": "2026-05-31",
+    "periodo": { "inicio": "2026-05-01", "fim": "2026-05-31" },
+    "faturamentoBruto": 28450,
+    "impostos": 3298,
+    "taxasPlataforma": 1764,
+    "faturamentoLiquido": 23388,
+    "custosTotais": 19680,
+    "lucroBruto": 3708,
+    "reservaCaixa": 1112.4,
+    "lucroReal": 2595.6,
+    "socios": [
+      { "nome": "Rafael", "percentual": 50, "valor": 1297.8 },
+      { "nome": "Pedro Roncada", "percentual": 50, "valor": 1297.8 }
+    ],
+    "compradores": [
+      {
+        "id": "sale_b1",
+        "nome": "Ana Maria Silva",
+        "email": "ana.maria@gmail.com",
+        "cpf": "123.456.789-00",
+        "produto": "Curso Tráfego Pago Pro",
+        "valor": 997,
+        "status": "ok"
+      },
+      {
+        "id": "sale_b2",
+        "nome": "Bruno Ferreira",
+        "email": "bruno.f@hotmail.com",
+        "cpf": "987.654.321-00",
+        "produto": "Mentoria Elite — Mensal",
+        "valor": 1497,
+        "status": "reembolso",
+        "dataReembolso": "2026-06-03"
+      },
+      {
+        "id": "sale_b3",
+        "nome": "Carla Rodrigues",
+        "email": "carla.r@gmail.com",
+        "cpf": "456.789.123-00",
+        "produto": "Ebook Ads Masterclass",
+        "valor": 47,
+        "status": "ok"
+      }
+    ],
+    "alertas": [
+      {
+        "compradorId": "sale_b2",
+        "nome": "Bruno Ferreira",
+        "produto": "Mentoria Elite — Mensal",
+        "data": "2026-06-03",
+        "valor": 1497
+      }
+    ]
+  }
+]

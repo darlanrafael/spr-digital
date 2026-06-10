@@ -1,0 +1,26 @@
+[
+  {
+    "id": "proj_1",
+    "nome": "Curso Tráfego Pago Pro",
+    "descricao": "Curso completo de tráfego pago",
+    "ativo": true,
+    "gestorId": "pedro@spr.com",
+    "cor": "#6366f1"
+  },
+  {
+    "id": "proj_2",
+    "nome": "Mentoria Elite",
+    "descricao": "Programa de mentoria individual",
+    "ativo": true,
+    "gestorId": "rafael@spr.com",
+    "cor": "#10b981"
+  },
+  {
+    "id": "proj_3",
+    "nome": "Ebook Ads Masterclass",
+    "descricao": "Ebook sobre Meta Ads avançado",
+    "ativo": true,
+    "gestorId": "pedro@spr.com",
+    "cor": "#f59e0b"
+  }
+]
