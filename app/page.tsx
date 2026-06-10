@@ -13,6 +13,11 @@ import {
   formatCurrency, formatDate, getSaleBruto, getAliquotaByPreco,
   getCurrentWeekRange,
 } from '@/lib/formatters'
+import {
+  upsertMetaAds, addFixedCost as svcAddFixed, updateFixedCost as svcUpdateFixed,
+  deleteFixedCost as svcDeleteFixed, addCost as svcAddVar, updateCost as svcUpdateVar,
+  deleteCost as svcDeleteVar,
+} from '@/lib/services'
 import { FixedCost, VariableCost } from '@/types'
 
 type PeriodFilter = 'today' | 'week' | 'month' | 'custom'
@@ -169,8 +174,10 @@ function DashboardContent() {
     setTimeout(() => metaAdsRef.current?.focus(), 50)
   }
 
-  function saveMetaAds() {
+  async function saveMetaAds() {
     const val = parseFloat(metaAdsInputVal) || 0
+    const projId = selectedProject === 'all' ? 'proj_1' : selectedProject
+    try { await upsertMetaAds(projId, monthStr, val) } catch (e) { console.error(e) }
     setCosts(prev => {
       const existing = prev.metaAds.findIndex(m => m.mes === monthStr && (selectedProject === 'all' || m.projetoId === selectedProject))
       if (existing >= 0) {
@@ -180,7 +187,7 @@ function DashboardContent() {
       }
       return {
         ...prev,
-        metaAds: [...prev.metaAds, { mes: monthStr, valor: val, projetoId: selectedProject === 'all' ? 'proj_1' : selectedProject }],
+        metaAds: [...prev.metaAds, { mes: monthStr, valor: val, projetoId: projId }],
       }
     })
     setEditingMetaAds(false)
@@ -192,19 +199,22 @@ function DashboardContent() {
     setEditFixedForm({ descricao: c.descricao, valor: String(c.valor) })
   }
 
-  function saveEditFixed(id: string) {
+  async function saveEditFixed(id: string) {
+    const patch = { descricao: editFixedForm.descricao, valor: parseFloat(editFixedForm.valor) || 0 }
+    try { await svcUpdateFixed(id, patch) } catch (e) { console.error(e) }
     setCosts(prev => ({
       ...prev,
-      fixos: prev.fixos.map(c => c.id === id ? { ...c, descricao: editFixedForm.descricao, valor: parseFloat(editFixedForm.valor) || 0 } : c),
+      fixos: prev.fixos.map(c => c.id === id ? { ...c, ...patch } : c),
     }))
     setEditingFixedId(null)
   }
 
-  function deleteFixed(id: string) {
+  async function deleteFixed(id: string) {
+    try { await svcDeleteFixed(id) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, fixos: prev.fixos.filter(c => c.id !== id) }))
   }
 
-  function handleAddFixed(e: React.FormEvent) {
+  async function handleAddFixed(e: React.FormEvent) {
     e.preventDefault()
     const newFixed: FixedCost = {
       id: `cf_${Date.now()}`,
@@ -212,6 +222,7 @@ function DashboardContent() {
       valor: parseFloat(newFixedForm.valor) || 0,
       ativo: true,
     }
+    try { await svcAddFixed(newFixed) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, fixos: [...prev.fixos, newFixed] }))
     setNewFixedForm({ descricao: '', valor: '' })
     setAddingFixed(false)
@@ -223,22 +234,22 @@ function DashboardContent() {
     setEditVarForm({ descricao: c.descricao, valor: String(c.valor), data: c.data })
   }
 
-  function saveEditVar(id: string) {
+  async function saveEditVar(id: string) {
+    const patch = { descricao: editVarForm.descricao, valor: parseFloat(editVarForm.valor) || 0, data: editVarForm.data }
+    try { await svcUpdateVar(id, patch) } catch (e) { console.error(e) }
     setCosts(prev => ({
       ...prev,
-      variaveis: prev.variaveis.map(c => c.id === id
-        ? { ...c, descricao: editVarForm.descricao, valor: parseFloat(editVarForm.valor) || 0, data: editVarForm.data }
-        : c
-      ),
+      variaveis: prev.variaveis.map(c => c.id === id ? { ...c, ...patch } : c),
     }))
     setEditingVarId(null)
   }
 
-  function deleteVar(id: string) {
+  async function deleteVar(id: string) {
+    try { await svcDeleteVar(id) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, variaveis: prev.variaveis.filter(c => c.id !== id) }))
   }
 
-  function handleAddVar(e: React.FormEvent) {
+  async function handleAddVar(e: React.FormEvent) {
     e.preventDefault()
     const newVar: VariableCost = {
       id: `cv_${Date.now()}`,
@@ -247,6 +258,7 @@ function DashboardContent() {
       data: varForm.data,
       projetoId: selectedProject === 'all' ? null : selectedProject,
     }
+    try { await svcAddVar(newVar) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, variaveis: [...prev.variaveis, newVar] }))
     setVarForm({ descricao: '', valor: '', data: '' })
     setShowVarModal(false)

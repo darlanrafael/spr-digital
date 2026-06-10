@@ -9,6 +9,7 @@ import PlatformBadge from '@/components/PlatformBadge'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry } from '@/types'
+import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow } from '@/lib/services'
 
 type Step = 1 | 2 | 3 | 4
 type PageTab = 'novo' | 'historico'
@@ -109,7 +110,7 @@ function FechamentosContent() {
     setSelectedProducts(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     if (!canEdit) return
     const buyers: ClosingBuyer[] = periodSales.map(s => ({
       id: s.id,
@@ -171,6 +172,7 @@ function FechamentosContent() {
         liquido: p.liquido,
       })),
     }
+    try { await svcAddClosing(newClosing, selectedProject) } catch (e) { console.error(e) }
     setClosings(prev => [...prev, newClosing])
 
     const lastBalance = cashflow.length > 0 ? cashflow[cashflow.length - 1].saldoAcumulado : 0
@@ -183,6 +185,7 @@ function FechamentosContent() {
       valor: reservaCaixa,
       saldoAcumulado: lastBalance + reservaCaixa,
     }
+    try { await svcAddCashflow(cfEntry, selectedProject) } catch (e) { console.error(e) }
     setCashflow(prev => [...prev, cfEntry])
 
     setConfirmedClosing(newClosing)

@@ -3,12 +3,18 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { User, Sale, CostsData, Closing, CashflowEntry, Project, Product } from '@/types'
 import { getSession } from '@/lib/auth'
-import salesRaw from '@/data/sales.json'
-import costsRaw from '@/data/costs.json'
-import closingsRaw from '@/data/closings.json'
-import cashflowRaw from '@/data/cashflow.json'
-import projectsRaw from '@/data/projects.json'
-import productsRaw from '@/data/products.json'
+import {
+  getProjects, getProducts, getSales, getAllCosts,
+  getClosings, getCashflow,
+} from '@/lib/services'
+
+// Fallbacks JSON (offline / sem dados no Supabase)
+import salesFallback from '@/data/sales.json'
+import costsFallback from '@/data/costs.json'
+import closingsFallback from '@/data/closings.json'
+import cashflowFallback from '@/data/cashflow.json'
+import projectsFallback from '@/data/projects.json'
+import productsFallback from '@/data/products.json'
 
 interface AppContextType {
   user: User | null
@@ -27,6 +33,8 @@ interface AppContextType {
   setCashflow: React.Dispatch<React.SetStateAction<CashflowEntry[]>>
   isDark: boolean
   toggleTheme: () => void
+  isLoading: boolean
+  reloadData: (projectId?: string) => Promise<void>
 }
 
 const AppContext = createContext<AppContextType | null>(null)
@@ -35,32 +43,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [selectedProject, setSelectedProject] = useState<string>('proj_1')
   const [isDark, setIsDark] = useState(true)
-  const [sales, setSales] = useState<Sale[]>(salesRaw as Sale[])
-  const [costs, setCosts] = useState<CostsData>(costsRaw as CostsData)
-  const [closings, setClosings] = useState<Closing[]>(closingsRaw as Closing[])
-  const [cashflow, setCashflow] = useState<CashflowEntry[]>(cashflowRaw as CashflowEntry[])
-  const projects: Project[] = projectsRaw as Project[]
-  const products: Product[] = productsRaw as Product[]
+  const [isLoading, setIsLoading] = useState(true)
+
+  const [sales, setSales] = useState<Sale[]>([])
+  const [costs, setCosts] = useState<CostsData>({ fixos: [], variaveis: [], metaAds: [] })
+  const [closings, setClosings] = useState<Closing[]>([])
+  const [cashflow, setCashflow] = useState<CashflowEntry[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [products, setProducts] = useState<Product[]>([])
+
+  const reloadData = useCallback(async (projectId?: string) => {
+    const projId = projectId ?? selectedProject
+    setIsLoading(true)
+    try {
+      const [proj, prod, s, c, cl, cf] = await Promise.all([
+        getProjects(),
+        getProducts(projId),
+        getSales(projId),
+        getAllCosts(projId),
+        getClosings(projId),
+        getCashflow(projId),
+      ])
+      setProjects(proj.length > 0 ? proj : projectsFallback as Project[])
+      setProducts(prod.length > 0 ? prod : productsFallback as Product[])
+      setSales(s.length > 0 ? s : salesFallback as Sale[])
+      setCosts({
+        fixos: c.fixos.length > 0 ? c.fixos : costsFallback.fixos,
+        variaveis: c.variaveis.length > 0 ? c.variaveis : costsFallback.variaveis,
+        metaAds: c.metaAds.length > 0 ? c.metaAds : costsFallback.metaAds,
+      })
+      setClosings(cl.length > 0 ? cl : closingsFallback as unknown as Closing[])
+      setCashflow(cf.length > 0 ? cf : cashflowFallback as CashflowEntry[])
+    } catch (err) {
+      console.error('[AppContext] Erro ao carregar Supabase, usando fallback JSON:', err)
+      setProjects(projectsFallback as Project[])
+      setProducts(productsFallback as Product[])
+      setSales(salesFallback as Sale[])
+      setCosts(costsFallback as CostsData)
+      setClosings(closingsFallback as unknown as Closing[])
+      setCashflow(cashflowFallback as CashflowEntry[])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [selectedProject])
 
   useEffect(() => {
     const session = getSession()
     if (session) {
       setUser(session)
+      const projId = session.role === 'gestor' && session.projetoId
+        ? session.projetoId
+        : 'proj_1'
       if (session.role === 'gestor' && session.projetoId) {
         setSelectedProject(session.projetoId)
       }
+      void reloadData(projId)
+    } else {
+      setIsLoading(false)
     }
+
     const saved = localStorage.getItem('spr_theme')
     if (saved === 'light') setIsDark(false)
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const root = document.documentElement
-    if (isDark) {
-      root.classList.add('dark')
-    } else {
-      root.classList.remove('dark')
-    }
+    if (isDark) root.classList.add('dark')
+    else root.classList.remove('dark')
     localStorage.setItem('spr_theme', isDark ? 'dark' : 'light')
   }, [isDark])
 
@@ -77,6 +126,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         closings, setClosings,
         cashflow, setCashflow,
         isDark, toggleTheme,
+        isLoading, reloadData,
       }}
     >
       {children}

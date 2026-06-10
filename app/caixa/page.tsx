@@ -12,6 +12,7 @@ import MetricCard from '@/components/MetricCard'
 import Modal from '@/components/Modal'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { formatCurrency, formatDate, getMonthLabel } from '@/lib/formatters'
+import { addCashflowEntry as svcAddCashflow } from '@/lib/services'
 import { CashflowType } from '@/types'
 
 type CashTab = 'extrato' | 'entradas' | 'saidas'
@@ -70,7 +71,9 @@ function CaixaContent() {
       .map(([month, v]) => ({ name: getMonthLabel(month), ...v }))
   }, [cashflow])
 
-  function handleAdd(e: React.FormEvent) {
+  const { selectedProject } = useApp()
+
+  async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
     const lastBalance = cashflow.length > 0 ? cashflow[cashflow.length - 1].saldoAcumulado : 0
     const val = parseFloat(form.valor)
@@ -84,6 +87,7 @@ function CaixaContent() {
       valor: val,
       saldoAcumulado: isEntrada ? lastBalance + val : lastBalance - val,
     }
+    try { await svcAddCashflow(newEntry, selectedProject) } catch (e) { console.error(e) }
     setCashflow(prev => [...prev, newEntry])
     setForm({ tipo: 'entrada_manual', descricao: '', valor: '', data: '' })
     setShowModal(false)
