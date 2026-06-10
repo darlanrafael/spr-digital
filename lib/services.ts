@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { getSupabaseClient } from './supabase'
 import type {
   Sale, Product, Project, FixedCost, VariableCost,
   MetaAdsEntry, CostsData, Closing, CashflowEntry,
@@ -14,7 +14,9 @@ function normTs(ts: string | null | undefined): string {
 // ─── Projects ────────────────────────────────────────────────────────────────
 
 export async function getProjects(): Promise<Project[]> {
-  const { data, error } = await supabase
+  const client = getSupabaseClient()
+  if (!client) return []
+  const { data, error } = await client
     .from('projects')
     .select('*')
     .eq('ativo', true)
@@ -32,7 +34,9 @@ export async function getProjects(): Promise<Project[]> {
 // ─── Products ────────────────────────────────────────────────────────────────
 
 export async function getProducts(projectId: string): Promise<Product[]> {
-  const { data, error } = await supabase
+  const client = getSupabaseClient()
+  if (!client) return []
+  const { data, error } = await client
     .from('products')
     .select('*')
     .eq('project_id', projectId)
@@ -53,7 +57,9 @@ export async function getSales(
   dateStart?: string,
   dateEnd?: string,
 ): Promise<Sale[]> {
-  let q = supabase.from('sales').select('*').eq('project_id', projectId)
+  const client = getSupabaseClient()
+  if (!client) return []
+  let q = client.from('sales').select('*').eq('project_id', projectId)
   if (dateStart) q = q.gte('data_hora', dateStart)
   if (dateEnd) q = q.lte('data_hora', `${dateEnd}T23:59:59`)
   const { data, error } = await q.order('data_hora', { ascending: false })
@@ -81,7 +87,9 @@ export async function getSales(
 }
 
 export async function addSale(sale: Sale): Promise<void> {
-  const { error } = await supabase.from('sales').upsert({
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('sales').upsert({
     id: sale.id,
     project_id: sale.projetoId,
     nome: sale.nome,
@@ -109,7 +117,9 @@ export async function updateSaleStatus(
   status: 'aprovado' | 'reembolso',
   dataReembolso?: string,
 ): Promise<void> {
-  const { error } = await supabase
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client
     .from('sales')
     .update({ status, data_reembolso: dataReembolso ?? null })
     .eq('id', id)
@@ -119,7 +129,9 @@ export async function updateSaleStatus(
 // ─── Fixed Costs ─────────────────────────────────────────────────────────────
 
 export async function getFixedCosts(): Promise<FixedCost[]> {
-  const { data, error } = await supabase
+  const client = getSupabaseClient()
+  if (!client) return []
+  const { data, error } = await client
     .from('fixed_costs')
     .select('*')
     .eq('ativo', true)
@@ -133,7 +145,9 @@ export async function getFixedCosts(): Promise<FixedCost[]> {
 }
 
 export async function addFixedCost(cost: FixedCost): Promise<void> {
-  const { error } = await supabase.from('fixed_costs').upsert({
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('fixed_costs').upsert({
     id: cost.id,
     descricao: cost.descricao,
     valor: cost.valor,
@@ -142,13 +156,20 @@ export async function addFixedCost(cost: FixedCost): Promise<void> {
   if (error) throw error
 }
 
-export async function updateFixedCost(id: string, patch: Partial<Pick<FixedCost, 'descricao' | 'valor' | 'ativo'>>): Promise<void> {
-  const { error } = await supabase.from('fixed_costs').update(patch).eq('id', id)
+export async function updateFixedCost(
+  id: string,
+  patch: Partial<Pick<FixedCost, 'descricao' | 'valor' | 'ativo'>>,
+): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('fixed_costs').update(patch).eq('id', id)
   if (error) throw error
 }
 
 export async function deleteFixedCost(id: string): Promise<void> {
-  const { error } = await supabase.from('fixed_costs').delete().eq('id', id)
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('fixed_costs').delete().eq('id', id)
   if (error) throw error
 }
 
@@ -159,7 +180,9 @@ export async function getVariableCosts(
   dateStart?: string,
   dateEnd?: string,
 ): Promise<VariableCost[]> {
-  let q = supabase
+  const client = getSupabaseClient()
+  if (!client) return []
+  let q = client
     .from('variable_costs')
     .select('*')
     .or(`project_id.eq.${projectId},project_id.is.null`)
@@ -177,7 +200,9 @@ export async function getVariableCosts(
 }
 
 export async function addCost(cost: VariableCost): Promise<void> {
-  const { error } = await supabase.from('variable_costs').upsert({
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('variable_costs').upsert({
     id: cost.id,
     project_id: cost.projetoId ?? null,
     descricao: cost.descricao,
@@ -187,13 +212,20 @@ export async function addCost(cost: VariableCost): Promise<void> {
   if (error) throw error
 }
 
-export async function updateCost(id: string, patch: Partial<Pick<VariableCost, 'descricao' | 'valor' | 'data'>>): Promise<void> {
-  const { error } = await supabase.from('variable_costs').update(patch).eq('id', id)
+export async function updateCost(
+  id: string,
+  patch: Partial<Pick<VariableCost, 'descricao' | 'valor' | 'data'>>,
+): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('variable_costs').update(patch).eq('id', id)
   if (error) throw error
 }
 
 export async function deleteCost(id: string): Promise<void> {
-  const { error } = await supabase.from('variable_costs').delete().eq('id', id)
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('variable_costs').delete().eq('id', id)
   if (error) throw error
 }
 
@@ -204,7 +236,9 @@ export async function getMetaAds(
   dateStart?: string,
   dateEnd?: string,
 ): Promise<MetaAdsEntry[]> {
-  let q = supabase.from('meta_ads').select('*').eq('project_id', projectId)
+  const client = getSupabaseClient()
+  if (!client) return []
+  let q = client.from('meta_ads').select('*').eq('project_id', projectId)
   if (dateStart) q = q.gte('mes', dateStart.slice(0, 7))
   if (dateEnd) q = q.lte('mes', dateEnd.slice(0, 7))
   const { data, error } = await q.order('mes', { ascending: false })
@@ -217,7 +251,9 @@ export async function getMetaAds(
 }
 
 export async function upsertMetaAds(projectId: string, mes: string, valor: number): Promise<void> {
-  const { error } = await supabase
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client
     .from('meta_ads')
     .upsert({ project_id: projectId, mes, valor }, { onConflict: 'project_id,mes' })
   if (error) throw error
@@ -237,7 +273,9 @@ export async function getAllCosts(projectId: string): Promise<CostsData> {
 // ─── Closings ────────────────────────────────────────────────────────────────
 
 export async function getClosings(projectId: string): Promise<Closing[]> {
-  const { data, error } = await supabase
+  const client = getSupabaseClient()
+  if (!client) return []
+  const { data, error } = await client
     .from('closings')
     .select('*')
     .eq('project_id', projectId)
@@ -267,7 +305,9 @@ export async function getClosings(projectId: string): Promise<Closing[]> {
 }
 
 export async function addClosing(closing: Closing, projectId: string): Promise<void> {
-  const { error } = await supabase.from('closings').upsert({
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('closings').upsert({
     id: closing.id,
     project_id: projectId,
     data: closing.data,
@@ -296,7 +336,9 @@ export async function addClosing(closing: Closing, projectId: string): Promise<v
 // ─── Cashflow ────────────────────────────────────────────────────────────────
 
 export async function getCashflow(projectId: string): Promise<CashflowEntry[]> {
-  const { data, error } = await supabase
+  const client = getSupabaseClient()
+  if (!client) return []
+  const { data, error } = await client
     .from('cashflow')
     .select('*')
     .eq('project_id', projectId)
@@ -314,7 +356,9 @@ export async function getCashflow(projectId: string): Promise<CashflowEntry[]> {
 }
 
 export async function addCashflowEntry(entry: CashflowEntry, projectId: string): Promise<void> {
-  const { error } = await supabase.from('cashflow').upsert({
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client.from('cashflow').upsert({
     id: entry.id,
     project_id: projectId,
     data: entry.data,
