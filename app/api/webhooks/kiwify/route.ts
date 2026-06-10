@@ -2,63 +2,132 @@ import { NextRequest, NextResponse } from 'next/server'
 import { addSale, updateSaleStatus } from '@/lib/services'
 import type { Sale } from '@/types'
 
-// Kiwify envia eventos: order_approved, order_refunded, order_chargeback
-export async function POST(req: NextRequest) {
+const PROJECT_ID = 'proj_1'
+
+// UTC → UTC-3 (Brasília), sem timezone no string final
+function toBRT(isoString: string): string {
   try {
-    const body = await req.json()
-    const { event, data } = body
-
-    if (!event || !data) {
-      return NextResponse.json({ error: 'Payload inválido' }, { status: 400 })
-    }
-
-    if (event === 'order_approved') {
-      const sale = normalizeKiwify(data)
-      await addSale(sale)
-      return NextResponse.json({ received: true, action: 'sale_created' })
-    }
-
-    if (event === 'order_refunded') {
-      const orderId = data?.order?.id ?? data?.id
-      if (orderId) {
-        await updateSaleStatus(orderId, 'reembolso', new Date().toISOString().split('T')[0])
-      }
-      return NextResponse.json({ received: true, action: 'refund_processed' })
-    }
-
-    return NextResponse.json({ received: true, action: 'ignored' })
-  } catch (err) {
-    console.error('[Kiwify webhook]', err)
-    return NextResponse.json({ error: 'Erro ao processar webhook' }, { status: 500 })
+    const date = new Date(isoString)
+    const brt = new Date(date.getTime() - 3 * 60 * 60 * 1000)
+    return brt.toISOString().slice(0, 19)
+  } catch {
+    return new Date().toISOString().slice(0, 19)
   }
 }
 
-function normalizeKiwify(data: Record<string, unknown>): Sale {
+// Converte centavos para reais quando necessário
+function toReais(raw: unknown): number {
+  const n = Number(raw ?? 0)
+  if (Number.isInteger(n) && n > 10000) return n / 100
+  return n
+}
+
+function validateToken(req: NextRequest): boolean {
+  const expected = process.env.KIWIFY_WEBHOOK_TOKEN
+  if (!expected) return true // sem token configurado, permite tudo (dev)
+  const received = req.nextUrl.searchParams.get('token') ?? ''
+  return received === expected
+}
+
+export async function POST(req: NextRequest) {
+  if (!validateToken(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Payload inválido' }, { status: 400 })
+  }
+
+  // Kiwify pode enviar { event, data } ou campos diretamente no root
+  const event = String(body.event ?? body.webhook_event_type ?? '')
+  const data  = (body.data ?? body) as Record<string, unknown>
+
+  console.log('[Kiwify webhook] evento recebido:', event, JSON.stringify(body).slice(0, 300))
+
+  try {
+    if (event === 'order.approved') {
+      const sale = normalizeKiwify(data)
+      await addSale(sale)
+      console.log('[Kiwify webhook] venda inserida:', sale.id)
+      return NextResponse.json({ success: true, action: 'sale_created' })
+    }
+
+    if (event === 'order.refunded') {
+      const id = getSaleId(data)
+      if (id) {
+        await updateSaleStatus(id, 'reembolso', todayBRT())
+        console.log('[Kiwify webhook] reembolso registrado:', id)
+      }
+      return NextResponse.json({ success: true, action: 'refund_processed' })
+    }
+
+    if (event === 'order.chargedback') {
+      const id = getSaleId(data)
+      if (id) {
+        await updateSaleStatus(id, 'reembolso', todayBRT())
+        console.log('[Kiwify webhook] chargeback registrado:', id)
+      }
+      return NextResponse.json({ success: true, action: 'chargeback_processed' })
+    }
+
+    // Evento desconhecido — retornar 200 para a plataforma não reenviar
+    console.log('[Kiwify webhook] evento ignorado:', event)
+    return NextResponse.json({ success: true, action: 'ignored' })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[Kiwify webhook] erro ao processar:', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
+}
+
+function getSaleId(data: Record<string, unknown>): string | null {
   const order = (data.order ?? data) as Record<string, unknown>
-  const customer = (order.customer ?? {}) as Record<string, unknown>
-  const utms = (order.utms ?? {}) as Record<string, string>
-  const product = (order.product ?? {}) as Record<string, unknown>
-  const productId = String(order.product_id ?? product.id ?? 'prod_1')
-  const priceRaw = Number(order.amount ?? order.product_price ?? 0)
-  const price = priceRaw > 100 ? priceRaw / 100 : priceRaw // centavos → reais
+  const id = order.id ?? order.order_id ?? data.id
+  return id ? String(id) : null
+}
+
+function todayBRT(): string {
+  return toBRT(new Date().toISOString()).slice(0, 10)
+}
+
+function normalizeKiwify(data: Record<string, unknown>): Sale {
+  const order    = (data.order    ?? data)                       as Record<string, unknown>
+  const customer = (order.Customer ?? order.customer ?? data.Customer ?? data.customer ?? {}) as Record<string, unknown>
+  const product  = (order.Product  ?? order.product  ?? data.Product  ?? data.product  ?? {}) as Record<string, unknown>
+  const utms     = (order.TrackingParameters ?? order.tracking_parameters ?? order.utms ?? data.utms ?? {}) as Record<string, string>
+
+  const saleId      = String(order.id ?? order.order_id ?? data.id ?? `kiwify_${Date.now()}`)
+  const nome        = String(customer.full_name ?? customer.name ?? customer.nome ?? '')
+  const email       = String(customer.email ?? '')
+  const telefone    = String(customer.mobile ?? customer.phone ?? customer.telefone ?? '')
+  const produtoNome = String(product.name ?? product.nome ?? product.product_name ?? order.product_name ?? 'Produto Kiwify')
+
+  const valorBase    = toReais(product.base_price ?? order.product_base_price ?? order.product_price ?? 0)
+  const valorPago    = toReais(order.amount ?? order.total_amount ?? order.order_value ?? valorBase)
+  const valorLiquido = toReais(order.net_amount ?? order.commission_as_producer ?? valorPago * 0.87)
+
+  const dataHora = toBRT(String(order.created_at ?? order.approved_date ?? data.created_at ?? new Date().toISOString()))
 
   return {
-    id: String(order.id ?? `kiwify_${Date.now()}`),
-    nome: String(customer.name ?? customer.full_name ?? ''),
-    email: String(customer.email ?? ''),
-    telefone: String(customer.phone ?? customer.mobile ?? ''),
-    produto: productId,
+    id: saleId,
+    nome,
+    email,
+    telefone,
+    produto: produtoNome,
     plataforma: 'kiwify',
-    preco_base: price,
-    valor_pago_cliente: price,
-    valor_liquido: price * 0.87, // Taxa aproximada Kiwify ~13%
-    data_hora: String(order.created_at ?? new Date().toISOString()),
-    utm_source: utms.utm_source ?? '',
-    utm_medium: utms.utm_medium ?? '',
-    utm_campaign: utms.utm_campaign ?? '',
-    utm_content: utms.utm_content ?? '',
-    utm_term: utms.utm_term ?? '',
+    preco_base: valorBase || valorPago,
+    valor_pago_cliente: valorPago,
+    valor_liquido: valorLiquido,
+    data_hora: dataHora,
+    utm_source:   utms.utm_source   ?? utms.src ?? '',
+    utm_medium:   utms.utm_medium   ?? utms.medium ?? '',
+    utm_campaign: utms.utm_campaign ?? utms.campaign ?? '',
+    utm_content:  utms.utm_content  ?? utms.content ?? '',
+    utm_term:     utms.utm_term     ?? utms.term ?? '',
     status: 'aprovado',
-    projetoId: 'proj_1',
+    projetoId: PROJECT_ID,
   }
 }
