@@ -12,7 +12,7 @@
     "nome": "Mentoria Elite — Mensal",
     "plataforma": "Hubla",
     "aliquota": 13,
-    "projetoId": "proj_2",
+    "projetoId": "proj_1",
     "preco": 1497
   },
   {
@@ -20,7 +20,7 @@
     "nome": "Ebook Ads Masterclass",
     "plataforma": "Kiwify",
     "aliquota": 3,
-    "projetoId": "proj_3",
+    "projetoId": "proj_1",
     "preco": 47
   },
   {
@@ -36,7 +36,7 @@
     "nome": "Mentoria Elite — Trimestral",
     "plataforma": "Hubla",
     "aliquota": 13,
-    "projetoId": "proj_2",
+    "projetoId": "proj_1",
     "preco": 3997
   }
 ]

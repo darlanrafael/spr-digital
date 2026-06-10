@@ -74,10 +74,9 @@ export default function Header() {
               <select
                 value={selectedProject}
                 onChange={e => setSelectedProject(e.target.value)}
-                disabled={!canSeeAllProjects && availableProjects.length <= 1}
+                disabled={availableProjects.length <= 1}
                 className="appearance-none bg-gray-800 border border-white/10 rounded-lg pl-3 pr-7 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 cursor-pointer disabled:opacity-60 disabled:cursor-default max-w-[160px] truncate"
               >
-                {canSeeAllProjects && <option value="all">Todos os projetos</option>}
                 {availableProjects.map(p => (
                   <option key={p.id} value={p.id}>{p.nome}</option>
                 ))}

@@ -25,36 +25,26 @@
       "descricao": "Copywriter",
       "valor": 600.00,
       "data": "2026-06-03",
-      "projetoId": null
+      "projetoId": "proj_1"
     },
     {
       "id": "cv_2",
       "descricao": "Designer",
       "valor": 400.00,
       "data": "2026-06-05",
-      "projetoId": null
+      "projetoId": "proj_1"
     }
   ],
   "metaAds": [
     {
       "mes": "2026-06",
-      "valor": 4200,
-      "projetoId": "proj_1"
-    },
-    {
-      "mes": "2026-06",
-      "valor": 2800,
-      "projetoId": "proj_2"
-    },
-    {
-      "mes": "2026-05",
-      "valor": 3900,
+      "valor": 7000,
       "projetoId": "proj_1"
     },
     {
       "mes": "2026-05",
-      "valor": 2500,
-      "projetoId": "proj_2"
+      "valor": 6400,
+      "projetoId": "proj_1"
     },
     {
       "mes": "2026-04",

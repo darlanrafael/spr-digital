@@ -33,7 +33,7 @@ const AppContext = createContext<AppContextType | null>(null)
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [selectedProject, setSelectedProject] = useState<string>('all')
+  const [selectedProject, setSelectedProject] = useState<string>('proj_1')
   const [isDark, setIsDark] = useState(true)
   const [sales, setSales] = useState<Sale[]>(salesRaw as Sale[])
   const [costs, setCosts] = useState<CostsData>(costsRaw as CostsData)
