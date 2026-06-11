@@ -113,8 +113,7 @@ function DashboardContent() {
     }, 0)
   }, [filteredSales])
 
-  // Extrair primitivos de periodBounds para evitar loop infinito
-  // (periodBounds é objeto recriado a cada render via weekRange não-memoizado)
+  // Primitivos estáveis para as deps do useEffect (evita loop com objeto)
   const boundsStart = periodBounds?.start ?? ''
   const boundsEnd   = periodBounds?.end   ?? ''
 
@@ -123,33 +122,29 @@ function DashboardContent() {
   useEffect(() => {
     if (!boundsStart || !boundsEnd) return
     const projId = selectedProject === 'all' ? 'proj_1' : selectedProject
-    const fetchKey = `${boundsStart}|${boundsEnd}|${projId}`
+    const fetchKey = boundsStart + boundsEnd + projId
     if (lastFetchRef.current === fetchKey) return
     lastFetchRef.current = fetchKey
 
-    let cancelled = false
-    setMetaLoading(true)
-
-    const run = async () => {
+    const fetchMetaData = async () => {
+      setMetaLoading(true)
       try {
         const res = await fetch(`/api/meta/insights?dateStart=${boundsStart}&dateEnd=${boundsEnd}&projectId=${projId}`)
         const data = await res.json() as { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }
-        if (cancelled) return
-        if (data.erro || !data.total) {
+        if (data.total && data.total > 0) {
+          setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
+        } else {
           if (data.erro) console.warn('[Meta Ads] API erro:', data.erro)
           setMetaApiData(null)
-        } else {
-          setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
         }
       } catch (err) {
-        if (!cancelled) console.error('[Meta Ads] Fetch error:', err)
+        console.error('[Meta Ads] Fetch error:', err)
       } finally {
-        if (!cancelled) setMetaLoading(false)
+        setMetaLoading(false)
       }
     }
 
-    void run()
-    return () => { cancelled = true }
+    void fetchMetaData()
   }, [boundsStart, boundsEnd, selectedProject])
 
   // Meta Ads: fallback manual (custos.metaAds do mês atual)
