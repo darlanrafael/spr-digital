@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useMemo, useRef } from 'react'
-import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X } from 'lucide-react'
+import { useState, useMemo, useRef, useEffect } from 'react'
+import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -41,7 +41,15 @@ function DashboardContent() {
   const [faturamentoToggle, setFaturamentoToggle] = useState<FaturamentoToggle>('produto')
   const [balancoToggle, setBalancoToggle] = useState<BalancoToggle>('completo')
 
-  // Meta Ads inline editing
+  // Meta Ads — API
+  const [metaApiData, setMetaApiData] = useState<{
+    total: number
+    campanhas: Array<{ name: string; spend: number; accountId: string }>
+  } | null>(null)
+  const [metaLoading, setMetaLoading] = useState(false)
+  const [metaExpanded, setMetaExpanded] = useState(false)
+
+  // Meta Ads inline editing (fallback manual)
   const [editingMetaAds, setEditingMetaAds] = useState(false)
   const [metaAdsInputVal, setMetaAdsInputVal] = useState('')
   const metaAdsRef = useRef<HTMLInputElement>(null)
@@ -105,7 +113,30 @@ function DashboardContent() {
     }, 0)
   }, [filteredSales])
 
-  // Meta Ads: use costs.metaAds for current month
+  // Buscar investimento Meta Ads via API quando o período muda
+  useEffect(() => {
+    if (!periodBounds) return
+    const controller = new AbortController()
+    setMetaLoading(true)
+    setMetaApiData(null)
+    const projId = selectedProject === 'all' ? 'proj_1' : selectedProject
+    const url = `/api/meta/insights?dateStart=${periodBounds.start}&dateEnd=${periodBounds.end}&projectId=${projId}`
+    fetch(url, { signal: controller.signal })
+      .then(res => res.json())
+      .then((data: { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }) => {
+        if (data.erro || !data.total) {
+          if (data.erro) console.warn('[Meta Ads] API erro:', data.erro)
+          setMetaApiData(null)
+        } else {
+          setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
+        }
+      })
+      .catch(err => { if (err.name !== 'AbortError') console.error('[Meta Ads] Fetch error:', err) })
+      .finally(() => setMetaLoading(false))
+    return () => controller.abort()
+  }, [periodBounds, selectedProject])
+
+  // Meta Ads: fallback manual (custos.metaAds do mês atual)
   const metaAdsBase = useMemo(() => {
     const entries = costs.metaAds.filter(m => {
       const matchProject = selectedProject === 'all' || m.projetoId === selectedProject
@@ -114,7 +145,8 @@ function DashboardContent() {
     return entries.reduce((a, m) => a + m.valor, 0)
   }, [costs.metaAds, selectedProject, monthStr])
 
-  const metaAdsTotal = metaAdsBase
+  // Usa API quando disponível e total > 0; caso contrário usa valor manual
+  const metaAdsTotal = (metaApiData && metaApiData.total > 0) ? metaApiData.total : metaAdsBase
 
   const roas = metaAdsTotal > 0 ? faturamentoLiquido / metaAdsTotal : null
 
@@ -169,7 +201,7 @@ function DashboardContent() {
 
   // Meta Ads editing
   function startEditMetaAds() {
-    setMetaAdsInputVal(metaAdsTotal.toFixed(2))
+    setMetaAdsInputVal(metaAdsBase.toFixed(2))
     setEditingMetaAds(true)
     setTimeout(() => metaAdsRef.current?.focus(), 50)
   }
@@ -357,22 +389,48 @@ function DashboardContent() {
             <p className="text-xs text-gray-500 mt-1">Após taxas da plataforma</p>
           </div>
 
-          {/* Meta Ads — editable inline */}
-          <div
-            className="bg-gray-900 rounded-xl border border-blue-500/30 p-4 cursor-pointer group"
-            onClick={() => !editingMetaAds && canEdit && startEditMetaAds()}
-          >
+          {/* Meta Ads */}
+          <div className="bg-gray-900 rounded-xl border border-blue-500/30 p-4">
             <div className="flex items-start justify-between mb-3">
               <p className="text-xs text-gray-400 font-medium">Investimento Meta Ads</p>
-              <div className="flex items-center gap-1">
-                {canEdit && !editingMetaAds && (
-                  <Pencil className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors" />
-                )}
+              <div className="flex items-center gap-1.5">
+                {metaApiData && <span className="text-[9px] text-blue-400 font-medium">API</span>}
                 <Target className="w-4 h-4 text-gray-500" />
               </div>
             </div>
-            {editingMetaAds ? (
-              <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+
+            {metaLoading ? (
+              <div className="animate-pulse">
+                <div className="h-8 bg-gray-700 rounded-lg w-28 mb-2" />
+                <div className="h-3 bg-gray-800 rounded w-16" />
+              </div>
+            ) : metaApiData !== null && metaApiData.total > 0 ? (
+              <>
+                <p className="text-2xl font-bold text-white">{formatCurrency(metaApiData.total)}</p>
+                {metaApiData.campanhas.length > 0 ? (
+                  <button
+                    onClick={() => setMetaExpanded(p => !p)}
+                    className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 mt-1 transition-colors"
+                  >
+                    {metaApiData.campanhas.length} campanha{metaApiData.campanhas.length !== 1 ? 's' : ''}
+                    {metaExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-1">Nenhuma campanha no período</p>
+                )}
+                {metaExpanded && metaApiData.campanhas.length > 0 && (
+                  <div className="mt-2 space-y-1 border-t border-white/10 pt-2">
+                    {metaApiData.campanhas.map((c, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs gap-2">
+                        <span className="text-gray-400 truncate flex-1">{c.name}</span>
+                        <span className="text-gray-200 font-medium shrink-0">{formatCurrency(c.spend)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : editingMetaAds ? (
+              <div className="flex items-center gap-1">
                 <span className="text-sm text-gray-400">R$</span>
                 <input
                   ref={metaAdsRef}
@@ -390,12 +448,18 @@ function DashboardContent() {
                 </button>
               </div>
             ) : (
-              <>
-                <p className="text-2xl font-bold text-white">{formatCurrency(metaAdsTotal)}</p>
+              <div
+                className={canEdit ? 'cursor-pointer group' : ''}
+                onClick={() => canEdit && startEditMetaAds()}
+              >
+                <div className="flex items-center gap-1.5">
+                  <p className="text-2xl font-bold text-white">{formatCurrency(metaAdsBase)}</p>
+                  {canEdit && <Pencil className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors" />}
+                </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {canEdit ? 'Clique para editar' : 'Valor mensal'}
+                  {canEdit ? 'Clique para editar' : 'Valor manual'}
                 </p>
-              </>
+              </div>
             )}
           </div>
 
