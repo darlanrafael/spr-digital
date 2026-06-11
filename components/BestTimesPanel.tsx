@@ -138,11 +138,11 @@ export default function BestTimesComparison({ allSales, defaultAStart, defaultAE
   const [bEnd, setBEnd] = useState(prev.end)
 
   const salesA = useMemo(() =>
-    allSales.filter(s => s.status === 'aprovado' && s.data_hora.slice(0, 10) >= aStart && s.data_hora.slice(0, 10) <= aEnd),
+    allSales.filter(s => s.status === 'aprovada' && s.data_hora.slice(0, 10) >= aStart && s.data_hora.slice(0, 10) <= aEnd),
     [allSales, aStart, aEnd]
   )
   const salesB = useMemo(() =>
-    allSales.filter(s => s.status === 'aprovado' && s.data_hora.slice(0, 10) >= bStart && s.data_hora.slice(0, 10) <= bEnd),
+    allSales.filter(s => s.status === 'aprovada' && s.data_hora.slice(0, 10) >= bStart && s.data_hora.slice(0, 10) <= bEnd),
     [allSales, bStart, bEnd]
   )
 

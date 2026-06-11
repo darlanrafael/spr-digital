@@ -43,7 +43,7 @@ function DREContent() {
   function getSalesForMonth(month: string) {
     return sales.filter(s => {
       const matchProject = selectedProject === 'all' || s.projetoId === selectedProject
-      return s.status === 'aprovado' && s.data_hora.startsWith(month) && matchProject
+      return s.status === 'aprovada' && s.data_hora.startsWith(month) && matchProject
     })
   }
 

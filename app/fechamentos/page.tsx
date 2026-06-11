@@ -54,7 +54,7 @@ function FechamentosContent() {
       const d = s.data_hora.slice(0, 10)
       const matchPeriod = d >= periodo.inicio && d <= periodo.fim
       const matchProduct = selectedProducts.length === 0 || selectedProducts.includes(s.produto)
-      return s.status === 'aprovado' && matchProject && matchPeriod && matchProduct
+      return s.status === 'aprovada' && matchProject && matchPeriod && matchProduct
     })
   }, [sales, periodo, selectedProject, selectedProducts])
 

@@ -1,32 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { addSale, updateSaleStatus } from '@/lib/services'
-import type { Sale } from '@/types'
+import { getSupabaseClient } from '@/lib/supabase'
+import type { SaleStatus } from '@/types'
 
 const PROJECT_ID = 'proj_1'
 
-// UTC → UTC-3 (Brasília), sem timezone no string final
-function toBRT(isoString: string): string {
-  try {
-    const date = new Date(isoString)
-    const brt = new Date(date.getTime() - 3 * 60 * 60 * 1000)
-    return brt.toISOString().slice(0, 19)
-  } catch {
-    return new Date().toISOString().slice(0, 19)
-  }
-}
-
-// Converte centavos para reais quando necessário
-function toReais(raw: unknown): number {
-  const n = Number(raw ?? 0)
-  if (Number.isInteger(n) && n > 10000) return n / 100
-  return n
-}
-
 function validateToken(req: NextRequest): boolean {
   const expected = process.env.KIWIFY_WEBHOOK_TOKEN
-  if (!expected) return true // sem token configurado, permite tudo (dev)
-  const received = req.nextUrl.searchParams.get('token') ?? ''
-  return received === expected
+  if (!expected) return true
+  const fromHeader = req.headers.get('x-kiwify-token') ?? ''
+  const fromQuery = new URL(req.url).searchParams.get('token') ?? ''
+  return (fromHeader || fromQuery) === expected
 }
 
 export async function POST(req: NextRequest) {
@@ -34,100 +17,117 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: Record<string, unknown>
+  let payload: Record<string, unknown>
   try {
-    body = await req.json()
+    payload = await req.json()
   } catch {
     return NextResponse.json({ error: 'Payload inválido' }, { status: 400 })
   }
 
-  // Kiwify pode enviar { event, data } ou campos diretamente no root
-  const event = String(body.event ?? body.webhook_event_type ?? '')
-  const data  = (body.data ?? body) as Record<string, unknown>
+  // Detectar event type: campo explícito ou derivado do order_status
+  const eventType = String(
+    payload.webhook_event_type ?? payload.type ?? payload.order_status ?? ''
+  )
 
-  console.log('[Kiwify webhook] evento recebido:', event, JSON.stringify(body).slice(0, 300))
+  console.log('[Kiwify webhook] evento recebido:', eventType)
+  console.log('[Kiwify webhook] payload completo:', JSON.stringify(payload, null, 2))
 
   try {
-    if (event === 'order.approved') {
-      const sale = normalizeKiwify(data)
-      await addSale(sale)
-      console.log('[Kiwify webhook] venda inserida:', sale.id)
-      return NextResponse.json({ success: true, action: 'sale_created' })
+    if (eventType === 'order_approved' || eventType === 'paid') {
+      await insertKiwifySale(payload)
+      return NextResponse.json({ success: true, event: eventType }, { status: 200 })
     }
 
-    if (event === 'order.refunded') {
-      const id = getSaleId(data)
-      if (id) {
-        await updateSaleStatus(id, 'reembolso', todayBRT())
-        console.log('[Kiwify webhook] reembolso registrado:', id)
+    if (eventType === 'order_refunded' || eventType === 'refunded') {
+      const orderId = String(payload.order_id ?? '')
+      if (orderId) {
+        const updated = await updateSaleByPlatformId(orderId, 'kiwify', 'reembolsada')
+        if (!updated) console.warn('[Kiwify webhook] venda não encontrada para reembolso:', orderId)
+        else console.log('[Kiwify webhook] reembolso registrado:', orderId)
       }
-      return NextResponse.json({ success: true, action: 'refund_processed' })
+      return NextResponse.json({ success: true, event: eventType }, { status: 200 })
     }
 
-    if (event === 'order.chargedback') {
-      const id = getSaleId(data)
-      if (id) {
-        await updateSaleStatus(id, 'reembolso', todayBRT())
-        console.log('[Kiwify webhook] chargeback registrado:', id)
+    if (eventType === 'chargeback' || eventType === 'chargedback') {
+      const orderId = String(payload.order_id ?? '')
+      if (orderId) {
+        const updated = await updateSaleByPlatformId(orderId, 'kiwify', 'chargeback')
+        if (!updated) console.warn('[Kiwify webhook] venda não encontrada para chargeback:', orderId)
+        else console.log('[Kiwify webhook] chargeback registrado:', orderId)
       }
-      return NextResponse.json({ success: true, action: 'chargeback_processed' })
+      return NextResponse.json({ success: true, event: eventType }, { status: 200 })
     }
 
-    // Evento desconhecido — retornar 200 para a plataforma não reenviar
-    console.log('[Kiwify webhook] evento ignorado:', event)
-    return NextResponse.json({ success: true, action: 'ignored' })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error('[Kiwify webhook] erro ao processar:', msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    console.log('[Kiwify webhook] evento desconhecido ignorado:', eventType)
+    return NextResponse.json({ success: true, event: 'ignored', type: eventType }, { status: 200 })
+  } catch (error) {
+    console.error('[Kiwify webhook] erro:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-function getSaleId(data: Record<string, unknown>): string | null {
-  const order = (data.order ?? data) as Record<string, unknown>
-  const id = order.id ?? order.order_id ?? data.id
-  return id ? String(id) : null
-}
+async function insertKiwifySale(payload: Record<string, unknown>): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client) return
 
-function todayBRT(): string {
-  return toBRT(new Date().toISOString()).slice(0, 10)
-}
+  const Customer = (payload.Customer ?? payload.customer ?? {}) as Record<string, unknown>
+  const Product  = (payload.Product  ?? payload.product  ?? {}) as Record<string, unknown>
+  const tracking = (payload.TrackingParameters ?? payload.tracking ?? {}) as Record<string, unknown>
 
-function normalizeKiwify(data: Record<string, unknown>): Sale {
-  const order    = (data.order    ?? data)                       as Record<string, unknown>
-  const customer = (order.Customer ?? order.customer ?? data.Customer ?? data.customer ?? {}) as Record<string, unknown>
-  const product  = (order.Product  ?? order.product  ?? data.Product  ?? data.product  ?? {}) as Record<string, unknown>
-  const utms     = (order.TrackingParameters ?? order.tracking_parameters ?? order.utms ?? data.utms ?? {}) as Record<string, string>
+  const precoBase    = Number(Product.base_price  ?? payload.base_price  ?? 0)
+  const valorPago    = Number(payload.amount ?? payload.total_amount ?? precoBase)
+  const valorLiquido = Number(payload.net_amount ?? payload.liquid_amount ?? 0)
 
-  const saleId      = String(order.id ?? order.order_id ?? data.id ?? `kiwify_${Date.now()}`)
-  const nome        = String(customer.full_name ?? customer.name ?? customer.nome ?? '')
-  const email       = String(customer.email ?? '')
-  const telefone    = String(customer.mobile ?? customer.phone ?? customer.telefone ?? '')
-  const produtoNome = String(product.name ?? product.nome ?? product.product_name ?? order.product_name ?? 'Produto Kiwify')
-
-  const valorBase    = toReais(product.base_price ?? order.product_base_price ?? order.product_price ?? 0)
-  const valorPago    = toReais(order.amount ?? order.total_amount ?? order.order_value ?? valorBase)
-  const valorLiquido = toReais(order.net_amount ?? order.commission_as_producer ?? valorPago * 0.87)
-
-  const dataHora = toBRT(String(order.created_at ?? order.approved_date ?? data.created_at ?? new Date().toISOString()))
-
-  return {
-    id: saleId,
-    nome,
-    email,
-    telefone,
-    produto: produtoNome,
-    plataforma: 'kiwify',
-    preco_base: valorBase || valorPago,
+  const { error } = await client.from('sales').insert({
+    id:                crypto.randomUUID(),
+    project_id:        PROJECT_ID,
+    plataforma:        'kiwify',
+    plataforma_sale_id: String(payload.order_id ?? ''),
+    status:            'aprovada' as SaleStatus,
+    data_hora:         String(payload.created_at ?? new Date().toISOString()),
+    nome:              String(Customer.full_name ?? Customer.name ?? payload.customer_name ?? ''),
+    email:             String(Customer.email ?? payload.customer_email ?? ''),
+    telefone:          String(Customer.mobile ?? Customer.phone ?? ''),
+    cpf:               String(Customer.cpf ?? '') || null,
+    produto:           String(Product.name ?? payload.product_name ?? ''),
+    preco_base:        precoBase,
     valor_pago_cliente: valorPago,
-    valor_liquido: valorLiquido,
-    data_hora: dataHora,
-    utm_source:   utms.utm_source   ?? utms.src ?? '',
-    utm_medium:   utms.utm_medium   ?? utms.medium ?? '',
-    utm_campaign: utms.utm_campaign ?? utms.campaign ?? '',
-    utm_content:  utms.utm_content  ?? utms.content ?? '',
-    utm_term:     utms.utm_term     ?? utms.term ?? '',
-    status: 'aprovado',
-    projetoId: PROJECT_ID,
-  }
+    valor_liquido:     valorLiquido,
+    utm_source:        (tracking.utm_source  ?? payload.utm_source  ?? null) || null,
+    utm_medium:        (tracking.utm_medium  ?? payload.utm_medium  ?? null) || null,
+    utm_campaign:      (tracking.utm_campaign ?? payload.utm_campaign ?? null) || null,
+    utm_content:       (tracking.utm_content ?? payload.utm_content ?? null) || null,
+    utm_term:          (tracking.utm_term    ?? payload.utm_term    ?? null) || null,
+  })
+  if (error) throw error
+  console.log('[Kiwify webhook] venda inserida:', payload.order_id)
+}
+
+async function updateSaleByPlatformId(
+  platformSaleId: string,
+  plataforma: string,
+  status: SaleStatus,
+): Promise<boolean> {
+  const client = getSupabaseClient()
+  if (!client) return false
+
+  const { data, error } = await client
+    .from('sales')
+    .select('id')
+    .eq('plataforma_sale_id', platformSaleId)
+    .eq('plataforma', plataforma)
+    .limit(1)
+
+  if (error || !data || data.length === 0) return false
+
+  const { error: updErr } = await client
+    .from('sales')
+    .update({
+      status,
+      data_reembolso: new Date().toISOString().slice(0, 10),
+    })
+    .eq('id', (data[0] as Record<string, unknown>).id)
+
+  if (updErr) throw updErr
+  return true
 }

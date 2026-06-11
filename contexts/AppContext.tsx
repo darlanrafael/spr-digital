@@ -59,7 +59,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const [proj, prod, s, c, cl, cf] = await Promise.all([
         getProjects(),
         getProducts(projId),
-        getSales(projId),
+        getSales(projId, undefined, undefined, ['aprovada', 'reembolsada', 'chargeback', 'cancelada', 'em_protesto']),
         getAllCosts(projId),
         getClosings(projId),
         getCashflow(projId),

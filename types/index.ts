@@ -25,15 +25,17 @@ export interface Product {
   preco: number
 }
 
-export type SaleStatus = 'aprovado' | 'reembolso'
+export type SaleStatus = 'aprovada' | 'reembolsada' | 'chargeback' | 'cancelada' | 'em_protesto'
 
 export interface Sale {
   id: string
   nome: string
   email: string
   telefone: string
+  cpf?: string
   produto: string
   plataforma: Platform
+  plataforma_sale_id?: string
   preco_base: number
   valor_pago_cliente: number
   valor_liquido: number

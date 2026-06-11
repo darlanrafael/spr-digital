@@ -76,8 +76,10 @@ function VendasContent() {
     return base
   }, [sales, selectedProject])
 
-  const approved = useMemo(() => baseSales.filter(s => s.status === 'aprovado'), [baseSales])
-  const refunds = useMemo(() => baseSales.filter(s => s.status === 'reembolso'), [baseSales])
+  const approved = useMemo(() => baseSales.filter(s => s.status === 'aprovada'), [baseSales])
+  const refunds = useMemo(() => baseSales.filter(s =>
+    (['reembolsada', 'chargeback', 'cancelada', 'em_protesto'] as string[]).includes(s.status)
+  ), [baseSales])
 
   const filtered = useMemo(() => {
     let list = tab === 'aprovadas' ? approved : refunds

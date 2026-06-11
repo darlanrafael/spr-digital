@@ -77,7 +77,7 @@ function DashboardContent() {
   }, [period, todayStr, monthStr, weekRange, customStart, customEnd])
 
   const filteredSales = useMemo(() => {
-    let base = sales.filter(s => s.status === 'aprovado')
+    let base = sales.filter(s => s.status === 'aprovada')
     if (selectedProject !== 'all') base = base.filter(s => s.projetoId === selectedProject)
     if (periodBounds) {
       base = base.filter(s => {

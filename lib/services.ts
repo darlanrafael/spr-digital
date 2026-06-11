@@ -1,6 +1,6 @@
 import { getSupabaseClient } from './supabase'
 import type {
-  Sale, Product, Project, FixedCost, VariableCost,
+  Sale, SaleStatus, Product, Project, FixedCost, VariableCost,
   MetaAdsEntry, CostsData, Closing, CashflowEntry,
 } from '@/types'
 
@@ -56,34 +56,92 @@ export async function getSales(
   projectId: string,
   dateStart?: string,
   dateEnd?: string,
+  statusFilter: string[] = ['aprovada'],
 ): Promise<Sale[]> {
   const client = getSupabaseClient()
   if (!client) return []
   let q = client.from('sales').select('*').eq('project_id', projectId)
   if (dateStart) q = q.gte('data_hora', dateStart)
   if (dateEnd) q = q.lte('data_hora', `${dateEnd}T23:59:59`)
+  if (statusFilter.length === 1) {
+    q = q.eq('status', statusFilter[0])
+  } else if (statusFilter.length > 1) {
+    q = q.in('status', statusFilter)
+  }
   const { data, error } = await q.order('data_hora', { ascending: false })
   if (error) throw error
-  return (data ?? []).map(r => ({
-    id: r.id,
-    nome: r.nome,
-    email: r.email ?? '',
-    telefone: r.telefone ?? '',
-    produto: r.produto,
-    plataforma: r.plataforma.toLowerCase() as 'kiwify' | 'hubla',
+  return (data ?? []).map(mapSaleRow)
+}
+
+function mapSaleRow(r: Record<string, unknown>): Sale {
+  return {
+    id: String(r.id),
+    nome: String(r.nome ?? ''),
+    email: String(r.email ?? ''),
+    telefone: String(r.telefone ?? ''),
+    cpf: r.cpf ? String(r.cpf) : undefined,
+    produto: String(r.produto ?? ''),
+    plataforma: String(r.plataforma ?? '').toLowerCase() as 'kiwify' | 'hubla',
+    plataforma_sale_id: r.plataforma_sale_id ? String(r.plataforma_sale_id) : undefined,
     preco_base: Number(r.preco_base),
     valor_pago_cliente: Number(r.valor_pago_cliente),
     valor_liquido: Number(r.valor_liquido),
-    data_hora: normTs(r.data_hora),
-    utm_source: r.utm_source ?? '',
-    utm_medium: r.utm_medium ?? '',
-    utm_campaign: r.utm_campaign ?? '',
-    utm_content: r.utm_content ?? '',
-    utm_term: r.utm_term ?? '',
-    status: r.status as 'aprovado' | 'reembolso',
-    projetoId: r.project_id,
-    data_reembolso: r.data_reembolso ?? undefined,
-  }))
+    data_hora: normTs(String(r.data_hora ?? '')),
+    utm_source: String(r.utm_source ?? ''),
+    utm_medium: String(r.utm_medium ?? ''),
+    utm_campaign: String(r.utm_campaign ?? ''),
+    utm_content: String(r.utm_content ?? ''),
+    utm_term: String(r.utm_term ?? ''),
+    status: String(r.status) as SaleStatus,
+    projetoId: String(r.project_id ?? ''),
+    data_reembolso: r.data_reembolso ? String(r.data_reembolso) : undefined,
+  }
+}
+
+export async function findSaleByPlatformId(
+  platformSaleId: string,
+  plataforma: string,
+): Promise<Sale | null> {
+  const client = getSupabaseClient()
+  if (!client) return null
+  const { data, error } = await client
+    .from('sales')
+    .select('*')
+    .eq('plataforma_sale_id', platformSaleId)
+    .eq('plataforma', plataforma)
+    .limit(1)
+  if (error || !data || data.length === 0) return null
+  return mapSaleRow(data[0] as Record<string, unknown>)
+}
+
+export async function findSaleByEmailAndProduct(
+  email: string,
+  produtoNome: string,
+  plataforma: string,
+): Promise<Sale | null> {
+  const client = getSupabaseClient()
+  if (!client) return null
+  const { data, error } = await client
+    .from('sales')
+    .select('*')
+    .ilike('email', email)
+    .ilike('produto', produtoNome)
+    .eq('plataforma', plataforma)
+    .order('data_hora', { ascending: false })
+    .limit(1)
+  if (error || !data || data.length === 0) {
+    // Fallback: busca só por email + plataforma
+    const { data: d2 } = await client
+      .from('sales')
+      .select('*')
+      .ilike('email', email)
+      .eq('plataforma', plataforma)
+      .order('data_hora', { ascending: false })
+      .limit(1)
+    if (!d2 || d2.length === 0) return null
+    return mapSaleRow(d2[0] as Record<string, unknown>)
+  }
+  return mapSaleRow(data[0] as Record<string, unknown>)
 }
 
 export async function addSale(sale: Sale): Promise<void> {
@@ -95,17 +153,19 @@ export async function addSale(sale: Sale): Promise<void> {
     nome: sale.nome,
     email: sale.email,
     telefone: sale.telefone,
+    cpf: sale.cpf ?? null,
     produto: sale.produto,
     plataforma: sale.plataforma,
+    plataforma_sale_id: sale.plataforma_sale_id ?? null,
     preco_base: sale.preco_base,
     valor_pago_cliente: sale.valor_pago_cliente,
     valor_liquido: sale.valor_liquido,
     data_hora: sale.data_hora,
-    utm_source: sale.utm_source,
-    utm_medium: sale.utm_medium,
-    utm_campaign: sale.utm_campaign,
-    utm_content: sale.utm_content,
-    utm_term: sale.utm_term,
+    utm_source: sale.utm_source || null,
+    utm_medium: sale.utm_medium || null,
+    utm_campaign: sale.utm_campaign || null,
+    utm_content: sale.utm_content || null,
+    utm_term: sale.utm_term || null,
     status: sale.status,
     data_reembolso: sale.data_reembolso ?? null,
   })
@@ -114,7 +174,7 @@ export async function addSale(sale: Sale): Promise<void> {
 
 export async function updateSaleStatus(
   id: string,
-  status: 'aprovado' | 'reembolso',
+  status: SaleStatus,
   dataReembolso?: string,
 ): Promise<void> {
   const client = getSupabaseClient()
