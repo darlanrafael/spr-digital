@@ -113,28 +113,44 @@ function DashboardContent() {
     }, 0)
   }, [filteredSales])
 
-  // Buscar investimento Meta Ads via API quando o período muda
+  // Extrair primitivos de periodBounds para evitar loop infinito
+  // (periodBounds é objeto recriado a cada render via weekRange não-memoizado)
+  const boundsStart = periodBounds?.start ?? ''
+  const boundsEnd   = periodBounds?.end   ?? ''
+
+  const lastFetchRef = useRef('')
+
   useEffect(() => {
-    if (!periodBounds) return
-    const controller = new AbortController()
-    setMetaLoading(true)
-    setMetaApiData(null)
+    if (!boundsStart || !boundsEnd) return
     const projId = selectedProject === 'all' ? 'proj_1' : selectedProject
-    const url = `/api/meta/insights?dateStart=${periodBounds.start}&dateEnd=${periodBounds.end}&projectId=${projId}`
-    fetch(url, { signal: controller.signal })
-      .then(res => res.json())
-      .then((data: { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }) => {
+    const fetchKey = `${boundsStart}|${boundsEnd}|${projId}`
+    if (lastFetchRef.current === fetchKey) return
+    lastFetchRef.current = fetchKey
+
+    let cancelled = false
+    setMetaLoading(true)
+
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/meta/insights?dateStart=${boundsStart}&dateEnd=${boundsEnd}&projectId=${projId}`)
+        const data = await res.json() as { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }
+        if (cancelled) return
         if (data.erro || !data.total) {
           if (data.erro) console.warn('[Meta Ads] API erro:', data.erro)
           setMetaApiData(null)
         } else {
           setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
         }
-      })
-      .catch(err => { if (err.name !== 'AbortError') console.error('[Meta Ads] Fetch error:', err) })
-      .finally(() => setMetaLoading(false))
-    return () => controller.abort()
-  }, [periodBounds, selectedProject])
+      } catch (err) {
+        if (!cancelled) console.error('[Meta Ads] Fetch error:', err)
+      } finally {
+        if (!cancelled) setMetaLoading(false)
+      }
+    }
+
+    void run()
+    return () => { cancelled = true }
+  }, [boundsStart, boundsEnd, selectedProject])
 
   // Meta Ads: fallback manual (custos.metaAds do mês atual)
   const metaAdsBase = useMemo(() => {
