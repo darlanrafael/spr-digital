@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -25,9 +25,13 @@ import { FixedCost, VariableCost } from '@/types'
 type MetaCampanha = { name: string; spend: number; accountId: string }
 
 function MetaAdsCard({
+  dateStart,
+  dateEnd,
   projectId,
   onTotalChange,
 }: {
+  dateStart: string
+  dateEnd: string
   projectId: string
   onTotalChange: (total: number) => void
 }) {
@@ -36,46 +40,50 @@ function MetaAdsCard({
   const [campanhas, setCampanhas] = useState<MetaCampanha[]>([])
   const [expanded, setExpanded] = useState(false)
   const [erro, setErro] = useState(false)
+  // refreshKey força nova busca manual mantendo as mesmas datas
+  const [refreshKey, setRefreshKey] = useState(0)
+  const mountedRef = useRef(true)
 
-  const buscar = async () => {
-    console.log('[MetaAdsCard] BOTÃO CLICADO — projectId:', projectId)
-    setLoading(true)
-    setErro(false)
+  useEffect(() => {
+    return () => { mountedRef.current = false }
+  }, [])
 
-    try {
-      const hoje = new Date()
-      const ano = hoje.getFullYear()
-      const mes = String(hoje.getMonth() + 1).padStart(2, '0')
-      const dia = String(hoje.getDate()).padStart(2, '0')
-      const dateEnd = `${ano}-${mes}-${dia}`
-      const dateStart = `${ano}-${mes}-01`
-      const url = `/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${projectId}`
+  // Busca automática: ao montar, ao mudar período e ao forçar refresh manual
+  useEffect(() => {
+    if (!dateStart || !dateEnd) return
+    let cancelled = false
 
-      console.log('[MetaAdsCard] fetch:', url)
-      const res = await fetch(url)
-      console.log('[MetaAdsCard] status:', res.status)
+    const run = async () => {
+      if (!mountedRef.current) return
+      setLoading(true)
+      setErro(false)
 
-      const text = await res.text()
-      console.log('[MetaAdsCard] raw:', text.slice(0, 200))
+      try {
+        const url = `/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${projectId}`
+        console.log('[MetaAdsCard] fetch:', url)
+        const res = await fetch(url)
+        const data = await res.json() as { total?: number; campanhas?: MetaCampanha[]; erro?: string }
+        console.log('[MetaAdsCard] total:', data.total, '| campanhas:', data.campanhas?.length)
 
-      const data = JSON.parse(text) as { total?: number; campanhas?: MetaCampanha[]; erro?: string }
-      console.log('[MetaAdsCard] total recebido:', data.total, '| campanhas:', data.campanhas?.length)
-
-      const t = typeof data.total === 'number' ? data.total : 0
-      setTotal(t)
-      setCampanhas(data.campanhas ?? [])
-      onTotalChange(t)
-      console.log('[MetaAdsCard] setTotal chamado com:', t)
-    } catch (err) {
-      console.error('[MetaAdsCard] ERRO:', err)
-      setErro(true)
-      setTotal(0)
-      onTotalChange(0)
-    } finally {
-      setLoading(false)
-      console.log('[MetaAdsCard] FINALIZADO')
+        if (!cancelled && mountedRef.current) {
+          const t = typeof data.total === 'number' ? data.total : 0
+          setTotal(t)
+          setCampanhas(data.campanhas ?? [])
+          onTotalChange(t)
+        }
+      } catch (err) {
+        console.error('[MetaAdsCard] ERRO:', err)
+        if (!cancelled && mountedRef.current) setErro(true)
+      } finally {
+        if (!cancelled && mountedRef.current) setLoading(false)
+      }
     }
-  }
+
+    run()
+    return () => { cancelled = true }
+  // onTotalChange é setMetaAdsTotal — setter estável do React, não causa re-runs extras
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateStart, dateEnd, projectId, refreshKey])
 
   const fmt = (v: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
@@ -90,12 +98,17 @@ function MetaAdsCard({
           Investimento Meta Ads
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {total !== null && <span style={{ fontSize: '9px', color: '#60A5FA', fontWeight: 700 }}>API</span>}
+          {total !== null && !loading && <span style={{ fontSize: '9px', color: '#60A5FA', fontWeight: 700 }}>API</span>}
+          {loading && (
+            <span style={{ fontSize: '10px', color: '#6B7280', animation: 'spin 1s linear infinite', display: 'inline-block' }}>
+              ◌
+            </span>
+          )}
           <button
             type="button"
-            onClick={buscar}
+            onClick={() => setRefreshKey(k => k + 1)}
             disabled={loading}
-            title="Buscar via Meta Ads API"
+            title="Atualizar via Meta Ads API"
             style={{
               background: 'transparent',
               border: '1px solid rgba(255,255,255,0.15)',
@@ -107,7 +120,7 @@ function MetaAdsCard({
               lineHeight: 1,
             }}
           >
-            {loading ? '⏳' : '↻'}
+            ↻
           </button>
           <Target style={{ width: '16px', height: '16px', color: '#6B7280' }} />
         </div>
@@ -116,10 +129,10 @@ function MetaAdsCard({
       {/* Body */}
       {erro ? (
         <div>
-          <p style={{ fontSize: '20px', fontWeight: 700, color: '#F87171', margin: 0 }}>Erro</p>
+          <p style={{ fontSize: '20px', fontWeight: 700, color: '#F87171', margin: 0 }}>Erro ao buscar</p>
           <button
             type="button"
-            onClick={buscar}
+            onClick={() => setRefreshKey(k => k + 1)}
             style={{ background: 'none', border: 'none', color: '#6B7280', cursor: 'pointer', fontSize: '11px', padding: 0, marginTop: '4px' }}
           >
             Tentar novamente
@@ -127,12 +140,16 @@ function MetaAdsCard({
         </div>
       ) : total === null ? (
         <div>
-          <p style={{ fontSize: '22px', fontWeight: 700, color: '#6B7280', margin: 0 }}>—</p>
-          <p style={{ fontSize: '11px', color: '#4B5563', margin: '4px 0 0' }}>Clique em ↻ para buscar dados reais</p>
+          <p style={{ fontSize: '16px', fontWeight: 500, color: '#6B7280', margin: 0 }}>
+            {loading ? 'Carregando...' : '—'}
+          </p>
+          {!loading && <p style={{ fontSize: '11px', color: '#4B5563', margin: '4px 0 0' }}>Aguardando dados</p>}
         </div>
       ) : (
         <div>
-          <p style={{ fontSize: '22px', fontWeight: 700, color: '#F87171', margin: 0 }}>{fmt(total)}</p>
+          <p style={{ fontSize: '22px', fontWeight: 700, color: '#F87171', margin: 0 }}>
+            {fmt(total)}
+          </p>
           <button
             type="button"
             onClick={() => setExpanded(v => !v)}
@@ -368,6 +385,9 @@ function DashboardContent() {
   const bestTimesAEnd = periodBounds?.end ?? todayStr
 
   const metaProjId = selectedProject === 'all' ? 'proj_1' : selectedProject
+  // Datas do Meta Ads seguem o filtro de período; fallback = mês atual
+  const metaDateStart = periodBounds?.start ?? `${monthStr}-01`
+  const metaDateEnd = periodBounds?.end ?? todayStr
 
   return (
     <div className="min-h-screen bg-gray-950">
@@ -450,8 +470,10 @@ function DashboardContent() {
             <p className="text-xs text-gray-500 mt-1">Após taxas da plataforma</p>
           </div>
 
-          {/* Meta Ads — componente autônomo */}
+          {/* Meta Ads — componente autônomo, busca ao montar e ao mudar período */}
           <MetaAdsCard
+            dateStart={metaDateStart}
+            dateEnd={metaDateEnd}
             projectId={metaProjId}
             onTotalChange={setMetaAdsTotal}
           />
