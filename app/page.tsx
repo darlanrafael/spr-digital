@@ -190,6 +190,22 @@ function DashboardContent() {
       const data = await res.json() as { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }
       if (data.total && data.total > 0) {
         setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
+        // Persiste no Supabase e atualiza estado local de custos
+        const mes = periodBounds.start.slice(0, 7)
+        try {
+          await upsertMetaAds(projId, mes, data.total)
+          setCosts(prev => {
+            const idx = prev.metaAds.findIndex(m => m.mes === mes && m.projetoId === projId)
+            if (idx >= 0) {
+              const updated = [...prev.metaAds]
+              updated[idx] = { ...updated[idx], valor: data.total! }
+              return { ...prev, metaAds: updated }
+            }
+            return { ...prev, metaAds: [...prev.metaAds, { mes, valor: data.total!, projetoId: projId }] }
+          })
+        } catch (e) {
+          console.error('[Meta Ads] Erro ao salvar no Supabase:', e)
+        }
       } else {
         if (data.erro) console.warn('[Meta Ads] API erro:', data.erro)
         setMetaApiData(null)
@@ -424,17 +440,20 @@ function DashboardContent() {
               </div>
             ) : metaApiData !== null && metaApiData.total > 0 ? (
               <>
-                <p className="text-2xl font-bold text-white">{formatCurrency(metaApiData.total)}</p>
+                <p className="text-2xl font-bold text-white">
+                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(metaApiData.total)}
+                </p>
                 {metaApiData.campanhas.length > 0 ? (
                   <button
                     onClick={() => setMetaExpanded(p => !p)}
                     className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 mt-1 transition-colors"
                   >
+                    <span className="text-[9px] text-blue-400/70 font-medium mr-0.5">Meta Ads · automático ·</span>
                     {metaApiData.campanhas.length} campanha{metaApiData.campanhas.length !== 1 ? 's' : ''}
                     {metaExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                   </button>
                 ) : (
-                  <p className="text-xs text-gray-500 mt-1">Nenhuma campanha no período</p>
+                  <p className="text-xs text-gray-500 mt-1">Meta Ads · automático · nenhuma campanha no período</p>
                 )}
                 {metaExpanded && metaApiData.campanhas.length > 0 && (
                   <div className="mt-2 space-y-1 border-t border-white/10 pt-2">

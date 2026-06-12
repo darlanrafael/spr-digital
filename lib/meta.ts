@@ -6,6 +6,8 @@ export interface MetaCampanha {
   accountId: string
 }
 
+type RawCampaign = { name: string; insights?: { data?: Array<{ spend: string }> } }
+
 function getToken(): string | null {
   return process.env.META_ACCESS_TOKEN ?? null
 }
@@ -23,32 +25,50 @@ export async function getAdAccountCampaigns(
   const token = getToken()
   if (!token) return []
 
-  const timeRange = JSON.stringify({ since: dateStart, until: dateEnd })
-  const url =
+  const timeRange = encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))
+  let nextUrl: string | null =
     `${BASE_URL}/act_${accountId}/campaigns` +
     `?fields=name,insights{spend}` +
-    `&time_range=${encodeURIComponent(timeRange)}` +
+    `&time_range=${timeRange}` +
+    `&limit=100` +
     `&access_token=${token}`
 
-  let res: Response
-  try {
-    res = await fetch(url, { cache: 'no-store' })
-  } catch (err) {
-    console.error('[Meta API] Erro de rede na conta:', accountId, err)
-    return []
+  const allCampaigns: RawCampaign[] = []
+
+  while (nextUrl) {
+    let res: Response
+    try {
+      res = await fetch(nextUrl, { cache: 'no-store' })
+    } catch (err) {
+      console.error('[Meta API] Erro de rede na conta:', accountId, err)
+      break
+    }
+
+    if (!res.ok) {
+      const body = await res.text()
+      console.error('[Meta API] Erro HTTP na conta:', accountId, res.status, body.slice(0, 300))
+      break
+    }
+
+    const json = await res.json() as {
+      data?: RawCampaign[]
+      paging?: { next?: string }
+      error?: { message: string }
+    }
+
+    if (json.error) {
+      console.error('[Meta API] Erro na conta:', accountId, json.error.message)
+      break
+    }
+
+    const page = json.data ?? []
+    allCampaigns.push(...page)
+    console.log(`[Meta API] conta ${accountId}: página com ${page.length} campanhas (total acumulado: ${allCampaigns.length})`)
+
+    nextUrl = json.paging?.next ?? null
   }
 
-  if (!res.ok) {
-    const body = await res.text()
-    console.error('[Meta API] Erro HTTP na conta:', accountId, res.status, body.slice(0, 200))
-    return []
-  }
-
-  const json = await res.json() as {
-    data?: Array<{ name: string; insights?: { data?: Array<{ spend: string }> } }>
-  }
-
-  return (json.data ?? []).map(c => ({
+  return allCampaigns.map(c => ({
     name: c.name,
     spend: parseFloat(c.insights?.data?.[0]?.spend ?? '0') || 0,
   }))
