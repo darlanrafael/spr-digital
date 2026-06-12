@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -19,6 +19,148 @@ import {
   deleteCost as svcDeleteVar,
 } from '@/lib/services'
 import { FixedCost, VariableCost } from '@/types'
+
+// ─── MetaAdsCard — componente autônomo com estado próprio ──────────────────────
+// Definido fora de DashboardContent para que re-renders do pai não o afetem.
+type MetaCampanha = { name: string; spend: number; accountId: string }
+
+function MetaAdsCard({
+  projectId,
+  onTotalChange,
+}: {
+  projectId: string
+  onTotalChange: (total: number) => void
+}) {
+  const [total, setTotal] = useState<number | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [campanhas, setCampanhas] = useState<MetaCampanha[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const [erro, setErro] = useState(false)
+
+  const buscar = async () => {
+    console.log('[MetaAdsCard] BOTÃO CLICADO — projectId:', projectId)
+    setLoading(true)
+    setErro(false)
+
+    try {
+      const hoje = new Date()
+      const ano = hoje.getFullYear()
+      const mes = String(hoje.getMonth() + 1).padStart(2, '0')
+      const dia = String(hoje.getDate()).padStart(2, '0')
+      const dateEnd = `${ano}-${mes}-${dia}`
+      const dateStart = `${ano}-${mes}-01`
+      const url = `/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${projectId}`
+
+      console.log('[MetaAdsCard] fetch:', url)
+      const res = await fetch(url)
+      console.log('[MetaAdsCard] status:', res.status)
+
+      const text = await res.text()
+      console.log('[MetaAdsCard] raw:', text.slice(0, 200))
+
+      const data = JSON.parse(text) as { total?: number; campanhas?: MetaCampanha[]; erro?: string }
+      console.log('[MetaAdsCard] total recebido:', data.total, '| campanhas:', data.campanhas?.length)
+
+      const t = typeof data.total === 'number' ? data.total : 0
+      setTotal(t)
+      setCampanhas(data.campanhas ?? [])
+      onTotalChange(t)
+      console.log('[MetaAdsCard] setTotal chamado com:', t)
+    } catch (err) {
+      console.error('[MetaAdsCard] ERRO:', err)
+      setErro(true)
+      setTotal(0)
+      onTotalChange(0)
+    } finally {
+      setLoading(false)
+      console.log('[MetaAdsCard] FINALIZADO')
+    }
+  }
+
+  const fmt = (v: number) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
+
+  const ativasFiltradas = campanhas.filter(c => c.spend > 0).sort((a, b) => b.spend - a.spend)
+
+  return (
+    <div style={{ background: '#111827', border: '1px solid rgba(99,179,237,0.3)', borderRadius: '12px', padding: '16px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '12px' }}>
+        <p style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: 500, margin: 0 }}>
+          Investimento Meta Ads
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {total !== null && <span style={{ fontSize: '9px', color: '#60A5FA', fontWeight: 700 }}>API</span>}
+          <button
+            type="button"
+            onClick={buscar}
+            disabled={loading}
+            title="Buscar via Meta Ads API"
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: '6px',
+              color: loading ? '#4B5563' : '#9CA3AF',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              fontSize: '15px',
+              padding: '3px 8px',
+              lineHeight: 1,
+            }}
+          >
+            {loading ? '⏳' : '↻'}
+          </button>
+          <Target style={{ width: '16px', height: '16px', color: '#6B7280' }} />
+        </div>
+      </div>
+
+      {/* Body */}
+      {erro ? (
+        <div>
+          <p style={{ fontSize: '20px', fontWeight: 700, color: '#F87171', margin: 0 }}>Erro</p>
+          <button
+            type="button"
+            onClick={buscar}
+            style={{ background: 'none', border: 'none', color: '#6B7280', cursor: 'pointer', fontSize: '11px', padding: 0, marginTop: '4px' }}
+          >
+            Tentar novamente
+          </button>
+        </div>
+      ) : total === null ? (
+        <div>
+          <p style={{ fontSize: '22px', fontWeight: 700, color: '#6B7280', margin: 0 }}>—</p>
+          <p style={{ fontSize: '11px', color: '#4B5563', margin: '4px 0 0' }}>Clique em ↻ para buscar dados reais</p>
+        </div>
+      ) : (
+        <div>
+          <p style={{ fontSize: '22px', fontWeight: 700, color: '#F87171', margin: 0 }}>{fmt(total)}</p>
+          <button
+            type="button"
+            onClick={() => setExpanded(v => !v)}
+            style={{ background: 'none', border: 'none', color: '#60A5FA', cursor: 'pointer', fontSize: '11px', padding: 0, marginTop: '4px' }}
+          >
+            {ativasFiltradas.length} campanha{ativasFiltradas.length !== 1 ? 's' : ''} · {expanded ? 'ocultar ▲' : 'ver detalhes ▼'}
+          </button>
+          {expanded && ativasFiltradas.length > 0 && (
+            <div style={{ marginTop: '8px', maxHeight: '160px', overflowY: 'auto' }}>
+              {ativasFiltradas.map((c, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <span style={{ fontSize: '11px', color: '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '68%' }}>
+                    {c.name}
+                  </span>
+                  <span style={{ fontSize: '11px', color: '#F9FAFB', fontWeight: 500, flexShrink: 0 }}>
+                    {fmt(c.spend)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 type PeriodFilter = 'today' | 'week' | 'month' | 'custom'
 type FaturamentoToggle = 'produto' | 'plataforma'
@@ -41,12 +183,8 @@ function DashboardContent() {
   const [faturamentoToggle, setFaturamentoToggle] = useState<FaturamentoToggle>('produto')
   const [balancoToggle, setBalancoToggle] = useState<BalancoToggle>('completo')
 
-  // ─── Meta Ads — estados simples e diretos ────────────────────────────────────
-  const [metaTotal, setMetaTotal] = useState<number | null>(null)
-  const [metaLoading, setMetaLoading] = useState<boolean>(false)
-  const [metaCampanhas, setMetaCampanhas] = useState<Array<{ name: string; spend: number; accountId: string }>>([])
-  const [metaExpanded, setMetaExpanded] = useState<boolean>(false)
-  const [metaErro, setMetaErro] = useState<boolean>(false)
+  // Total do Meta Ads comunicado via callback do MetaAdsCard
+  const [metaAdsTotal, setMetaAdsTotal] = useState<number>(0)
 
   // Custos fixos inline editing
   const [editingFixedId, setEditingFixedId] = useState<string | null>(null)
@@ -69,7 +207,6 @@ function DashboardContent() {
   const monthStr = todayStr.slice(0, 7)
   const weekRange = getCurrentWeekRange()
 
-  // Period bounds
   const periodBounds = useMemo(() => {
     if (period === 'today') return { start: todayStr, end: todayStr }
     if (period === 'week') return { start: weekRange.start, end: weekRange.end }
@@ -107,8 +244,6 @@ function DashboardContent() {
     }, 0)
   }, [filteredSales])
 
-  // Para cálculos financeiros: usa valor da API se disponível, senão 0
-  const metaAdsTotal = metaTotal ?? 0
   const roas = metaAdsTotal > 0 ? faturamentoLiquido / metaAdsTotal : null
 
   const fixedCostsTotal = useMemo(
@@ -160,45 +295,6 @@ function DashboardContent() {
   const resultadoCompleto = faturamentoBruto - impostoTotal - metaAdsTotal - fixedCostsTotal - varCostsTotal
   const resultadoSemFixos = faturamentoBruto - impostoTotal - metaAdsTotal - varCostsTotal
 
-  // ─── Meta Ads — busca manual ─────────────────────────────────────────────────
-  const buscarMetaAds = async (): Promise<void> => {
-    console.log('[Meta Ads] === INICIANDO BUSCA ===')
-    setMetaLoading(true)
-    setMetaErro(false)
-
-    try {
-      const hoje = new Date()
-      const ano = hoje.getFullYear()
-      const mes = String(hoje.getMonth() + 1).padStart(2, '0')
-      const dia = String(hoje.getDate()).padStart(2, '0')
-      const dateEnd = `${ano}-${mes}-${dia}`
-      const dateStart = `${ano}-${mes}-01`
-
-      const url = `/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${selectedProject === 'all' ? 'proj_1' : selectedProject}`
-      console.log('[Meta Ads] URL:', url)
-
-      const res = await fetch(url)
-      console.log('[Meta Ads] status HTTP:', res.status)
-
-      const text = await res.text()
-      console.log('[Meta Ads] resposta raw:', text)
-
-      const data = JSON.parse(text) as { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }
-      console.log('[Meta Ads] total:', data.total)
-      console.log('[Meta Ads] campanhas:', data.campanhas?.length)
-
-      setMetaTotal(data.total ?? 0)
-      setMetaCampanhas(data.campanhas ?? [])
-    } catch (err) {
-      console.error('[Meta Ads] ERRO:', err)
-      setMetaErro(true)
-      setMetaTotal(0)
-    } finally {
-      setMetaLoading(false)
-      console.log('[Meta Ads] === BUSCA FINALIZADA ===')
-    }
-  }
-
   // Fixed costs CRUD
   function startEditFixed(c: FixedCost) {
     setEditingFixedId(c.id)
@@ -208,10 +304,7 @@ function DashboardContent() {
   async function saveEditFixed(id: string) {
     const patch = { descricao: editFixedForm.descricao, valor: parseFloat(editFixedForm.valor) || 0 }
     try { await svcUpdateFixed(id, patch) } catch (e) { console.error(e) }
-    setCosts(prev => ({
-      ...prev,
-      fixos: prev.fixos.map(c => c.id === id ? { ...c, ...patch } : c),
-    }))
+    setCosts(prev => ({ ...prev, fixos: prev.fixos.map(c => c.id === id ? { ...c, ...patch } : c) }))
     setEditingFixedId(null)
   }
 
@@ -243,10 +336,7 @@ function DashboardContent() {
   async function saveEditVar(id: string) {
     const patch = { descricao: editVarForm.descricao, valor: parseFloat(editVarForm.valor) || 0, data: editVarForm.data }
     try { await svcUpdateVar(id, patch) } catch (e) { console.error(e) }
-    setCosts(prev => ({
-      ...prev,
-      variaveis: prev.variaveis.map(c => c.id === id ? { ...c, ...patch } : c),
-    }))
+    setCosts(prev => ({ ...prev, variaveis: prev.variaveis.map(c => c.id === id ? { ...c, ...patch } : c) }))
     setEditingVarId(null)
   }
 
@@ -271,14 +361,13 @@ function DashboardContent() {
   }
 
   const periodLabels: Record<PeriodFilter, string> = {
-    today: 'Hoje',
-    week: 'Esta semana',
-    month: 'Este mês',
-    custom: 'Personalizado',
+    today: 'Hoje', week: 'Esta semana', month: 'Este mês', custom: 'Personalizado',
   }
 
   const bestTimesAStart = periodBounds?.start ?? `${monthStr}-01`
   const bestTimesAEnd = periodBounds?.end ?? todayStr
+
+  const metaProjId = selectedProject === 'all' ? 'proj_1' : selectedProject
 
   return (
     <div className="min-h-screen bg-gray-950">
@@ -295,9 +384,7 @@ function DashboardContent() {
               key={tab.key}
               onClick={() => setDashTab(tab.key)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                dashTab === tab.key
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-gray-400 hover:text-white'
+                dashTab === tab.key ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               {tab.label}
@@ -363,90 +450,11 @@ function DashboardContent() {
             <p className="text-xs text-gray-500 mt-1">Após taxas da plataforma</p>
           </div>
 
-          {/* Meta Ads — card reescrito do zero */}
-          <div style={{ background: '#111827', border: '1px solid rgba(99,179,237,0.3)', borderRadius: '12px', padding: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <p style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: 500, margin: 0 }}>
-                Investimento Meta Ads
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {metaTotal !== null && (
-                  <span style={{ fontSize: '9px', color: '#60A5FA', fontWeight: 600 }}>API</span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    console.log('[Meta Ads] BOTÃO CLICADO')
-                    buscarMetaAds()
-                  }}
-                  disabled={metaLoading}
-                  style={{
-                    background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.15)',
-                    borderRadius: '6px',
-                    color: metaLoading ? '#4B5563' : '#9CA3AF',
-                    cursor: metaLoading ? 'not-allowed' : 'pointer',
-                    fontSize: '14px',
-                    padding: '3px 7px',
-                    lineHeight: 1,
-                  }}
-                  title="Buscar dados do Meta Ads"
-                >
-                  {metaLoading ? '⏳' : '↻'}
-                </button>
-                <Target className="w-4 h-4" style={{ color: '#6B7280' }} />
-              </div>
-            </div>
-
-            {metaErro ? (
-              <div>
-                <p style={{ fontSize: '20px', fontWeight: 700, color: '#F87171', margin: 0 }}>Erro</p>
-                <button
-                  type="button"
-                  onClick={buscarMetaAds}
-                  style={{ background: 'none', border: 'none', color: '#6B7280', cursor: 'pointer', fontSize: '11px', padding: 0, marginTop: '4px' }}
-                >
-                  Tentar novamente
-                </button>
-              </div>
-            ) : metaTotal === null ? (
-              <div>
-                <p style={{ fontSize: '22px', fontWeight: 700, color: '#F9FAFB', margin: 0 }}>R$ 0,00</p>
-                <p style={{ fontSize: '11px', color: '#6B7280', margin: '4px 0 0' }}>Clique em ↻ para buscar dados reais</p>
-              </div>
-            ) : (
-              <div>
-                <p style={{ fontSize: '22px', fontWeight: 700, color: '#F87171', margin: 0 }}>
-                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(metaTotal)}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setMetaExpanded(v => !v)}
-                  style={{ background: 'none', border: 'none', color: '#6B7280', cursor: 'pointer', fontSize: '11px', padding: 0, marginTop: '4px' }}
-                >
-                  {metaCampanhas.filter(c => c.spend > 0).length} campanhas ativas · {metaExpanded ? 'ocultar ▲' : 'ver detalhes ▼'}
-                </button>
-                {metaExpanded && (
-                  <div style={{ marginTop: '8px', maxHeight: '160px', overflowY: 'auto' }}>
-                    {metaCampanhas
-                      .filter(c => c.spend > 0)
-                      .sort((a, b) => b.spend - a.spend)
-                      .map((c, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          <span style={{ fontSize: '11px', color: '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>
-                            {c.name}
-                          </span>
-                          <span style={{ fontSize: '11px', color: '#F9FAFB', fontWeight: 500, marginLeft: '8px', flexShrink: 0 }}>
-                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(c.spend)}
-                          </span>
-                        </div>
-                      ))
-                    }
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          {/* Meta Ads — componente autônomo */}
+          <MetaAdsCard
+            projectId={metaProjId}
+            onTotalChange={setMetaAdsTotal}
+          />
 
           {/* ROAS */}
           <div className={`bg-gray-900 rounded-xl border p-4 ${
