@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
   const dateStart = searchParams.get('dateStart') ?? ''
   const dateEnd   = searchParams.get('dateEnd')   ?? ''
   const projectId = searchParams.get('projectId') ?? 'proj_1'
+  console.log('[Meta Insights] requisição recebida:', searchParams.toString())
 
   if (!dateStart || !dateEnd) {
     return NextResponse.json({ error: 'dateStart e dateEnd são obrigatórios' }, { status: 400 })

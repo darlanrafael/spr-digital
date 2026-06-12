@@ -12,8 +12,10 @@ function getToken(): string | null {
   return process.env.META_ACCESS_TOKEN ?? null
 }
 
+const FALLBACK_ACCOUNT_IDS = '839071654129606,634349981641861,648308663489123,414167410861240,1400409620438158'
+
 function getAccountIds(): string[] {
-  const raw = process.env.META_AD_ACCOUNT_IDS ?? ''
+  const raw = process.env.META_AD_ACCOUNT_IDS ?? FALLBACK_ACCOUNT_IDS
   return raw.split(',').map(s => s.trim()).filter(Boolean)
 }
 
