@@ -123,8 +123,8 @@ function DashboardContent() {
     return entries.reduce((a, m) => a + m.valor, 0)
   }, [costs.metaAds, selectedProject, monthStr])
 
-  // Usa API quando disponível e total > 0; caso contrário usa valor manual
-  const metaAdsTotal = (metaApiData && metaApiData.total > 0) ? metaApiData.total : metaAdsBase
+  // Usa API quando disponível; caso contrário usa valor manual do mês
+  const metaAdsTotal = metaApiData !== null ? metaApiData.total : metaAdsBase
 
   const roas = metaAdsTotal > 0 ? faturamentoLiquido / metaAdsTotal : null
 
@@ -179,39 +179,57 @@ function DashboardContent() {
 
   // Meta Ads — busca manual
   async function handleFetchMetaAds() {
-    if (!periodBounds) return
+    console.log('[Meta Ads] botão clicado')
     const projId = selectedProject === 'all' ? 'proj_1' : selectedProject
+    // Usar período do filtro global; fallback para mês atual se indefinido
+    const dateStart = periodBounds?.start ?? `${monthStr}-01`
+    const dateEnd   = periodBounds?.end   ?? todayStr
+
     setMetaLoading(true)
     setMetaError(false)
+    console.log('[Meta Ads] buscando:', { dateStart, dateEnd, projId })
+
     try {
       const res = await fetch(
-        `/api/meta/insights?dateStart=${periodBounds.start}&dateEnd=${periodBounds.end}&projectId=${projId}`
+        `/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${projId}`
       )
-      const data = await res.json() as { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }
-      if (data.total && data.total > 0) {
-        setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
-        // Persiste no Supabase e atualiza estado local de custos
-        const mes = periodBounds.start.slice(0, 7)
-        try {
-          await upsertMetaAds(projId, mes, data.total)
-          setCosts(prev => {
-            const idx = prev.metaAds.findIndex(m => m.mes === mes && m.projetoId === projId)
-            if (idx >= 0) {
-              const updated = [...prev.metaAds]
-              updated[idx] = { ...updated[idx], valor: data.total! }
-              return { ...prev, metaAds: updated }
-            }
-            return { ...prev, metaAds: [...prev.metaAds, { mes, valor: data.total!, projetoId: projId }] }
-          })
-        } catch (e) {
-          console.error('[Meta Ads] Erro ao salvar no Supabase:', e)
-        }
-      } else {
-        if (data.erro) console.warn('[Meta Ads] API erro:', data.erro)
-        setMetaApiData(null)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+      const data = await res.json() as {
+        total?: number
+        campanhas?: Array<{ name: string; spend: number; accountId: string }>
+        erro?: string
+      }
+      console.log('[Meta Ads] resposta:', data)
+
+      if (data.erro) {
+        console.warn('[Meta Ads] erro da API:', data.erro)
+        setMetaError(true)
+        return
+      }
+
+      // Sempre atualiza o card com o resultado da API, mesmo se total = 0
+      const total = data.total ?? 0
+      setMetaApiData({ total, campanhas: data.campanhas ?? [] })
+
+      // Persiste no Supabase e sincroniza estado local
+      const mes = dateStart.slice(0, 7)
+      try {
+        await upsertMetaAds(projId, mes, total)
+        setCosts(prev => {
+          const idx = prev.metaAds.findIndex(m => m.mes === mes && m.projetoId === projId)
+          if (idx >= 0) {
+            const updated = [...prev.metaAds]
+            updated[idx] = { ...updated[idx], valor: total }
+            return { ...prev, metaAds: updated }
+          }
+          return { ...prev, metaAds: [...prev.metaAds, { mes, valor: total, projetoId: projId }] }
+        })
+      } catch (e) {
+        console.error('[Meta Ads] erro ao salvar no Supabase:', e)
       }
     } catch (err) {
-      console.error('[Meta Ads] Fetch error:', err)
+      console.error('[Meta Ads] erro ao buscar:', err)
       setMetaError(true)
     } finally {
       setMetaLoading(false)
@@ -415,7 +433,7 @@ function DashboardContent() {
               <div className="flex items-center gap-1.5">
                 {metaApiData && <span className="text-[9px] text-blue-400 font-medium">API</span>}
                 <button
-                  onClick={handleFetchMetaAds}
+                  onClick={() => { console.log('[Meta Ads] botão clicado'); handleFetchMetaAds() }}
                   disabled={metaLoading}
                   title="Buscar via Meta API"
                   className="text-gray-500 hover:text-blue-400 disabled:opacity-40 transition-colors"
@@ -438,7 +456,7 @@ function DashboardContent() {
                   Tentar novamente
                 </button>
               </div>
-            ) : metaApiData !== null && metaApiData.total > 0 ? (
+            ) : metaApiData !== null ? (
               <>
                 <p className="text-2xl font-bold text-white">
                   {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(metaApiData.total)}
