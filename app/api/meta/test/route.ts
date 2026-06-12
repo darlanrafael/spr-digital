@@ -13,10 +13,15 @@ export async function GET() {
     })
   }
 
+  const hoje = new Date()
+  const dateEnd = hoje.toISOString().split('T')[0]
+  const dateStart = new Date(new Date().setDate(hoje.getDate() - 30)).toISOString().split('T')[0]
+  const timeRange = encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))
+
   const url =
     `https://graph.facebook.com/v19.0/act_${accountId}/campaigns` +
     `?fields=name,insights{spend}` +
-    `&date_preset=last_30_days` +
+    `&time_range=${timeRange}` +
     `&access_token=${token}`
 
   let apiResponse: unknown
