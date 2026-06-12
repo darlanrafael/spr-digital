@@ -4,8 +4,10 @@ import { findSaleByEmailAndProduct, findSaleByPlatformId, updateSaleStatus } fro
 import type { Sale, SaleStatus } from '@/types'
 
 const PROJECT_ID = 'proj_1'
+const debugMode = true // TEMPORÁRIO — desabilitar após diagnóstico
 
 function validateSignature(req: NextRequest): boolean {
+  if (debugMode) return true // TEMPORÁRIO — validação desabilitada para debug
   const secret = process.env.HUBLA_WEBHOOK_SECRET
   if (!secret) return true
   const sig =
@@ -30,6 +32,10 @@ function detectFormat(payload: Record<string, unknown>): HublaFormat {
 // ─── Handler principal ──────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Capturar headers para debug
+  const debugHeaders: Record<string, string> = {}
+  if (debugMode) req.headers.forEach((v, k) => { debugHeaders[k] = v })
+
   if (!validateSignature(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -48,14 +54,45 @@ export async function POST(req: NextRequest) {
   console.log('[Hubla webhook] evento recebido:', eventLabel, '| formato detectado:', format)
 
   try {
-    if (format === 'A') return await handleFormatA(payload)
-    if (format === 'B') return await handleFormatB(payload)
-    if (format === 'C') return await handleFormatC(payload)
+    let result: NextResponse
 
-    console.log('[Hubla webhook] evento desconhecido ignorado:', eventLabel)
-    return NextResponse.json({ success: true, event: 'ignored' }, { status: 200 })
+    if (format === 'A') result = await handleFormatA(payload)
+    else if (format === 'B') result = await handleFormatB(payload)
+    else if (format === 'C') result = await handleFormatC(payload)
+    else {
+      console.log('[Hubla webhook] evento desconhecido ignorado:', eventLabel)
+      result = NextResponse.json({ success: true, event: 'ignored' }, { status: 200 })
+    }
+
+    if (debugMode) {
+      const body = await result.json()
+      return NextResponse.json({
+        ...body,
+        debug: {
+          formatoDetectado: format,
+          evento: eventLabel,
+          headersRecebidos: debugHeaders,
+          payloadRecebido: payload,
+        },
+      }, { status: result.status })
+    }
+
+    return result
   } catch (error) {
-    console.error('[Hubla webhook] erro:', error)
+    const msg = error instanceof Error ? error.message : String(error)
+    console.error('[Hubla webhook] erro:', msg)
+    if (debugMode) {
+      return NextResponse.json({
+        error: 'Internal server error',
+        debug: {
+          erroDetalhado: msg,
+          formatoDetectado: detectFormat(payload),
+          evento: eventLabel,
+          headersRecebidos: debugHeaders,
+          payloadRecebido: payload,
+        },
+      }, { status: 500 })
+    }
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useMemo, useRef, useEffect } from 'react'
-import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { useState, useMemo, useRef } from 'react'
+import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -41,12 +41,13 @@ function DashboardContent() {
   const [faturamentoToggle, setFaturamentoToggle] = useState<FaturamentoToggle>('produto')
   const [balancoToggle, setBalancoToggle] = useState<BalancoToggle>('completo')
 
-  // Meta Ads — API
+  // Meta Ads — API (busca manual via botão)
   const [metaApiData, setMetaApiData] = useState<{
     total: number
     campanhas: Array<{ name: string; spend: number; accountId: string }>
   } | null>(null)
   const [metaLoading, setMetaLoading] = useState(false)
+  const [metaError, setMetaError] = useState(false)
   const [metaExpanded, setMetaExpanded] = useState(false)
 
   // Meta Ads inline editing (fallback manual)
@@ -113,40 +114,6 @@ function DashboardContent() {
     }, 0)
   }, [filteredSales])
 
-  // Primitivos estáveis para as deps do useEffect (evita loop com objeto)
-  const boundsStart = periodBounds?.start ?? ''
-  const boundsEnd   = periodBounds?.end   ?? ''
-
-  const lastFetchRef = useRef('')
-
-  useEffect(() => {
-    if (!boundsStart || !boundsEnd) return
-    const projId = selectedProject === 'all' ? 'proj_1' : selectedProject
-    const fetchKey = boundsStart + boundsEnd + projId
-    if (lastFetchRef.current === fetchKey) return
-    lastFetchRef.current = fetchKey
-
-    const fetchMetaData = async () => {
-      setMetaLoading(true)
-      try {
-        const res = await fetch(`/api/meta/insights?dateStart=${boundsStart}&dateEnd=${boundsEnd}&projectId=${projId}`)
-        const data = await res.json() as { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }
-        if (data.total && data.total > 0) {
-          setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
-        } else {
-          if (data.erro) console.warn('[Meta Ads] API erro:', data.erro)
-          setMetaApiData(null)
-        }
-      } catch (err) {
-        console.error('[Meta Ads] Fetch error:', err)
-      } finally {
-        setMetaLoading(false)
-      }
-    }
-
-    void fetchMetaData()
-  }, [boundsStart, boundsEnd, selectedProject])
-
   // Meta Ads: fallback manual (custos.metaAds do mês atual)
   const metaAdsBase = useMemo(() => {
     const entries = costs.metaAds.filter(m => {
@@ -209,6 +176,31 @@ function DashboardContent() {
 
   const resultadoCompleto = faturamentoBruto - impostoTotal - metaAdsTotal - fixedCostsTotal - varCostsTotal
   const resultadoSemFixos = faturamentoBruto - impostoTotal - metaAdsTotal - varCostsTotal
+
+  // Meta Ads — busca manual
+  async function handleFetchMetaAds() {
+    if (!periodBounds) return
+    const projId = selectedProject === 'all' ? 'proj_1' : selectedProject
+    setMetaLoading(true)
+    setMetaError(false)
+    try {
+      const res = await fetch(
+        `/api/meta/insights?dateStart=${periodBounds.start}&dateEnd=${periodBounds.end}&projectId=${projId}`
+      )
+      const data = await res.json() as { total?: number; campanhas?: Array<{ name: string; spend: number; accountId: string }>; erro?: string }
+      if (data.total && data.total > 0) {
+        setMetaApiData({ total: data.total, campanhas: data.campanhas ?? [] })
+      } else {
+        if (data.erro) console.warn('[Meta Ads] API erro:', data.erro)
+        setMetaApiData(null)
+      }
+    } catch (err) {
+      console.error('[Meta Ads] Fetch error:', err)
+      setMetaError(true)
+    } finally {
+      setMetaLoading(false)
+    }
+  }
 
   // Meta Ads editing
   function startEditMetaAds() {
@@ -406,14 +398,29 @@ function DashboardContent() {
               <p className="text-xs text-gray-400 font-medium">Investimento Meta Ads</p>
               <div className="flex items-center gap-1.5">
                 {metaApiData && <span className="text-[9px] text-blue-400 font-medium">API</span>}
+                <button
+                  onClick={handleFetchMetaAds}
+                  disabled={metaLoading}
+                  title="Buscar via Meta API"
+                  className="text-gray-500 hover:text-blue-400 disabled:opacity-40 transition-colors"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${metaLoading ? 'animate-spin' : ''}`} />
+                </button>
                 <Target className="w-4 h-4 text-gray-500" />
               </div>
             </div>
 
             {metaLoading ? (
-              <div className="animate-pulse">
-                <div className="h-8 bg-gray-700 rounded-lg w-28 mb-2" />
-                <div className="h-3 bg-gray-800 rounded w-16" />
+              <p className="text-sm text-gray-400 animate-pulse">Buscando...</p>
+            ) : metaError ? (
+              <div>
+                <p className="text-sm text-red-400">Erro — tente novamente</p>
+                <button
+                  onClick={handleFetchMetaAds}
+                  className="text-xs text-gray-500 hover:text-white mt-1 transition-colors"
+                >
+                  Tentar novamente
+                </button>
               </div>
             ) : metaApiData !== null && metaApiData.total > 0 ? (
               <>
