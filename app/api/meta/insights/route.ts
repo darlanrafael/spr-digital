@@ -10,13 +10,14 @@ const PROJECT_NOMENCLATURAS: Record<string, string[]> = {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const dateStart = searchParams.get('dateStart') ?? ''
-  const dateEnd   = searchParams.get('dateEnd')   ?? ''
-  const projectId = searchParams.get('projectId') ?? 'proj_1'
+  const dateStart  = searchParams.get('dateStart')  ?? ''
+  const dateEnd    = searchParams.get('dateEnd')    ?? ''
+  const datePreset = searchParams.get('datePreset') ?? ''
+  const projectId  = searchParams.get('projectId') ?? 'proj_1'
   console.log('[Meta Insights] requisição recebida:', searchParams.toString())
 
-  if (!dateStart || !dateEnd) {
-    return NextResponse.json({ error: 'dateStart e dateEnd são obrigatórios' }, { status: 400 })
+  if (!datePreset && (!dateStart || !dateEnd)) {
+    return NextResponse.json({ error: 'datePreset ou dateStart+dateEnd são obrigatórios' }, { status: 400 })
   }
 
   if (!process.env.META_ACCESS_TOKEN) {
@@ -26,7 +27,12 @@ export async function GET(req: NextRequest) {
   const nomenclaturas = PROJECT_NOMENCLATURAS[projectId] ?? PROJECT_NOMENCLATURAS['proj_1']
 
   try {
-    const result = await getProjectInvestment(nomenclaturas, dateStart, dateEnd)
+    const result = await getProjectInvestment(
+      nomenclaturas,
+      dateStart,
+      dateEnd,
+      datePreset || undefined,
+    )
 
     const totalFormatado = new Intl.NumberFormat('pt-BR', {
       style: 'currency',
@@ -38,7 +44,7 @@ export async function GET(req: NextRequest) {
       total: result.total,
       totalFormatado,
       campanhas: result.campanhas,
-      periodo: { dateStart, dateEnd },
+      periodo: datePreset ? { datePreset } : { dateStart, dateEnd },
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

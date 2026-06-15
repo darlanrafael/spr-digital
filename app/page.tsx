@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X } from 'lucide-react'
+import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, RotateCcw } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -25,14 +25,16 @@ import { FixedCost, VariableCost } from '@/types'
 type MetaCampanha = { name: string; spend: number; accountId: string }
 
 function MetaAdsCard({
-  dateStart,
-  dateEnd,
+  datePreset,
+  customDateStart,
+  customDateEnd,
   projectId,
   onTotalChange,
   periodKey,
 }: {
-  dateStart: string
-  dateEnd: string
+  datePreset: string
+  customDateStart?: string
+  customDateEnd?: string
   projectId: string
   onTotalChange: (total: number) => void
   periodKey: string
@@ -47,7 +49,9 @@ function MetaAdsCard({
 
   // Busca automática: ao montar, ao mudar período e ao forçar refresh manual
   useEffect(() => {
-    if (!dateStart || !dateEnd) return
+    const isCustom = datePreset === 'custom'
+    if (!datePreset) return
+    if (isCustom && (!customDateStart || !customDateEnd)) return
     let cancelled = false
 
     const run = async () => {
@@ -55,9 +59,10 @@ function MetaAdsCard({
       setErro(false)
 
       try {
-        const url = `/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${projectId}`
-        console.log('[MetaAdsCard] fetch:', url)
-        const res = await fetch(url)
+        const url = isCustom
+          ? `/api/meta/insights?dateStart=${customDateStart}&dateEnd=${customDateEnd}&projectId=${projectId}`
+          : `/api/meta/insights?datePreset=${datePreset}&projectId=${projectId}`
+        const res = await fetch(url, { cache: 'no-store' })
         const data = await res.json() as { total?: number; campanhas?: MetaCampanha[]; erro?: string }
         console.log('[MetaAdsCard] total:', data.total, '| campanhas:', data.campanhas?.length)
 
@@ -79,7 +84,7 @@ function MetaAdsCard({
     return () => { cancelled = true }
   // onTotalChange é setMetaAdsTotal — setter estável do React, não causa re-runs extras
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateStart, dateEnd, projectId, refreshKey, periodKey])
+  }, [datePreset, customDateStart, customDateEnd, projectId, refreshKey, periodKey])
 
   const fmt = (v: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
@@ -95,11 +100,6 @@ function MetaAdsCard({
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {total !== null && !loading && <span style={{ fontSize: '9px', color: '#60A5FA', fontWeight: 700 }}>API</span>}
-          {loading && (
-            <span style={{ fontSize: '10px', color: '#6B7280', animation: 'spin 1s linear infinite', display: 'inline-block' }}>
-              ◌
-            </span>
-          )}
           <button
             type="button"
             onClick={() => setRefreshKey(k => k + 1)}
@@ -111,12 +111,13 @@ function MetaAdsCard({
               borderRadius: '6px',
               color: loading ? '#4B5563' : '#9CA3AF',
               cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '15px',
-              padding: '3px 8px',
-              lineHeight: 1,
+              padding: '4px 6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
-            ↻
+            <RotateCcw className={`h-3.5 w-3.5${loading ? ' animate-spin' : ''}`} />
           </button>
           <Target style={{ width: '16px', height: '16px', color: '#6B7280' }} />
         </div>
@@ -175,7 +176,7 @@ function MetaAdsCard({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-type PeriodFilter = 'today' | 'week' | 'month' | 'custom'
+type PeriodFilter = 'today' | 'yesterday' | 'week' | 'month' | 'custom'
 type FaturamentoToggle = 'produto' | 'plataforma'
 type BalancoToggle = 'completo' | 'sem_fixos'
 
@@ -198,6 +199,8 @@ function DashboardContent() {
 
   // Total do Meta Ads comunicado via callback do MetaAdsCard
   const [metaAdsTotal, setMetaAdsTotal] = useState<number>(0)
+  // Preset nativo da Meta API para o período selecionado
+  const [metaDatePreset, setMetaDatePreset] = useState<string>('this_month')
   // Muda sempre que o usuário clica num botão de período, garantindo re-fetch
   const [metaPeriodKey, setMetaPeriodKey] = useState<string>('')
 
@@ -219,16 +222,19 @@ function DashboardContent() {
 
   const today = new Date()
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const yd = new Date(today); yd.setDate(today.getDate() - 1)
+  const yesterdayStr = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, '0')}-${String(yd.getDate()).padStart(2, '0')}`
   const monthStr = todayStr.slice(0, 7)
   const weekRange = getCurrentWeekRange()
 
   const periodBounds = useMemo(() => {
     if (period === 'today') return { start: todayStr, end: todayStr }
+    if (period === 'yesterday') return { start: yesterdayStr, end: yesterdayStr }
     if (period === 'week') return { start: weekRange.start, end: weekRange.end }
     if (period === 'month') return { start: `${monthStr}-01`, end: todayStr }
     if (period === 'custom' && customStart && customEnd) return { start: customStart, end: customEnd }
     return null
-  }, [period, todayStr, monthStr, weekRange, customStart, customEnd])
+  }, [period, todayStr, yesterdayStr, monthStr, weekRange, customStart, customEnd])
 
   const filteredSales = useMemo(() => {
     let base = sales.filter(s => s.status === 'aprovada')
@@ -375,17 +381,18 @@ function DashboardContent() {
     setShowVarModal(false)
   }
 
+  const metaPresets: Record<PeriodFilter, string> = {
+    today: 'today', yesterday: 'yesterday', week: 'last_7d', month: 'this_month', custom: 'custom',
+  }
+
   const periodLabels: Record<PeriodFilter, string> = {
-    today: 'Hoje', week: 'Esta semana', month: 'Este mês', custom: 'Personalizado',
+    today: 'Hoje', yesterday: 'Ontem', week: 'Esta semana', month: 'Este mês', custom: 'Personalizado',
   }
 
   const bestTimesAStart = periodBounds?.start ?? `${monthStr}-01`
   const bestTimesAEnd = periodBounds?.end ?? todayStr
 
   const metaProjId = selectedProject === 'all' ? 'proj_1' : selectedProject
-  // Datas do Meta Ads seguem o filtro de período; fallback = mês atual
-  const metaDateStart = periodBounds?.start ?? `${monthStr}-01`
-  const metaDateEnd = periodBounds?.end ?? todayStr
 
   return (
     <div className="min-h-screen bg-gray-950">
@@ -423,10 +430,10 @@ function DashboardContent() {
         {/* Period filter */}
         <div className="flex flex-wrap items-center gap-2 mb-6">
           <span className="text-xs text-gray-500">Período:</span>
-          {(['today', 'week', 'month', 'custom'] as PeriodFilter[]).map(p => (
+          {(['today', 'yesterday', 'week', 'month', 'custom'] as PeriodFilter[]).map(p => (
             <button
               key={p}
-              onClick={() => { setPeriod(p); setMetaPeriodKey(p + '_' + Date.now()) }}
+              onClick={() => { setPeriod(p); setMetaDatePreset(metaPresets[p]); setMetaPeriodKey(p + '_' + Date.now()) }}
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                 period === p ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
               }`}
@@ -470,8 +477,9 @@ function DashboardContent() {
 
           {/* Meta Ads — componente autônomo, busca ao montar e ao mudar período */}
           <MetaAdsCard
-            dateStart={metaDateStart}
-            dateEnd={metaDateEnd}
+            datePreset={metaDatePreset}
+            customDateStart={customStart}
+            customDateEnd={customEnd}
             projectId={metaProjId}
             onTotalChange={setMetaAdsTotal}
             periodKey={metaPeriodKey}

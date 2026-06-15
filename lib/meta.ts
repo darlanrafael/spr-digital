@@ -21,7 +21,7 @@ function getAccountIds(): string[] {
 
 async function fetchAccountPages(
   accountId: string,
-  timeRange: string,
+  dateParam: string,  // "date_preset=today" ou "time_range=<encoded-json>"
   token: string,
   nameFilter?: string,
 ): Promise<RawCampaign[]> {
@@ -29,10 +29,22 @@ async function fetchAccountPages(
     ? `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'name', operator: 'CONTAIN', value: nameFilter }]))}`
     : ''
 
+  // A Meta API ignora time_range e date_preset como params separados para insights inline.
+  // A forma correta é aplicar o modificador diretamente no campo: insights.date_preset(x){spend}
+  // ou insights.time_range({"since":"...","until":"..."}){spend}
+  let fields: string
+  if (dateParam.startsWith('date_preset=')) {
+    const preset = dateParam.slice('date_preset='.length)
+    fields = `name,insights.date_preset(${preset}){spend}`
+  } else {
+    // "time_range=<encoded-json>" → decodifica e aplica inline
+    const rangeJson = decodeURIComponent(dateParam.slice('time_range='.length))
+    fields = `name,insights.time_range(${rangeJson}){spend}`
+  }
+
   let nextUrl: string | null =
     `${BASE_URL}/act_${accountId}/campaigns` +
-    `?fields=name,insights{spend}` +
-    `&time_range=${timeRange}` +
+    `?fields=${fields}` +
     `&limit=500` +
     filteringParam +
     `&access_token=${token}`
@@ -80,18 +92,21 @@ export async function getAdAccountCampaigns(
   dateStart: string,
   dateEnd: string,
   nomenclaturas?: string[],
+  datePreset?: string,
 ): Promise<{ name: string; spend: number }[]> {
   const token = getToken()
   if (!token) return []
 
-  const timeRange = encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))
+  const dateParam = datePreset
+    ? `date_preset=${datePreset}`
+    : `time_range=${encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))}`
 
   let rawCampaigns: RawCampaign[]
 
   if (nomenclaturas && nomenclaturas.length > 0) {
     // Uma chamada por nomenclatura em paralelo; CONTAIN não suporta OR na mesma chamada
     const perNom = await Promise.all(
-      nomenclaturas.map(n => fetchAccountPages(accountId, timeRange, token, n))
+      nomenclaturas.map(n => fetchAccountPages(accountId, dateParam, token, n))
     )
     const seen = new Set<string>()
     rawCampaigns = perNom.flat().filter(c => {
@@ -100,7 +115,7 @@ export async function getAdAccountCampaigns(
       return true
     })
   } else {
-    rawCampaigns = await fetchAccountPages(accountId, timeRange, token)
+    rawCampaigns = await fetchAccountPages(accountId, dateParam, token)
   }
 
   return rawCampaigns.map(c => ({
@@ -113,12 +128,13 @@ export async function getProjectInvestment(
   nomenclaturas: string[],
   dateStart: string,
   dateEnd: string,
+  datePreset?: string,
 ): Promise<{ total: number; campanhas: MetaCampanha[] }> {
   const accountIds = getAccountIds()
 
   const resultados = await Promise.all(
     accountIds.map(async (accountId) => {
-      const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd, nomenclaturas)
+      const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd, nomenclaturas, datePreset)
       const filtered = campaigns.filter(c =>
         nomenclaturas.some(n => c.name.toLowerCase().includes(n.toLowerCase()))
       )
