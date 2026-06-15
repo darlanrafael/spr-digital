@@ -19,20 +19,22 @@ function getAccountIds(): string[] {
   return raw.split(',').map(s => s.trim()).filter(Boolean)
 }
 
-export async function getAdAccountCampaigns(
+async function fetchAccountPages(
   accountId: string,
-  dateStart: string,
-  dateEnd: string,
-): Promise<{ name: string; spend: number }[]> {
-  const token = getToken()
-  if (!token) return []
+  timeRange: string,
+  token: string,
+  nameFilter?: string,
+): Promise<RawCampaign[]> {
+  const filteringParam = nameFilter
+    ? `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'name', operator: 'CONTAIN', value: nameFilter }]))}`
+    : ''
 
-  const timeRange = encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))
   let nextUrl: string | null =
     `${BASE_URL}/act_${accountId}/campaigns` +
     `?fields=name,insights{spend}` +
     `&time_range=${timeRange}` +
-    `&limit=100` +
+    `&limit=500` +
+    filteringParam +
     `&access_token=${token}`
 
   const allCampaigns: RawCampaign[] = []
@@ -40,7 +42,7 @@ export async function getAdAccountCampaigns(
   while (nextUrl) {
     let res: Response
     try {
-      res = await fetch(nextUrl, { cache: 'no-store' })
+      res = await fetch(nextUrl)
     } catch (err) {
       console.error('[Meta API] Erro de rede na conta:', accountId, err)
       break
@@ -70,7 +72,38 @@ export async function getAdAccountCampaigns(
     nextUrl = json.paging?.next ?? null
   }
 
-  return allCampaigns.map(c => ({
+  return allCampaigns
+}
+
+export async function getAdAccountCampaigns(
+  accountId: string,
+  dateStart: string,
+  dateEnd: string,
+  nomenclaturas?: string[],
+): Promise<{ name: string; spend: number }[]> {
+  const token = getToken()
+  if (!token) return []
+
+  const timeRange = encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))
+
+  let rawCampaigns: RawCampaign[]
+
+  if (nomenclaturas && nomenclaturas.length > 0) {
+    // Uma chamada por nomenclatura em paralelo; CONTAIN não suporta OR na mesma chamada
+    const perNom = await Promise.all(
+      nomenclaturas.map(n => fetchAccountPages(accountId, timeRange, token, n))
+    )
+    const seen = new Set<string>()
+    rawCampaigns = perNom.flat().filter(c => {
+      if (seen.has(c.name)) return false
+      seen.add(c.name)
+      return true
+    })
+  } else {
+    rawCampaigns = await fetchAccountPages(accountId, timeRange, token)
+  }
+
+  return rawCampaigns.map(c => ({
     name: c.name,
     spend: parseFloat(c.insights?.data?.[0]?.spend ?? '0') || 0,
   }))
@@ -82,19 +115,19 @@ export async function getProjectInvestment(
   dateEnd: string,
 ): Promise<{ total: number; campanhas: MetaCampanha[] }> {
   const accountIds = getAccountIds()
-  const allCampanhas: MetaCampanha[] = []
 
-  for (const accountId of accountIds) {
-    const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd)
-    const filtered = campaigns.filter(c =>
-      nomenclaturas.some(n => c.name.toLowerCase().includes(n.toLowerCase()))
-    )
-    console.log('[Meta API] conta:', accountId, 'campanhas encontradas:', campaigns.length, 'filtradas:', filtered.length)
-    for (const c of filtered) {
-      allCampanhas.push({ ...c, accountId })
-    }
-  }
+  const resultados = await Promise.all(
+    accountIds.map(async (accountId) => {
+      const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd, nomenclaturas)
+      const filtered = campaigns.filter(c =>
+        nomenclaturas.some(n => c.name.toLowerCase().includes(n.toLowerCase()))
+      )
+      console.log('[Meta API] conta:', accountId, 'campanhas encontradas:', campaigns.length, 'filtradas:', filtered.length)
+      return filtered.map(c => ({ ...c, accountId }))
+    })
+  )
 
+  const allCampanhas: MetaCampanha[] = resultados.flat()
   const total = allCampanhas.reduce((sum, c) => sum + c.spend, 0)
   return { total, campanhas: allCampanhas }
 }
@@ -104,10 +137,11 @@ export async function getAllAccountsInvestment(
   dateEnd: string,
 ): Promise<number> {
   const accountIds = getAccountIds()
-  let total = 0
-  for (const accountId of accountIds) {
-    const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd)
-    total += campaigns.reduce((sum, c) => sum + c.spend, 0)
-  }
-  return total
+  const totals = await Promise.all(
+    accountIds.map(async (accountId) => {
+      const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd)
+      return campaigns.reduce((sum, c) => sum + c.spend, 0)
+    })
+  )
+  return totals.reduce((sum, t) => sum + t, 0)
 }

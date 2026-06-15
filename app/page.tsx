@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -29,11 +29,13 @@ function MetaAdsCard({
   dateEnd,
   projectId,
   onTotalChange,
+  periodKey,
 }: {
   dateStart: string
   dateEnd: string
   projectId: string
   onTotalChange: (total: number) => void
+  periodKey: string
 }) {
   const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
@@ -42,11 +44,6 @@ function MetaAdsCard({
   const [erro, setErro] = useState(false)
   // refreshKey força nova busca manual mantendo as mesmas datas
   const [refreshKey, setRefreshKey] = useState(0)
-  const mountedRef = useRef(true)
-
-  useEffect(() => {
-    return () => { mountedRef.current = false }
-  }, [])
 
   // Busca automática: ao montar, ao mudar período e ao forçar refresh manual
   useEffect(() => {
@@ -54,7 +51,6 @@ function MetaAdsCard({
     let cancelled = false
 
     const run = async () => {
-      if (!mountedRef.current) return
       setLoading(true)
       setErro(false)
 
@@ -65,7 +61,7 @@ function MetaAdsCard({
         const data = await res.json() as { total?: number; campanhas?: MetaCampanha[]; erro?: string }
         console.log('[MetaAdsCard] total:', data.total, '| campanhas:', data.campanhas?.length)
 
-        if (!cancelled && mountedRef.current) {
+        if (!cancelled) {
           const t = typeof data.total === 'number' ? data.total : 0
           setTotal(t)
           setCampanhas(data.campanhas ?? [])
@@ -73,9 +69,9 @@ function MetaAdsCard({
         }
       } catch (err) {
         console.error('[MetaAdsCard] ERRO:', err)
-        if (!cancelled && mountedRef.current) setErro(true)
+        if (!cancelled) setErro(true)
       } finally {
-        if (!cancelled && mountedRef.current) setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
 
@@ -83,7 +79,7 @@ function MetaAdsCard({
     return () => { cancelled = true }
   // onTotalChange é setMetaAdsTotal — setter estável do React, não causa re-runs extras
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateStart, dateEnd, projectId, refreshKey])
+  }, [dateStart, dateEnd, projectId, refreshKey, periodKey])
 
   const fmt = (v: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
@@ -202,6 +198,8 @@ function DashboardContent() {
 
   // Total do Meta Ads comunicado via callback do MetaAdsCard
   const [metaAdsTotal, setMetaAdsTotal] = useState<number>(0)
+  // Muda sempre que o usuário clica num botão de período, garantindo re-fetch
+  const [metaPeriodKey, setMetaPeriodKey] = useState<string>('')
 
   // Custos fixos inline editing
   const [editingFixedId, setEditingFixedId] = useState<string | null>(null)
@@ -428,7 +426,7 @@ function DashboardContent() {
           {(['today', 'week', 'month', 'custom'] as PeriodFilter[]).map(p => (
             <button
               key={p}
-              onClick={() => setPeriod(p)}
+              onClick={() => { setPeriod(p); setMetaPeriodKey(p + '_' + Date.now()) }}
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                 period === p ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
               }`}
@@ -476,6 +474,7 @@ function DashboardContent() {
             dateEnd={metaDateEnd}
             projectId={metaProjId}
             onTotalChange={setMetaAdsTotal}
+            periodKey={metaPeriodKey}
           />
 
           {/* ROAS */}

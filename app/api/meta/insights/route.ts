@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getProjectInvestment } from '@/lib/meta'
 
+export const revalidate = 300
+
 // Nomenclaturas por projeto — fallback enquanto não buscamos do Supabase
 const PROJECT_NOMENCLATURAS: Record<string, string[]> = {
   'proj_1': ['[F01-IRM]', '[PF01_RC]'],
