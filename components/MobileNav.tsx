@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp } from 'lucide-react'
 
 const NAV = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -10,6 +10,7 @@ const NAV = [
   { href: '/dre', label: 'DRE', icon: BarChart2 },
   { href: '/fechamentos', label: 'Fechamentos', icon: FileText },
   { href: '/caixa', label: 'Caixa', icon: Wallet },
+  { href: '/analises', label: 'Análises', icon: TrendingUp },
 ]
 
 export default function MobileNav() {

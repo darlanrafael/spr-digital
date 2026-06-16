@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: '/dre', label: 'DRE' },
   { href: '/fechamentos', label: 'Fechamentos' },
   { href: '/caixa', label: 'Caixa' },
+  { href: '/analises', label: 'Análises' },
 ]
 
 export default function Header() {
