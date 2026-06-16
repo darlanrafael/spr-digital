@@ -18,7 +18,7 @@ import {
   deleteFixedCost as svcDeleteFixed, addCost as svcAddVar, updateCost as svcUpdateVar,
   deleteCost as svcDeleteVar,
 } from '@/lib/services'
-import { FixedCost, VariableCost } from '@/types'
+import { FixedCost, VariableCost, Sale } from '@/types'
 
 // ─── MetaAdsCard — componente autônomo com estado próprio ──────────────────────
 // Definido fora de DashboardContent para que re-renders do pai não o afetem.
@@ -216,6 +216,9 @@ function DashboardContent() {
   const [editingVarId, setEditingVarId] = useState<string | null>(null)
   const [editVarForm, setEditVarForm] = useState({ descricao: '', valor: '', data: '' })
 
+  const [periodSales, setPeriodSales] = useState<Sale[]>([])
+  const [salesLoading, setSalesLoading] = useState(false)
+
   const [dashTab, setDashTab] = useState<'visao_geral' | 'melhores_horarios'>('visao_geral')
 
   const canEdit = user?.role === 'admin'
@@ -236,34 +239,47 @@ function DashboardContent() {
     return null
   }, [period, todayStr, yesterdayStr, monthStr, weekRange, customStart, customEnd])
 
-  const filteredSales = useMemo(() => {
-    let base = sales.filter(s => s.status === 'aprovada')
-    if (selectedProject !== 'all') base = base.filter(s => s.projetoId === selectedProject)
-    if (periodBounds) {
-      base = base.filter(s => {
-        const d = s.data_hora.slice(0, 10)
-        return d >= periodBounds.start && d <= periodBounds.end
-      })
+  useEffect(() => {
+    if (!periodBounds) return
+    let cancelled = false
+    const fetchPeriodSales = async () => {
+      setSalesLoading(true)
+      try {
+        const params = new URLSearchParams({
+          projectId: selectedProject === 'all' ? 'proj_1' : selectedProject,
+          dateStart: periodBounds.start,
+          dateEnd: periodBounds.end,
+        })
+        const res = await fetch(`/api/sales?${params}`)
+        const data = await res.json()
+        if (!cancelled) setPeriodSales(Array.isArray(data) ? data : [])
+      } catch (err) {
+        console.error('[Dashboard] Erro ao buscar vendas:', err)
+        if (!cancelled) setPeriodSales([])
+      } finally {
+        if (!cancelled) setSalesLoading(false)
+      }
     }
-    return base
-  }, [sales, selectedProject, periodBounds])
+    fetchPeriodSales()
+    return () => { cancelled = true }
+  }, [periodBounds, selectedProject])
 
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
 
   const faturamentoBruto = useMemo(
-    () => filteredSales.reduce((acc, s) => acc + getSaleBruto(s), 0),
-    [filteredSales]
+    () => periodSales.reduce((acc, s) => acc + getSaleBruto(s), 0),
+    [periodSales]
   )
   const faturamentoLiquido = useMemo(
-    () => filteredSales.reduce((acc, s) => acc + s.valor_liquido, 0),
-    [filteredSales]
+    () => periodSales.reduce((acc, s) => acc + s.valor_liquido, 0),
+    [periodSales]
   )
   const impostoTotal = useMemo(() => {
-    return filteredSales.reduce((acc, s) => {
+    return periodSales.reduce((acc, s) => {
       const aliquota = getAliquotaByPreco(s.preco_base)
       return acc + getSaleBruto(s) * (aliquota / 100)
     }, 0)
-  }, [filteredSales])
+  }, [periodSales])
 
   const roas = metaAdsTotal > 0 ? faturamentoLiquido / metaAdsTotal : null
 
@@ -281,7 +297,7 @@ function DashboardContent() {
 
   const byProduct = useMemo(() => {
     const map: Record<string, { produto: string; plataforma: string; qtd: number; bruto: number; aliquota: number; imposto: number; liquido: number }> = {}
-    for (const s of filteredSales) {
+    for (const s of periodSales) {
       const prod = productMap[s.produto]
       const aliquota = getAliquotaByPreco(s.preco_base)
       if (!map[s.produto]) {
@@ -297,11 +313,11 @@ function DashboardContent() {
       map[s.produto].liquido += s.valor_liquido
     }
     return Object.values(map)
-  }, [filteredSales, productMap])
+  }, [periodSales, productMap])
 
   const byPlatform = useMemo(() => {
     const map: Record<string, { plataforma: string; qtd: number; bruto: number; liquido: number }> = {}
-    for (const s of filteredSales) {
+    for (const s of periodSales) {
       const key = s.plataforma
       if (!map[key]) map[key] = { plataforma: s.plataforma, qtd: 0, bruto: 0, liquido: 0 }
       map[key].qtd++
@@ -311,7 +327,7 @@ function DashboardContent() {
     const entries = Object.values(map)
     const totalBruto = entries.reduce((a, e) => a + e.bruto, 0)
     return entries.map(e => ({ ...e, pct: totalBruto > 0 ? (e.bruto / totalBruto) * 100 : 0 }))
-  }, [filteredSales])
+  }, [periodSales])
 
   const resultadoCompleto = faturamentoBruto - impostoTotal - metaAdsTotal - fixedCostsTotal - varCostsTotal
   const resultadoSemFixos = faturamentoBruto - impostoTotal - metaAdsTotal - varCostsTotal
@@ -462,7 +478,7 @@ function DashboardContent() {
               <DollarSign className="w-4 h-4 text-gray-500" />
             </div>
             <p className="text-2xl font-bold text-white">{formatCurrency(faturamentoBruto)}</p>
-            <p className="text-xs text-gray-500 mt-1">{filteredSales.length} vendas</p>
+            <p className="text-xs text-gray-500 mt-1">{salesLoading ? 'Carregando...' : `${periodSales.length} vendas`}</p>
           </div>
 
           {/* Faturamento líquido */}
