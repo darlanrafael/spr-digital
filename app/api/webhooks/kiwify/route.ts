@@ -24,6 +24,10 @@ function validateToken(req: NextRequest, body: Record<string, unknown>): boolean
 }
 
 export async function POST(req: NextRequest) {
+  console.log('[Kiwify Debug] url completa:', req.url)
+  console.log('[Kiwify Debug] method:', req.method)
+  console.log('[Kiwify Debug] headers:', JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2))
+
   let body: Record<string, unknown>
   try {
     body = await req.json()
