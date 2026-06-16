@@ -69,9 +69,23 @@ export async function POST(req: NextRequest) {
         utm_term:           (utm?.term as string) ?? '',
       }
 
+      const client = getSupabaseAdmin()
+
+      const { data: existing } = await client
+        .from('sales')
+        .select('id')
+        .eq('plataforma', 'hubla')
+        .eq('email', sale.email)
+        .eq('produto', sale.produto)
+        .maybeSingle()
+
+      if (existing) {
+        console.log('[Hubla Webhook] duplicata ignorada:', sale.email, sale.produto)
+        return NextResponse.json({ success: true, event: 'duplicate_ignored' })
+      }
+
       console.log('[Hubla Webhook] inserindo venda:', JSON.stringify(sale, null, 2))
 
-      const client = getSupabaseAdmin()
       const { error } = await client.from('sales').insert(sale)
 
       if (error) {
