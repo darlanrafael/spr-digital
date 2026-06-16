@@ -9,12 +9,16 @@ function validateToken(req: NextRequest, body: Record<string, unknown>): boolean
 
   const fromQuery = new URL(req.url).searchParams.get('token') ?? ''
   const fromHeader = req.headers.get('x-kiwify-token') ?? ''
-  const orderSignature = ((body.order as Record<string, unknown>)?.signature as string) ?? ''
+
+  // Signature pode estar na raiz (formato real) ou dentro de order{} (formato dos testes)
+  const orderObj = (body.order as Record<string, unknown>) ?? body
+  const orderSignature = (orderObj?.signature as string) ?? (body.signature as string) ?? ''
 
   if (fromQuery === expected || fromHeader === expected || orderSignature === expected) return true
 
   // Webhooks do tipo "Todos que sou produtor" enviam signature SHA1 (40 hex chars) em vez do token fixo
   if (/^[0-9a-f]{40}$/i.test(orderSignature)) return true
+  if (/^[0-9a-f]{40}$/i.test((body.signature as string) ?? '')) return true
 
   return false
 }
@@ -34,11 +38,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const order = body.order as Record<string, unknown>
-  if (!order) {
-    console.warn('[Kiwify Webhook] payload sem campo order — ignorado')
-    return NextResponse.json({ success: true, event: 'ignored' })
-  }
+  // Aceita payload com wrapper order{} (testes) ou na raiz (formato real da Kiwify)
+  const order = (body.order as Record<string, unknown>) ?? body
 
   const eventType = (order.webhook_event_type as string) ?? ''
   console.log('[Kiwify Webhook] evento:', eventType)
