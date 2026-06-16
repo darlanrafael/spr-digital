@@ -75,7 +75,7 @@ export async function getSales(
   } else if (statusFilter.length > 1) {
     q = q.in('status', statusFilter)
   }
-  const { data, error } = await q.order('data_hora', { ascending: false })
+  const { data, error } = await q.order('data_hora', { ascending: false }).limit(10000)
   if (error) throw error
   return (data ?? []).map(mapSaleRow)
 }
