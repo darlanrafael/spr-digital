@@ -1,133 +1,128 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabaseClient } from '@/lib/supabase'
-import type { SaleStatus } from '@/types'
+import { getSupabaseAdmin } from '@/lib/supabase'
 
 const PROJECT_ID = 'proj_1'
 
-function validateToken(req: NextRequest): boolean {
+function validateToken(req: NextRequest, body: Record<string, unknown>): boolean {
   const expected = process.env.KIWIFY_WEBHOOK_TOKEN
   if (!expected) return true
   const fromHeader = req.headers.get('x-kiwify-token') ?? ''
   const fromQuery = new URL(req.url).searchParams.get('token') ?? ''
-  return (fromHeader || fromQuery) === expected
+  const fromBody = ((body.order as Record<string, unknown>)?.signature as string) ?? ''
+  return fromHeader === expected || fromQuery === expected || fromBody === expected
 }
 
 export async function POST(req: NextRequest) {
-  if (!validateToken(req)) {
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  console.log('[Kiwify Webhook] payload recebido:', JSON.stringify(body, null, 2))
+
+  if (!validateToken(req, body)) {
+    console.warn('[Kiwify Webhook] token inválido — rejeitado')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let payload: Record<string, unknown>
-  try {
-    payload = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Payload inválido' }, { status: 400 })
+  const order = body.order as Record<string, unknown>
+  if (!order) {
+    console.warn('[Kiwify Webhook] payload sem campo order — ignorado')
+    return NextResponse.json({ success: true, event: 'ignored' })
   }
 
-  // Detectar event type: campo explícito ou derivado do order_status
-  const eventType = String(
-    payload.webhook_event_type ?? payload.type ?? payload.order_status ?? ''
-  )
+  const eventType = (order.webhook_event_type as string) ?? ''
+  console.log('[Kiwify Webhook] evento:', eventType)
 
-  console.log('[Kiwify webhook] evento recebido:', eventType)
-  console.log('[Kiwify webhook] payload completo:', JSON.stringify(payload, null, 2))
+  if (eventType === 'order_approved') {
+    try {
+      const product     = order.Product as Record<string, unknown>
+      const customer    = order.Customer as Record<string, unknown>
+      const commissions = order.Commissions as Record<string, unknown>
+      const tracking    = (order.TrackingParameters as Record<string, unknown>) ?? {}
 
-  try {
-    if (eventType === 'order_approved' || eventType === 'paid') {
-      await insertKiwifySale(payload)
-      return NextResponse.json({ success: true, event: eventType }, { status: 200 })
-    }
-
-    if (eventType === 'order_refunded' || eventType === 'refunded') {
-      const orderId = String(payload.order_id ?? '')
-      if (orderId) {
-        const updated = await updateSaleByPlatformId(orderId, 'kiwify', 'reembolsada')
-        if (!updated) console.warn('[Kiwify webhook] venda não encontrada para reembolso:', orderId)
-        else console.log('[Kiwify webhook] reembolso registrado:', orderId)
+      const sale = {
+        id:                 crypto.randomUUID(),
+        project_id:         PROJECT_ID,
+        plataforma:         'kiwify',
+        status:             'aprovada',
+        data_hora:          (order.approved_date as string)
+                              ? new Date(order.approved_date as string).toISOString()
+                              : new Date().toISOString(),
+        nome:               (customer?.full_name as string) ?? '',
+        email:              (customer?.email as string) ?? '',
+        telefone:           (customer?.mobile as string) ?? '',
+        produto:            (product?.product_name as string) ?? '',
+        preco_base:         ((commissions?.product_base_price as number) ?? 0) / 100,
+        valor_pago_cliente: ((commissions?.charge_amount as number) ?? 0) / 100,
+        valor_liquido:      ((commissions?.my_commission as number) ?? 0) / 100,
+        utm_source:         (tracking?.utm_source as string) ?? '',
+        utm_medium:         (tracking?.utm_medium as string) ?? '',
+        utm_campaign:       (tracking?.utm_campaign as string) ?? '',
+        utm_content:        (tracking?.utm_content as string) ?? '',
+        utm_term:           (tracking?.utm_term as string) ?? '',
       }
-      return NextResponse.json({ success: true, event: eventType }, { status: 200 })
-    }
 
-    if (eventType === 'chargeback' || eventType === 'chargedback') {
-      const orderId = String(payload.order_id ?? '')
-      if (orderId) {
-        const updated = await updateSaleByPlatformId(orderId, 'kiwify', 'chargeback')
-        if (!updated) console.warn('[Kiwify webhook] venda não encontrada para chargeback:', orderId)
-        else console.log('[Kiwify webhook] chargeback registrado:', orderId)
+      console.log('[Kiwify Webhook] inserindo venda:', JSON.stringify(sale, null, 2))
+
+      const client = getSupabaseAdmin()
+      const { error } = await client.from('sales').insert(sale)
+
+      if (error) {
+        console.error('[Kiwify Webhook] erro no insert:', error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
       }
-      return NextResponse.json({ success: true, event: eventType }, { status: 200 })
-    }
 
-    console.log('[Kiwify webhook] evento desconhecido ignorado:', eventType)
-    return NextResponse.json({ success: true, event: 'ignored', type: eventType }, { status: 200 })
-  } catch (error) {
-    console.error('[Kiwify webhook] erro:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+      console.log('[Kiwify Webhook] venda salva com sucesso:', sale.id)
+      return NextResponse.json({ success: true, event: 'sale_created', id: sale.id })
+
+    } catch (err) {
+      console.error('[Kiwify Webhook] exceção ao processar venda:', err)
+      return NextResponse.json({ error: String(err) }, { status: 500 })
+    }
   }
-}
 
-async function insertKiwifySale(payload: Record<string, unknown>): Promise<void> {
-  const client = getSupabaseClient()
-  if (!client) return
+  if (
+    eventType === 'order_refunded' ||
+    eventType === 'refunded' ||
+    eventType === 'chargeback'
+  ) {
+    try {
+      const customer = order.Customer as Record<string, unknown>
+      const email = (customer?.email as string) ?? ''
 
-  const Customer = (payload.Customer ?? payload.customer ?? {}) as Record<string, unknown>
-  const Product  = (payload.Product  ?? payload.product  ?? {}) as Record<string, unknown>
-  const tracking = (payload.TrackingParameters ?? payload.tracking ?? {}) as Record<string, unknown>
+      if (!email) {
+        console.warn('[Kiwify Webhook] reembolso sem email — ignorado')
+        return NextResponse.json({ success: true, event: 'ignored' })
+      }
 
-  const precoBase    = Number(Product.base_price  ?? payload.base_price  ?? 0)
-  const valorPago    = Number(payload.amount ?? payload.total_amount ?? precoBase)
-  const valorLiquido = Number(payload.net_amount ?? payload.liquid_amount ?? 0)
+      const client = getSupabaseAdmin()
+      const { error } = await client
+        .from('sales')
+        .update({
+          status: 'reembolsada',
+          data_reembolso: new Date().toISOString().split('T')[0],
+        })
+        .eq('email', email)
+        .eq('plataforma', 'kiwify')
+        .eq('status', 'aprovada')
 
-  const { error } = await client.from('sales').insert({
-    id:                crypto.randomUUID(),
-    project_id:        PROJECT_ID,
-    plataforma:        'kiwify',
-    plataforma_sale_id: String(payload.order_id ?? ''),
-    status:            'aprovada' as SaleStatus,
-    data_hora:         String(payload.created_at ?? new Date().toISOString()),
-    nome:              String(Customer.full_name ?? Customer.name ?? payload.customer_name ?? ''),
-    email:             String(Customer.email ?? payload.customer_email ?? ''),
-    telefone:          String(Customer.mobile ?? Customer.phone ?? ''),
-    cpf:               String(Customer.cpf ?? '') || null,
-    produto:           String(Product.name ?? payload.product_name ?? ''),
-    preco_base:        precoBase,
-    valor_pago_cliente: valorPago,
-    valor_liquido:     valorLiquido,
-    utm_source:        (tracking.utm_source  ?? payload.utm_source  ?? null) || null,
-    utm_medium:        (tracking.utm_medium  ?? payload.utm_medium  ?? null) || null,
-    utm_campaign:      (tracking.utm_campaign ?? payload.utm_campaign ?? null) || null,
-    utm_content:       (tracking.utm_content ?? payload.utm_content ?? null) || null,
-    utm_term:          (tracking.utm_term    ?? payload.utm_term    ?? null) || null,
-  })
-  if (error) throw error
-  console.log('[Kiwify webhook] venda inserida:', payload.order_id)
-}
+      if (error) {
+        console.error('[Kiwify Webhook] erro ao atualizar reembolso:', error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
 
-async function updateSaleByPlatformId(
-  platformSaleId: string,
-  plataforma: string,
-  status: SaleStatus,
-): Promise<boolean> {
-  const client = getSupabaseClient()
-  if (!client) return false
+      console.log('[Kiwify Webhook] reembolso processado para:', email)
+      return NextResponse.json({ success: true, event: 'sale_refunded' })
 
-  const { data, error } = await client
-    .from('sales')
-    .select('id')
-    .eq('plataforma_sale_id', platformSaleId)
-    .eq('plataforma', plataforma)
-    .limit(1)
+    } catch (err) {
+      console.error('[Kiwify Webhook] exceção ao processar reembolso:', err)
+      return NextResponse.json({ error: String(err) }, { status: 500 })
+    }
+  }
 
-  if (error || !data || data.length === 0) return false
-
-  const { error: updErr } = await client
-    .from('sales')
-    .update({
-      status,
-      data_reembolso: new Date().toISOString().slice(0, 10),
-    })
-    .eq('id', (data[0] as Record<string, unknown>).id)
-
-  if (updErr) throw updErr
-  return true
+  console.log('[Kiwify Webhook] evento ignorado:', eventType)
+  return NextResponse.json({ success: true, event: 'ignored', type: eventType })
 }
