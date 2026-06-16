@@ -9,6 +9,7 @@ type Inputs = {
   investimento: string
   cpm: string
   ctr: string
+  cpc: string
   connectRate: string
   taxaConversao: string
   ticketMedio: string
@@ -29,6 +30,7 @@ const EMPTY: Inputs = {
   investimento: '',
   cpm: '',
   ctr: '',
+  cpc: '',
   connectRate: '',
   taxaConversao: '',
   ticketMedio: '',
@@ -47,19 +49,18 @@ function parseNum(val: string): number | null {
 function calcMetrics(inp: Inputs): Metrics {
   const inv = parseNum(inp.investimento)
   const cpm = parseNum(inp.cpm)
-  const ctr = parseNum(inp.ctr)
-  const cr = parseNum(inp.connectRate)
-  const tc = parseNum(inp.taxaConversao)
-  const tm = parseNum(inp.ticketMedio)
+  const cpc = parseNum(inp.cpc)
+  const cr  = parseNum(inp.connectRate)
+  const tc  = parseNum(inp.taxaConversao)
+  const tm  = parseNum(inp.ticketMedio)
 
-  const impressoes = inv !== null && cpm !== null && cpm > 0 ? (inv / cpm) * 1000 : null
-  const cliques = impressoes !== null && ctr !== null ? impressoes * (ctr / 100) : null
-  const cpc = inv !== null && cliques !== null && cliques > 0 ? inv / cliques : null
+  const impressoes  = inv !== null && cpm !== null && cpm > 0 ? (inv / cpm) * 1000 : null
+  const cliques     = inv !== null && cpc !== null && cpc > 0 ? inv / cpc : null
   const visitasReais = cliques !== null && cr !== null ? cliques * (cr / 100) : null
-  const compras = visitasReais !== null && tc !== null ? Math.floor(visitasReais * (tc / 100)) : null
-  const cpa = inv !== null && compras !== null && compras > 0 ? inv / compras : null
+  const compras     = visitasReais !== null && tc !== null ? Math.floor(visitasReais * (tc / 100)) : null
+  const cpa         = inv !== null && compras !== null && compras > 0 ? inv / compras : null
   const faturamento = compras !== null && tm !== null ? compras * tm : null
-  const roas = faturamento !== null && inv !== null && inv > 0 ? faturamento / inv : null
+  const roas        = faturamento !== null && inv !== null && inv > 0 ? faturamento / inv : null
 
   return { impressoes, cliques, cpc, visitasReais, compras, cpa, faturamento, roas }
 }
@@ -162,12 +163,13 @@ interface SectionProps {
 }
 
 const INPUT_FIELDS: { key: keyof Inputs; label: string; placeholder: string }[] = [
-  { key: 'investimento', label: 'Investimento (R$)', placeholder: 'Ex: 5.000,00' },
-  { key: 'cpm',          label: 'CPM (R$)',           placeholder: 'Ex: 180,00' },
-  { key: 'ctr',          label: 'CTR (%)',             placeholder: 'Ex: 1,80' },
-  { key: 'connectRate',  label: 'Connect Rate (%)',    placeholder: 'Ex: 70' },
+  { key: 'investimento',  label: 'Investimento (R$)',      placeholder: 'Ex: 5.000,00' },
+  { key: 'cpm',           label: 'CPM (R$)',               placeholder: 'Ex: 120,00' },
+  { key: 'ctr',           label: 'CTR (%)',                placeholder: 'Ex: 6,00' },
+  { key: 'cpc',           label: 'CPC (R$)',               placeholder: 'Ex: 3,50' },
+  { key: 'connectRate',   label: 'Connect Rate (%)',       placeholder: 'Ex: 70' },
   { key: 'taxaConversao', label: 'Taxa de conversão (%)', placeholder: 'Ex: 3' },
-  { key: 'ticketMedio',  label: 'Ticket médio (R$)',   placeholder: 'Ex: 197,00' },
+  { key: 'ticketMedio',   label: 'Ticket médio (R$)',      placeholder: 'Ex: 197,00' },
 ]
 
 function SectionCard({ title, subtitle, inputs, onField, metrics: m, realMetrics: r, onCopy }: SectionProps) {
