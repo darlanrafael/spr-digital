@@ -487,7 +487,7 @@ function DashboardContent() {
 
           {/* ROAS */}
           <div className={`bg-gray-900 rounded-xl border p-4 ${
-            roas === null ? 'border-white/10' : roas >= 2 ? 'border-emerald-500/30' : roas >= 1 ? 'border-white/10' : 'border-red-500/30'
+            roas === null ? 'border-white/10' : roas >= 1 ? 'border-emerald-500/30' : 'border-red-500/30'
           }`}>
             <div className="flex items-start justify-between mb-3">
               <p className="text-xs text-gray-400 font-medium">ROAS</p>
@@ -497,9 +497,9 @@ function DashboardContent() {
               )}
             </div>
             <p className={`text-2xl font-bold ${
-              roas === null ? 'text-gray-500' : roas >= 2 ? 'text-emerald-400' : roas >= 1 ? 'text-white' : 'text-red-400'
+              roas === null ? 'text-gray-500' : roas >= 1 ? 'text-green-500' : 'text-red-500'
             }`}>
-              {roas === null ? '—' : `${roas.toFixed(2)}x`}
+              {roas === null ? '—' : roas >= 1 ? `${roas.toFixed(2)}x` : `-${roas.toFixed(2)}x`}
             </p>
             <p className="text-xs text-gray-500 mt-1">Líquido ÷ Meta Ads</p>
           </div>
