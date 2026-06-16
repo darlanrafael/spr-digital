@@ -49,11 +49,14 @@ export async function POST(req: NextRequest) {
       const sellerReceiver = receivers.find((r) => r.role === 'seller')
       const sellerTotalCents = (sellerReceiver?.totalCents as number) ?? 0
 
+      const invoiceId = (invoice?.id as string) ?? null
+
       const sale = {
         id:                 crypto.randomUUID(),
         project_id:         PROJECT_ID,
         plataforma:         'hubla',
         status:             'aprovada',
+        order_id:           invoiceId,
         data_hora:          (invoice?.saleDate as string) ?? new Date().toISOString(),
         nome:               `${payer?.firstName ?? ''} ${payer?.lastName ?? ''}`.trim(),
         email:              (payer?.email as string) ?? '',
@@ -71,17 +74,28 @@ export async function POST(req: NextRequest) {
 
       const client = getSupabaseAdmin()
 
-      const { data: existingRows } = await client
-        .from('sales')
-        .select('id')
-        .eq('plataforma', 'hubla')
-        .eq('email', sale.email)
-        .eq('produto', sale.produto)
-        .limit(1)
-
-      if (existingRows && existingRows.length > 0) {
-        console.log('[Hubla Webhook] duplicata ignorada:', sale.email, sale.produto)
-        return NextResponse.json({ success: true, event: 'duplicate_ignored' })
+      if (invoiceId) {
+        const { data: existingRows } = await client
+          .from('sales')
+          .select('id')
+          .eq('order_id', invoiceId)
+          .limit(1)
+        if (existingRows && existingRows.length > 0) {
+          console.log('[Hubla Webhook] duplicata ignorada por order_id:', invoiceId)
+          return NextResponse.json({ success: true, event: 'duplicate_ignored' })
+        }
+      } else {
+        const { data: existingRows } = await client
+          .from('sales')
+          .select('id')
+          .eq('plataforma', 'hubla')
+          .eq('email', sale.email)
+          .eq('produto', sale.produto)
+          .limit(1)
+        if (existingRows && existingRows.length > 0) {
+          console.log('[Hubla Webhook] duplicata ignorada por email+produto:', sale.email, sale.produto)
+          return NextResponse.json({ success: true, event: 'duplicate_ignored' })
+        }
       }
 
       console.log('[Hubla Webhook] inserindo venda:', JSON.stringify(sale, null, 2))

@@ -52,11 +52,14 @@ export async function POST(req: NextRequest) {
       const commissions = order.Commissions as Record<string, unknown>
       const tracking    = (order.TrackingParameters as Record<string, unknown>) ?? {}
 
+      const orderId = (order.order_id as string) ?? null
+
       const sale = {
         id:                 crypto.randomUUID(),
         project_id:         PROJECT_ID,
         plataforma:         'kiwify',
         status:             'aprovada',
+        order_id:           orderId,
         data_hora:          (order.approved_date as string)
                               ? new Date(order.approved_date as string).toISOString()
                               : new Date().toISOString(),
@@ -76,17 +79,28 @@ export async function POST(req: NextRequest) {
 
       const client = getSupabaseAdmin()
 
-      const { data: existingRows } = await client
-        .from('sales')
-        .select('id')
-        .eq('plataforma', 'kiwify')
-        .eq('email', sale.email)
-        .eq('produto', sale.produto)
-        .limit(1)
-
-      if (existingRows && existingRows.length > 0) {
-        console.log('[Kiwify Webhook] duplicata ignorada:', sale.email, sale.produto)
-        return NextResponse.json({ success: true, event: 'duplicate_ignored' })
+      if (orderId) {
+        const { data: existingRows } = await client
+          .from('sales')
+          .select('id')
+          .eq('order_id', orderId)
+          .limit(1)
+        if (existingRows && existingRows.length > 0) {
+          console.log('[Kiwify Webhook] duplicata ignorada por order_id:', orderId)
+          return NextResponse.json({ success: true, event: 'duplicate_ignored' })
+        }
+      } else {
+        const { data: existingRows } = await client
+          .from('sales')
+          .select('id')
+          .eq('plataforma', 'kiwify')
+          .eq('email', sale.email)
+          .eq('produto', sale.produto)
+          .limit(1)
+        if (existingRows && existingRows.length > 0) {
+          console.log('[Kiwify Webhook] duplicata ignorada por email+produto:', sale.email, sale.produto)
+          return NextResponse.json({ success: true, event: 'duplicate_ignored' })
+        }
       }
 
       console.log('[Kiwify Webhook] inserindo venda:', JSON.stringify(sale, null, 2))
