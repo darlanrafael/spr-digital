@@ -67,17 +67,37 @@ export async function getSales(
 ): Promise<Sale[]> {
   const client = getSupabaseClient()
   if (!client) return []
-  let q = client.from('sales').select('*').eq('project_id', projectId)
-  if (dateStart) q = q.gte('data_hora', dateStart)
-  if (dateEnd) q = q.lte('data_hora', `${dateEnd}T23:59:59`)
-  if (statusFilter.length === 1) {
-    q = q.eq('status', statusFilter[0])
-  } else if (statusFilter.length > 1) {
-    q = q.in('status', statusFilter)
+
+  const PAGE_SIZE = 1000
+  const all: Record<string, unknown>[] = []
+  let from = 0
+
+  while (true) {
+    let q = client
+      .from('sales')
+      .select('*')
+      .eq('project_id', projectId)
+
+    if (dateStart) q = q.gte('data_hora', dateStart)
+    if (dateEnd) q = q.lte('data_hora', `${dateEnd}T23:59:59`)
+    if (statusFilter.length === 1) {
+      q = q.eq('status', statusFilter[0])
+    } else if (statusFilter.length > 1) {
+      q = q.in('status', statusFilter)
+    }
+
+    const { data, error } = await q
+      .order('data_hora', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1)
+
+    if (error) throw error
+    if (!data || data.length === 0) break
+    all.push(...data)
+    if (data.length < PAGE_SIZE) break
+    from += PAGE_SIZE
   }
-  const { data, error } = await q.order('data_hora', { ascending: false }).limit(10000)
-  if (error) throw error
-  return (data ?? []).map(mapSaleRow)
+
+  return all.map(mapSaleRow)
 }
 
 function mapSaleRow(r: Record<string, unknown>): Sale {
