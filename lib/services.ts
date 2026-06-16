@@ -8,7 +8,14 @@ import type {
 
 function normTs(ts: string | null | undefined): string {
   if (!ts) return ''
-  return ts.replace('+00:00', '').replace('Z', '').slice(0, 19)
+  // Timestamps do Supabase (timestamptz) chegam com +00:00 ou Z — converter para Brasília (UTC-3)
+  if (ts.includes('+') || ts.endsWith('Z')) {
+    const date = new Date(ts)
+    if (!isNaN(date.getTime())) {
+      return new Date(date.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 19)
+    }
+  }
+  return ts.slice(0, 19)
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
