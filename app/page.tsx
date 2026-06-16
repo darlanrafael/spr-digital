@@ -191,7 +191,7 @@ export default function DashboardPage() {
 function DashboardContent() {
   const { sales, costs, setCosts, products, selectedProject, user } = useApp()
 
-  const [period, setPeriod] = useState<PeriodFilter>('month')
+  const [period, setPeriod] = useState<PeriodFilter>('today')
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
   const [faturamentoToggle, setFaturamentoToggle] = useState<FaturamentoToggle>('produto')
@@ -200,7 +200,7 @@ function DashboardContent() {
   // Total do Meta Ads comunicado via callback do MetaAdsCard
   const [metaAdsTotal, setMetaAdsTotal] = useState<number>(0)
   // Preset nativo da Meta API para o período selecionado
-  const [metaDatePreset, setMetaDatePreset] = useState<string>('this_month')
+  const [metaDatePreset, setMetaDatePreset] = useState<string>('today')
   // Muda sempre que o usuário clica num botão de período, garantindo re-fetch
   const [metaPeriodKey, setMetaPeriodKey] = useState<string>('')
 
