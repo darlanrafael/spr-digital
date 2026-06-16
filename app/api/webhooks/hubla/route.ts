@@ -71,15 +71,15 @@ export async function POST(req: NextRequest) {
 
       const client = getSupabaseAdmin()
 
-      const { data: existing } = await client
+      const { data: existingRows } = await client
         .from('sales')
         .select('id')
         .eq('plataforma', 'hubla')
         .eq('email', sale.email)
         .eq('produto', sale.produto)
-        .maybeSingle()
+        .limit(1)
 
-      if (existing) {
+      if (existingRows && existingRows.length > 0) {
         console.log('[Hubla Webhook] duplicata ignorada:', sale.email, sale.produto)
         return NextResponse.json({ success: true, event: 'duplicate_ignored' })
       }
