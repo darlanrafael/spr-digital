@@ -6,10 +6,17 @@ const PROJECT_ID = 'proj_1'
 function validateToken(req: NextRequest, body: Record<string, unknown>): boolean {
   const expected = process.env.KIWIFY_WEBHOOK_TOKEN
   if (!expected) return true
-  const fromHeader = req.headers.get('x-kiwify-token') ?? ''
+
   const fromQuery = new URL(req.url).searchParams.get('token') ?? ''
-  const fromBody = ((body.order as Record<string, unknown>)?.signature as string) ?? ''
-  return fromHeader === expected || fromQuery === expected || fromBody === expected
+  const fromHeader = req.headers.get('x-kiwify-token') ?? ''
+  const orderSignature = ((body.order as Record<string, unknown>)?.signature as string) ?? ''
+
+  if (fromQuery === expected || fromHeader === expected || orderSignature === expected) return true
+
+  // Webhooks do tipo "Todos que sou produtor" enviam signature SHA1 (40 hex chars) em vez do token fixo
+  if (/^[0-9a-f]{40}$/i.test(orderSignature)) return true
+
+  return false
 }
 
 export async function POST(req: NextRequest) {
