@@ -4,30 +4,27 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 const PROJECT_ID = 'proj_1'
 
 function validateToken(req: NextRequest, body: Record<string, unknown>): boolean {
+  const order = (body.order as Record<string, unknown>) ?? body
+  const signature = (order?.signature as string) ?? (body.signature as string) ?? ''
+
+  // Aceita token correto na URL ou header (para testes manuais via curl)
   const expected = process.env.KIWIFY_WEBHOOK_TOKEN
+  if (expected) {
+    const fromQuery = new URL(req.url).searchParams.get('token') ?? ''
+    const fromHeader = req.headers.get('x-kiwify-token') ?? ''
+    if (fromQuery === expected || fromHeader === expected || signature === expected) return true
+  }
+
+  // Aceita SEMPRE se a signature é SHA1 válida (40 chars hex) — padrão real da Kiwify
+  if (/^[0-9a-f]{40}$/i.test(signature)) return true
+
+  // Se não tem token configurado, aceita tudo
   if (!expected) return true
-
-  const fromQuery = new URL(req.url).searchParams.get('token') ?? ''
-  const fromHeader = req.headers.get('x-kiwify-token') ?? ''
-
-  // Signature pode estar na raiz (formato real) ou dentro de order{} (formato dos testes)
-  const orderObj = (body.order as Record<string, unknown>) ?? body
-  const orderSignature = (orderObj?.signature as string) ?? (body.signature as string) ?? ''
-
-  if (fromQuery === expected || fromHeader === expected || orderSignature === expected) return true
-
-  // Webhooks do tipo "Todos que sou produtor" enviam signature SHA1 (40 hex chars) em vez do token fixo
-  if (/^[0-9a-f]{40}$/i.test(orderSignature)) return true
-  if (/^[0-9a-f]{40}$/i.test((body.signature as string) ?? '')) return true
 
   return false
 }
 
 export async function POST(req: NextRequest) {
-  console.log('[Kiwify Debug] url completa:', req.url)
-  console.log('[Kiwify Debug] method:', req.method)
-  console.log('[Kiwify Debug] headers:', JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2))
-
   let body: Record<string, unknown>
   try {
     body = await req.json()
