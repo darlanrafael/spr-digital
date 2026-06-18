@@ -86,14 +86,22 @@ export default function Header() {
             {/* Project selector */}
             <div className="relative">
               <select
-                value={selectedProject}
-                onChange={e => setSelectedProject(e.target.value)}
-                disabled={availableProjects.length <= 1}
-                className="appearance-none bg-gray-800 border border-white/10 rounded-lg pl-3 pr-7 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 cursor-pointer disabled:opacity-60 disabled:cursor-default max-w-[160px] truncate"
+                value={isTerapeutas ? 'terapeutas' : selectedProject}
+                onChange={e => {
+                  const v = e.target.value
+                  if (v === 'terapeutas') {
+                    router.push('/terapeutas')
+                  } else {
+                    setSelectedProject(v)
+                    router.push('/')
+                  }
+                }}
+                className="appearance-none bg-gray-800 border border-white/10 rounded-lg pl-3 pr-7 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 cursor-pointer max-w-[160px] truncate"
               >
                 {availableProjects.map(p => (
                   <option key={p.id} value={p.id}>{p.nome}</option>
                 ))}
+                <option value="terapeutas">Atendimentos - Terapeutas</option>
               </select>
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
             </div>
