@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp, Calendar, Users, Heart } from 'lucide-react'
+import { useApp } from '@/contexts/AppContext'
 
 const NAV = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -13,13 +14,32 @@ const NAV = [
   { href: '/analises', label: 'Análises', icon: TrendingUp },
 ]
 
+const TERAPEUTAS_NAV = [
+  { href: '/terapeutas', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/terapeutas/vendas', label: 'Vendas', icon: ShoppingCart },
+  { href: '/terapeutas/agenda', label: 'Agenda', icon: Calendar },
+  { href: '/terapeutas/lista', label: 'Terapeutas', icon: Users },
+]
+
 export default function MobileNav() {
   const pathname = usePathname()
+  const { user } = useApp()
+  const isTerapeutas = pathname.startsWith('/terapeutas')
+
+  const navItems = isTerapeutas
+    ? [
+        ...TERAPEUTAS_NAV,
+        ...(user?.role === 'admin' ? [{ href: '/terapeutas/admin', label: 'Admin', icon: Heart }] : []),
+      ]
+    : NAV
+
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-gray-900/95 backdrop-blur-md">
       <div className="flex">
-        {NAV.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href
+        {navItems.map(({ href, label, icon: Icon }) => {
+          const active = isTerapeutas
+            ? (href === '/terapeutas' ? pathname === '/terapeutas' : pathname.startsWith(href))
+            : pathname === href
           return (
             <Link
               key={href}

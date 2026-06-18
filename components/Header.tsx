@@ -15,10 +15,18 @@ const NAV_LINKS = [
   { href: '/analises', label: 'Análises' },
 ]
 
+const TERAPEUTAS_NAV = [
+  { href: '/terapeutas', label: 'Dashboard' },
+  { href: '/terapeutas/vendas', label: 'Vendas' },
+  { href: '/terapeutas/agenda', label: 'Agenda' },
+  { href: '/terapeutas/lista', label: 'Terapeutas' },
+]
+
 export default function Header() {
   const { user, setUser, selectedProject, setSelectedProject, projects, isDark, toggleTheme } = useApp()
   const pathname = usePathname()
   const router = useRouter()
+  const isTerapeutas = pathname.startsWith('/terapeutas')
 
   const canSeeAllProjects = user?.role === 'admin' || user?.role === 'financeiro'
   const availableProjects = canSeeAllProjects
@@ -47,8 +55,13 @@ export default function Header() {
 
           {/* Nav */}
           <nav className="hidden md:flex items-center gap-1">
-            {NAV_LINKS.map(link => {
-              const active = pathname === link.href
+            {(isTerapeutas ? [
+              ...TERAPEUTAS_NAV,
+              ...(user?.role === 'admin' ? [{ href: '/terapeutas/admin', label: 'Admin' }] : []),
+            ] : NAV_LINKS).map(link => {
+              const active = isTerapeutas
+                ? (link.href === '/terapeutas' ? pathname === '/terapeutas' : pathname.startsWith(link.href))
+                : pathname === link.href
               return (
                 <Link
                   key={link.href}
