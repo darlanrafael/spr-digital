@@ -152,14 +152,35 @@ export default function PainelTerapeuta() {
             {/* Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               {[
-                { label: 'Sessões vendidas', value: sessoes.length, color: 'text-white' },
-                { label: 'Entregues', value: entregues.length, color: 'text-green-500' },
-                { label: 'Pendentes', value: pendentes.length, color: 'text-amber-400' },
-                { label: 'Receita gerada', value: fmtBRL(receitaGerada), color: 'text-green-500' },
-              ].map(({ label, value, color }) => (
+                {
+                  label: 'Sessões entregues',
+                  sub: 'Confirmadas',
+                  value: entregues.length,
+                  color: 'text-green-500',
+                },
+                {
+                  label: 'Sessões futuras',
+                  sub: 'Agendadas e pendentes',
+                  value: pendentes.length,
+                  color: 'text-yellow-400',
+                },
+                {
+                  label: 'Receita gerada',
+                  sub: 'Sessões entregues — aguardando pagamento',
+                  value: fmtBRL(receitaGerada),
+                  color: 'text-green-500',
+                },
+                {
+                  label: 'Receita futura',
+                  sub: 'Baseado nas sessões agendadas e pendentes',
+                  value: fmtBRL(receitaFutura),
+                  color: 'text-gray-400',
+                },
+              ].map(({ label, sub, value, color }) => (
                 <div key={label} className="bg-gray-900 border border-white/10 rounded-xl p-4">
                   <p className="text-xs text-gray-400 mb-1">{label}</p>
                   <p className={`text-lg font-bold ${color}`}>{value}</p>
+                  <p className="text-[10px] text-gray-600 mt-0.5 leading-tight">{sub}</p>
                 </div>
               ))}
             </div>
@@ -251,11 +272,6 @@ export default function PainelTerapeuta() {
               </div>
             </div>
 
-            {/* Receita futura */}
-            <div className="mt-4 bg-gray-900 border border-white/10 rounded-xl p-4">
-              <p className="text-xs text-gray-400">Receita futura (sessões pendentes)</p>
-              <p className="text-xl font-bold text-indigo-400 mt-1">{fmtBRL(receitaFutura)}</p>
-            </div>
           </>
         )}
       </main>

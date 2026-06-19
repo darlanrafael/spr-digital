@@ -1,129 +1,265 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Users, Calendar, CheckCircle, Clock, DollarSign, TrendingUp } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  Users, CheckCircle, Clock, DollarSign, TrendingUp,
+  BarChart2, Award, Calendar, CalendarDays,
+} from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
-import { getSupabaseClient } from '@/lib/supabase'
 
-type Terapeuta = {
+// ─── Types ─────────────────────────────────────────────────────────────────
+type Preset = 'today' | 'yesterday' | 'last_7d' | 'this_month' | 'custom'
+
+type Metricas = {
+  sessoes_vendidas: number
+  sessoes_entregues: number
+  sessoes_futuras: number
+  faturamento_bruto: number
+  faturamento_liquido_spr: number
+  total_impostos: number
+  ticket_medio: number
+  comissao_gerada: number
+  comissao_futura: number
+  faturamento_liquido_terapeutas: number
+}
+
+type PorTerapeuta = {
   id: string
   nome: string
-  percentual_comissao: number
-  ativo: boolean
+  sessoes_vendidas: number
+  sessoes_entregues: number
+  sessoes_futuras: number
+  faturamento_bruto: number
+  comissao_gerada: number
+  comissao_futura: number
+  proxima_consulta: string | null
 }
 
-type Sessao = {
+type ConsultaHoje = {
   id: string
-  sale_id: string
-  terapeuta_id: string
-  numero_sessao: number
-  total_sessoes: number
-  status: string
-  data_agendada: string | null
-  comissao_valor: number
-  comissao_paga: boolean
+  horario: string
   paciente_nome: string
-  paciente_email: string
-  terapeutas: { nome: string } | null
+  terapeuta_nome: string
+  link_meet: string | null
+  status: string
 }
 
-type Sale = {
-  id: string
-  valor_pago_cliente: number
-  valor_liquido: number
-}
+type TerapeutaFiltro = { id: string; nome: string }
 
+// ─── Formatação ─────────────────────────────────────────────────────────────
 function fmtBRL(n: number) {
-  return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return 'R$ ' + new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
-
 function fmtDt(iso: string | null) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  })
 }
 
-export default function TerapeutasDashboard() {
-  const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])
-  const [sessoes, setSessoes] = useState<Sessao[]>([])
-  const [sales, setSales] = useState<Sale[]>([])
-  const [loading, setLoading] = useState(true)
+const PRESET_LABELS: Record<Preset, string> = {
+  today: 'Hoje',
+  yesterday: 'Ontem',
+  last_7d: '7 dias',
+  this_month: 'Este mês',
+  custom: 'Personalizado',
+}
 
+const METRICAS_VAZIA: Metricas = {
+  sessoes_vendidas: 0, sessoes_entregues: 0, sessoes_futuras: 0,
+  faturamento_bruto: 0, faturamento_liquido_spr: 0, total_impostos: 0,
+  ticket_medio: 0, comissao_gerada: 0, comissao_futura: 0,
+  faturamento_liquido_terapeutas: 0,
+}
+
+// ─── Componente ──────────────────────────────────────────────────────────────
+export default function TerapeutasDashboard() {
+  const [preset, setPreset] = useState<Preset>('this_month')
+  const [dateStart, setDateStart] = useState('')
+  const [dateEnd, setDateEnd] = useState('')
+  const [terapeutaId, setTerapeutaId] = useState('all')
+
+  const [metricas, setMetricas] = useState<Metricas>(METRICAS_VAZIA)
+  const [porTerapeuta, setPorTerapeuta] = useState<PorTerapeuta[]>([])
+  const [consultasHoje, setConsultasHoje] = useState<ConsultaHoje[]>([])
+  const [terapeutasFiltro, setTerapeutasFiltro] = useState<TerapeutaFiltro[]>([])
+  const [loading, setLoading] = useState(true)
+  const [erro, setErro] = useState('')
+
+  // Buscar lista de terapeutas para o filtro (uma vez)
   useEffect(() => {
-    async function load() {
-      const client = getSupabaseClient()
-      if (!client) return
-      const [tResp, sResp, salResp] = await Promise.all([
-        client.from('terapeutas').select('id,nome,percentual_comissao,ativo').eq('ativo', true).order('nome'),
-        client.from('sessoes').select('id,sale_id,terapeuta_id,numero_sessao,total_sessoes,status,data_agendada,comissao_valor,comissao_paga,paciente_nome,paciente_email,terapeutas(nome)'),
-        client.from('sales').select('id,valor_pago_cliente,valor_liquido').ilike('produto', '%Pedro | Denise%'),
-      ])
-      setTerapeutas((tResp.data ?? []) as Terapeuta[])
-      setSessoes((sResp.data ?? []) as unknown as Sessao[])
-      setSales((salResp.data ?? []) as Sale[])
-      setLoading(false)
-    }
-    load()
+    fetch('/api/terapeutas/admin/terapeutas')
+      .then(r => r.json())
+      .then(j => {
+        const ativos = ((j.terapeutas ?? []) as { id: string; nome: string; ativo: boolean }[])
+          .filter(t => t.ativo)
+        setTerapeutasFiltro(ativos)
+      })
+      .catch(() => {})
   }, [])
 
-  const totalVendidas = sessoes.length > 0 ? [...new Set(sessoes.map(s => s.sale_id))].reduce((acc, sid) => {
-    const first = sessoes.find(s => s.sale_id === sid)
-    return acc + (first?.total_sessoes ?? 0)
-  }, 0) : 0
-  const totalEntregues = sessoes.filter(s => s.status === 'entregue').length
-  const totalPendentes = sessoes.filter(s => s.status === 'pendente' || s.status === 'agendada').length
-  const fatBruto = sales.reduce((a, s) => a + (s.valor_pago_cliente || 0), 0)
-  const fatLiquido = sales.reduce((a, s) => a + (s.valor_liquido || 0), 0)
-  const ticketMedio = sales.length > 0 ? fatBruto / sales.length : 0
-  const comissaoGerada = sessoes.filter(s => s.status === 'entregue').reduce((a, s) => a + s.comissao_valor, 0)
-  const comissaoPagar = sessoes.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
-
-  const hoje = new Date()
-  const hojeStr = hoje.toISOString().split('T')[0]
-  const sessoesHoje = sessoes
-    .filter(s => s.data_agendada && s.data_agendada.startsWith(hojeStr) && (s.status === 'agendada'))
-    .sort((a, b) => (a.data_agendada ?? '').localeCompare(b.data_agendada ?? ''))
-
-  const cards = [
-    { label: 'Sessões vendidas', value: totalVendidas, icon: TrendingUp, color: 'text-indigo-400' },
-    { label: 'Sessões entregues', value: totalEntregues, icon: CheckCircle, color: 'text-green-500' },
-    { label: 'Sessões pendentes', value: totalPendentes, icon: Clock, color: 'text-amber-400' },
-    { label: 'Faturamento bruto', value: fmtBRL(fatBruto), icon: DollarSign, color: 'text-white' },
-    { label: 'Faturamento líquido', value: fmtBRL(fatLiquido), icon: DollarSign, color: 'text-white' },
-    { label: 'Ticket médio', value: fmtBRL(ticketMedio), icon: TrendingUp, color: 'text-white' },
-    { label: 'Comissão gerada', value: fmtBRL(comissaoGerada), icon: DollarSign, color: 'text-green-500' },
-    { label: 'Comissão a pagar', value: fmtBRL(comissaoPagar), icon: DollarSign, color: 'text-amber-400' },
-  ]
-
-  const terapeutaStats = terapeutas.map(t => {
-    const ts = sessoes.filter(s => s.terapeuta_id === t.id)
-    const entregues = ts.filter(s => s.status === 'entregue')
-    const pendentes = ts.filter(s => s.status === 'pendente' || s.status === 'agendada')
-    const receitaGerada = entregues.filter(s => !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
-    const receitaFutura = pendentes.reduce((a, s) => a + s.comissao_valor, 0)
-    const proxima = ts.filter(s => s.data_agendada && s.status === 'agendada').sort((a, b) => (a.data_agendada ?? '') > (b.data_agendada ?? '') ? 1 : -1)[0]
-    return {
-      ...t,
-      vendidas: [...new Set(ts.map(s => s.sale_id))].reduce((acc, sid) => {
-        const f = ts.find(s => s.sale_id === sid)
-        return acc + (f?.total_sessoes ?? 0)
-      }, 0),
-      entregues: entregues.length,
-      pendentes: pendentes.length,
-      receitaGerada,
-      receitaFutura,
-      proxima: proxima?.data_agendada ?? null,
+  const loadDashboard = useCallback(async () => {
+    setLoading(true)
+    setErro('')
+    try {
+      const params = new URLSearchParams({ datePreset: preset, terapeutaId })
+      if (preset === 'custom') {
+        if (dateStart) params.set('dateStart', dateStart + 'T03:00:00.000Z')
+        if (dateEnd) params.set('dateEnd', dateEnd + 'T26:59:59.000Z') // fim do dia Brasília
+      }
+      const res = await fetch('/api/terapeutas/dashboard?' + params.toString())
+      if (!res.ok) throw new Error(await res.text())
+      const json = await res.json()
+      setMetricas(json.metricas ?? METRICAS_VAZIA)
+      setPorTerapeuta(json.por_terapeuta ?? [])
+      setConsultasHoje(json.consultas_hoje ?? [])
+    } catch (e) {
+      setErro(String(e))
+    } finally {
+      setLoading(false)
     }
-  })
+  }, [preset, dateStart, dateEnd, terapeutaId])
+
+  useEffect(() => {
+    if (preset === 'custom' && (!dateStart || !dateEnd)) return
+    loadDashboard()
+  }, [loadDashboard, preset, dateStart, dateEnd, terapeutaId])
+
+  // ── Cards ──
+  const cards = [
+    {
+      label: 'Sessões vendidas',
+      sub: 'Total de sessões contratadas',
+      value: metricas.sessoes_vendidas,
+      icon: Users,
+      color: 'text-white',
+    },
+    {
+      label: 'Sessões entregues',
+      sub: 'Confirmadas pelos terapeutas',
+      value: metricas.sessoes_entregues,
+      icon: CheckCircle,
+      color: 'text-green-500',
+    },
+    {
+      label: 'Sessões futuras',
+      sub: 'Agendadas e pendentes',
+      value: metricas.sessoes_futuras,
+      icon: Clock,
+      color: 'text-yellow-400',
+    },
+    {
+      label: 'Faturamento bruto',
+      sub: '100% do valor pago pelos clientes',
+      value: fmtBRL(metricas.faturamento_bruto),
+      icon: DollarSign,
+      color: 'text-white',
+    },
+    {
+      label: 'Faturamento líquido SPR (70%)',
+      sub: 'Após taxas e impostos — parte SPR',
+      value: fmtBRL(metricas.faturamento_liquido_spr),
+      icon: TrendingUp,
+      color: 'text-green-500',
+    },
+    {
+      label: 'Total de impostos',
+      sub: '12,85% sobre faturamento bruto',
+      value: fmtBRL(metricas.total_impostos),
+      icon: BarChart2,
+      color: 'text-red-400',
+    },
+    {
+      label: 'Ticket médio',
+      sub: 'Valor médio por venda',
+      value: metricas.faturamento_bruto > 0 ? fmtBRL(metricas.ticket_medio) : '—',
+      icon: BarChart2,
+      color: 'text-white',
+    },
+    {
+      label: 'Comissão gerada',
+      sub: 'Sessões entregues — a pagar',
+      value: fmtBRL(metricas.comissao_gerada),
+      icon: Award,
+      color: 'text-yellow-400',
+    },
+    {
+      label: 'Comissão futura',
+      sub: 'Baseado nas sessões futuras',
+      value: fmtBRL(metricas.comissao_futura),
+      icon: CalendarDays,
+      color: 'text-gray-400',
+    },
+    {
+      label: 'Líquido terapeutas (30%)',
+      sub: 'Parte dos terapeutas após taxas e impostos',
+      value: fmtBRL(metricas.faturamento_liquido_terapeutas),
+      icon: Users,
+      color: 'text-blue-400',
+    },
+  ]
 
   return (
     <div className="min-h-screen bg-gray-950 pb-24 md:pb-8">
       <Header />
       <main className="max-w-7xl mx-auto px-4 py-6">
+
+        {/* Cabeçalho + filtros */}
         <div className="mb-6">
           <h1 className="text-xl font-semibold text-white">Atendimentos · Terapeutas</h1>
           <p className="text-sm text-gray-400 mt-1">Visão geral de todos os atendimentos</p>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {/* Filtro período */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {(Object.keys(PRESET_LABELS) as Preset[]).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPreset(p)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    preset === p
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:text-white border border-white/10'
+                  }`}
+                >
+                  {PRESET_LABELS[p]}
+                </button>
+              ))}
+            </div>
+
+            {/* Datas personalizadas */}
+            {preset === 'custom' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">De:</span>
+                <input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)}
+                  className="bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50" />
+                <span className="text-xs text-gray-500">Até:</span>
+                <input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)}
+                  className="bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50" />
+              </div>
+            )}
+
+            {/* Filtro terapeuta */}
+            <select
+              value={terapeutaId}
+              onChange={e => setTerapeutaId(e.target.value)}
+              className="bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50"
+            >
+              <option value="all">Todos os terapeutas</option>
+              {terapeutasFiltro.map(t => (
+                <option key={t.id} value={t.id}>{t.nome}</option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        {erro && (
+          <div className="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">
+            Erro ao carregar dados: {erro}
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center h-40">
@@ -131,86 +267,99 @@ export default function TerapeutasDashboard() {
           </div>
         ) : (
           <>
-            {/* Cards resumo */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              {cards.map(({ label, value, icon: Icon, color }) => (
+            {/* 10 cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              {cards.map(({ label, sub, value, icon: Icon, color }) => (
                 <div key={label} className="bg-gray-900 border border-white/10 rounded-xl p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Icon className={`w-4 h-4 ${color}`} />
-                    <span className="text-xs text-gray-400">{label}</span>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Icon className={`w-4 h-4 ${color} shrink-0`} />
+                    <span className="text-xs text-gray-400 leading-tight">{label}</span>
                   </div>
-                  <p className={`text-lg font-bold ${color}`}>{value}</p>
+                  <p className={`text-lg font-bold ${color} mt-1`}>{value}</p>
+                  <p className="text-[10px] text-gray-600 mt-0.5 leading-tight">{sub}</p>
                 </div>
               ))}
             </div>
 
-            {/* Tabela de terapeutas */}
-            <div className="bg-gray-900 border border-white/10 rounded-xl mb-6">
-              <div className="p-4 border-b border-white/10">
-                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                  <Users className="w-4 h-4 text-indigo-400" /> Terapeutas ativos
-                </h2>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-white/5">
-                      {['Nome', 'Vendidas', 'Entregues', 'Pendentes', 'Receita gerada', 'Receita futura', 'Próxima consulta'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {terapeutaStats.length === 0 ? (
-                      <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-600 text-xs">Nenhum terapeuta cadastrado</td></tr>
-                    ) : terapeutaStats.map(t => (
-                      <tr key={t.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
-                        <td className="px-4 py-3 text-white font-medium">{t.nome}</td>
-                        <td className="px-4 py-3 text-gray-300">{t.vendidas}</td>
-                        <td className="px-4 py-3 text-green-500">{t.entregues}</td>
-                        <td className="px-4 py-3 text-amber-400">{t.pendentes}</td>
-                        <td className="px-4 py-3 text-green-500">{fmtBRL(t.receitaGerada)}</td>
-                        <td className="px-4 py-3 text-gray-300">{fmtBRL(t.receitaFutura)}</td>
-                        <td className="px-4 py-3 text-gray-400">{fmtDt(t.proxima)}</td>
+            {/* Tabela performance por terapeuta (somente quando filtro = todos) */}
+            {terapeutaId === 'all' && (
+              <div className="bg-gray-900 border border-white/10 rounded-xl mb-6">
+                <div className="p-4 border-b border-white/10">
+                  <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-400" /> Performance por Terapeuta
+                  </h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/5">
+                        {['Nome', 'Vendidas', 'Entregues', 'Futuras', 'Fat. bruto', 'Comissão gerada', 'Comissão futura', 'Próxima consulta'].map(h => (
+                          <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {porTerapeuta.length === 0 ? (
+                        <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-600 text-xs">Sem dados no período selecionado</td></tr>
+                      ) : porTerapeuta.map(t => (
+                        <tr key={t.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                          <td className="px-4 py-3 text-white font-medium whitespace-nowrap">{t.nome}</td>
+                          <td className="px-4 py-3 text-gray-300">{t.sessoes_vendidas}</td>
+                          <td className="px-4 py-3 text-green-500">{t.sessoes_entregues}</td>
+                          <td className="px-4 py-3 text-yellow-400">{t.sessoes_futuras}</td>
+                          <td className="px-4 py-3 text-gray-300 whitespace-nowrap">{fmtBRL(t.faturamento_bruto)}</td>
+                          <td className="px-4 py-3 text-yellow-400 whitespace-nowrap">{fmtBRL(t.comissao_gerada)}</td>
+                          <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{fmtBRL(t.comissao_futura)}</td>
+                          <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{fmtDt(t.proxima_consulta)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Sessões de hoje */}
+            {/* Consultas de hoje */}
             <div className="bg-gray-900 border border-white/10 rounded-xl">
               <div className="p-4 border-b border-white/10">
                 <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-indigo-400" />
-                  Consultas hoje ({sessoesHoje.length})
+                  Consultas de Hoje ({consultasHoje.length})
                 </h2>
               </div>
-              {sessoesHoje.length === 0 ? (
+              {consultasHoje.length === 0 ? (
                 <p className="px-4 py-6 text-center text-gray-600 text-xs">Nenhuma consulta agendada para hoje</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/5">
-                        {['Horário', 'Paciente', 'Terapeuta', 'Sessão'].map(h => (
+                        {['Horário', 'Paciente', 'Terapeuta', 'Link Meet', 'Status'].map(h => (
                           <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {sessoesHoje.map(s => (
+                      {consultasHoje.map(s => (
                         <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
-                          <td className="px-4 py-3 text-indigo-400 font-medium">
-                            {s.data_agendada ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                          <td className="px-4 py-3 text-indigo-400 font-medium">{s.horario}</td>
+                          <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                          <td className="px-4 py-3 text-gray-300">{s.terapeuta_nome}</td>
+                          <td className="px-4 py-3">
+                            {s.link_meet ? (
+                              <a href={s.link_meet} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-indigo-400 hover:text-indigo-300 underline">
+                                Abrir Meet
+                              </a>
+                            ) : (
+                              <span className="text-gray-600 text-xs">—</span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
-                            <p className="text-white">{s.paciente_nome}</p>
-                            <p className="text-xs text-gray-500">{s.paciente_email}</p>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              s.status === 'agendada' ? 'text-blue-400 bg-blue-400/10' : 'text-amber-400 bg-amber-400/10'
+                            }`}>{s.status === 'agendada' ? 'Agendada' : 'Pendente'}</span>
                           </td>
-                          <td className="px-4 py-3 text-gray-300">{(s.terapeutas as { nome: string } | null)?.nome ?? '—'}</td>
-                          <td className="px-4 py-3 text-gray-400">{s.numero_sessao}/{s.total_sessoes}</td>
                         </tr>
                       ))}
                     </tbody>
