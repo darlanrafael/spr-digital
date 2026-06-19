@@ -53,7 +53,7 @@ export default function AdminPage() {
   // Usuários
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [uLoading, setULoading] = useState(false)
-  const [novoUsuario, setNovoUsuario] = useState({ nome: '', email: '', senha: '', tipo: 'gestor', terapeuta_id: '' })
+  const [novoUsuario, setNovoUsuario] = useState({ nome: '', email: '', senha: '', tipo: 'comercial', terapeuta_id: '' })
   const [showSenha, setShowSenha] = useState(false)
   const [uSaving, setUSaving] = useState(false)
   const [uErro, setUErro] = useState('')
@@ -144,7 +144,7 @@ export default function AdminPage() {
     setUSaving(false)
     if (!res.ok) { setUErro(json.error ?? 'Erro'); return }
     setUSucesso('Usuário criado com sucesso!')
-    setNovoUsuario({ nome: '', email: '', senha: '', tipo: 'gestor', terapeuta_id: '' })
+    setNovoUsuario({ nome: '', email: '', senha: '', tipo: 'comercial', terapeuta_id: '' })
     loadUsuarios()
   }
 
@@ -316,7 +316,7 @@ export default function AdminPage() {
                   <select value={novoUsuario.tipo} onChange={e => setNovoUsuario(p => ({ ...p, tipo: e.target.value }))}
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50">
                     <option value="admin">Admin</option>
-                    <option value="gestor">Gestor</option>
+                    <option value="comercial">Comercial</option>
                     <option value="terapeuta">Terapeuta</option>
                   </select>
                 </div>
