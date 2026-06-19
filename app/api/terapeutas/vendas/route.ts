@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 type SaleRow = {
   id: string
   nome: string
@@ -30,10 +32,37 @@ type SessaoRow = {
   paciente_email: string
   agendado_por: string | null
   entregue_confirmado_por: string | null
-  observacoes: string | null
   terapeutas: { nome: string } | null
 }
 
+type OcorrenciaRow = {
+  id: string
+  sale_id: string
+  tipo: string
+  titulo: string
+  descricao: string
+  dados_extras: Record<string, unknown> | null
+  criado_por_nome: string
+  criado_por_tipo: string
+  criado_por_email: string
+  created_at: string
+}
+
+type RemarcacaoRow = {
+  id: string
+  sessao_id: string
+  sale_id: string
+  paciente_nome: string
+  remarcado_por_nome: string
+  remarcado_por_tipo: string
+  solicitado_por: string
+  motivo: string
+  data_anterior: string
+  data_nova: string
+  created_at: string
+}
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 function brasiliaToday(): Date {
   const now = new Date()
   const br = new Date(now.getTime() - 3 * 60 * 60 * 1000)
@@ -62,13 +91,13 @@ function getDateRange(preset: string, dateStart?: string, dateEnd?: string) {
   }
 }
 
+// ─── GET ──────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl
     const datePreset = searchParams.get('datePreset') ?? 'this_month'
     const dateStart = searchParams.get('dateStart') ?? undefined
     const dateEnd = searchParams.get('dateEnd') ?? undefined
-
     const { from, to } = getDateRange(datePreset, dateStart, dateEnd)
     const supabase = getSupabaseAdmin()
 
@@ -77,7 +106,7 @@ export async function GET(req: NextRequest) {
       .from('terapeutas').select('id,nome').eq('ativo', true).order('nome')
     const terapeutas = (terapeutasData ?? []) as { id: string; nome: string }[]
 
-    // Fetch vendas paginadas
+    // Vendas paginadas
     const vendasAll: SaleRow[] = []
     const PAGE = 1000
     let offset = 0
@@ -99,7 +128,7 @@ export async function GET(req: NextRequest) {
 
     const allSaleIds = vendasAll.map(v => v.id)
 
-    // Fetch sessoes em lotes de 200
+    // Sessões em lotes de 200
     const sessoesPorVenda: Record<string, SessaoRow[]> = {}
     if (allSaleIds.length > 0) {
       const BATCH = 200
@@ -107,7 +136,7 @@ export async function GET(req: NextRequest) {
         const batch = allSaleIds.slice(i, i + BATCH)
         const { data } = await supabase
           .from('sessoes')
-          .select('id,sale_id,terapeuta_id,numero_sessao,total_sessoes,status,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,agendado_por,entregue_confirmado_por,observacoes,terapeutas(nome)')
+          .select('id,sale_id,terapeuta_id,numero_sessao,total_sessoes,status,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,agendado_por,entregue_confirmado_por,terapeutas(nome)')
           .in('sale_id', batch)
           .order('numero_sessao', { ascending: true })
         if (data) {
@@ -116,6 +145,51 @@ export async function GET(req: NextRequest) {
             sessoesPorVenda[s.sale_id].push(s)
           }
         }
+      }
+    }
+
+    // Ocorrências por sale_id
+    const ocorrenciasPorVenda: Record<string, OcorrenciaRow[]> = {}
+    if (allSaleIds.length > 0) {
+      const BATCH = 200
+      for (let i = 0; i < allSaleIds.length; i += BATCH) {
+        const batch = allSaleIds.slice(i, i + BATCH)
+        try {
+          const { data } = await supabase
+            .from('ocorrencias_prontuario')
+            .select('*')
+            .in('sale_id', batch)
+            .order('created_at', { ascending: false })
+          if (data) {
+            for (const o of (data as OcorrenciaRow[])) {
+              if (!ocorrenciasPorVenda[o.sale_id]) ocorrenciasPorVenda[o.sale_id] = []
+              ocorrenciasPorVenda[o.sale_id].push(o)
+            }
+          }
+        } catch { /* table may not exist yet */ }
+      }
+    }
+
+    // Remarcações por sessao_id
+    const allSessaoIds = Object.values(sessoesPorVenda).flat().map(s => s.id)
+    const remarcacoesPorSessao: Record<string, RemarcacaoRow[]> = {}
+    if (allSessaoIds.length > 0) {
+      const BATCH = 200
+      for (let i = 0; i < allSessaoIds.length; i += BATCH) {
+        const batch = allSessaoIds.slice(i, i + BATCH)
+        try {
+          const { data } = await supabase
+            .from('remarcacoes_historico')
+            .select('*')
+            .in('sessao_id', batch)
+            .order('created_at', { ascending: true })
+          if (data) {
+            for (const r of (data as RemarcacaoRow[])) {
+              if (!remarcacoesPorSessao[r.sessao_id]) remarcacoesPorSessao[r.sessao_id] = []
+              remarcacoesPorSessao[r.sessao_id].push(r)
+            }
+          }
+        } catch { /* table may not exist yet */ }
       }
     }
 
@@ -130,7 +204,6 @@ export async function GET(req: NextRequest) {
     const vendasAtivos = vendasAprovadas.filter(v =>
       sessoesPorVenda[v.id] && sessoesPorVenda[v.id].length > 0
     )
-
     const formatos = [...new Set(vendasAll.map(v => v.produto))].sort()
 
     return NextResponse.json({
@@ -144,6 +217,8 @@ export async function GET(req: NextRequest) {
       vendas_ativos: vendasAtivos,
       vendas_reembolsos: vendasReembolsos,
       sessoes_por_venda: sessoesPorVenda,
+      ocorrencias_por_venda: ocorrenciasPorVenda,
+      remarcacoes_por_sessao: remarcacoesPorSessao,
       terapeutas,
       formatos,
     })
@@ -153,16 +228,107 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PATCH: salvar observações sem requerer senha (notas clínicas, sem impacto financeiro)
-export async function PATCH(req: NextRequest) {
+// ─── POST — criar ocorrência (nota / remarcacao / solicitacao_reembolso) ──────
+export async function POST(req: NextRequest) {
   try {
-    const { sessao_id, observacoes } = await req.json() as { sessao_id: string; observacoes: string }
-    if (!sessao_id) return NextResponse.json({ error: 'sessao_id obrigatório' }, { status: 400 })
+    const body = await req.json() as {
+      sale_id: string
+      tipo: string
+      titulo: string
+      descricao: string
+      dados_extras?: Record<string, unknown>
+      senha: string
+      usuario_nome: string
+      usuario_tipo: string
+      usuario_email: string
+    }
+    const { sale_id, tipo, titulo, descricao, dados_extras, senha, usuario_nome, usuario_tipo, usuario_email } = body
+
+    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
+    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+
     const supabase = getSupabaseAdmin()
-    const { error } = await supabase.from('sessoes').update({ observacoes }).eq('id', sessao_id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true })
+
+    if (tipo === 'remarcacao' && dados_extras) {
+      const sessao_id = dados_extras.sessao_id as string
+      const nova_data = dados_extras.nova_data as string
+      const data_anterior = dados_extras.data_anterior as string
+      const solicitado_por = dados_extras.solicitado_por as string
+      const motivo = dados_extras.motivo as string
+
+      const { data: sessaoData } = await supabase
+        .from('sessoes').select('paciente_nome').eq('id', sessao_id).single()
+
+      await supabase.from('sessoes').update({
+        data_agendada: nova_data,
+        status: 'agendada',
+      }).eq('id', sessao_id)
+
+      await supabase.from('remarcacoes_historico').insert({
+        sessao_id,
+        sale_id,
+        paciente_nome: (sessaoData as { paciente_nome: string } | null)?.paciente_nome ?? '',
+        remarcado_por_nome: usuario_nome,
+        remarcado_por_tipo: usuario_tipo,
+        solicitado_por,
+        motivo,
+        data_anterior,
+        data_nova: nova_data,
+      })
+    }
+
+    if (tipo === 'solicitacao_reembolso' && dados_extras) {
+      const de = dados_extras as {
+        sessoes_ids: string[]
+        sessoes_numeros: number[]
+        valor_reembolso: number
+        motivo: string
+        paciente_nome: string
+        paciente_email: string
+      }
+      await supabase.from('solicitacoes_reembolso').insert({
+        sale_id,
+        paciente_nome: de.paciente_nome,
+        paciente_email: de.paciente_email,
+        sessoes_ids: de.sessoes_ids,
+        sessoes_numeros: de.sessoes_numeros,
+        valor_reembolso: de.valor_reembolso,
+        motivo: de.motivo,
+        solicitado_por_nome: usuario_nome,
+        solicitado_por_tipo: usuario_tipo,
+        solicitado_por_email: usuario_email,
+        status: 'pendente',
+      })
+    }
+
+    const { data: ocorrencia, error: ocErr } = await supabase
+      .from('ocorrencias_prontuario')
+      .insert({
+        sale_id,
+        tipo,
+        titulo,
+        descricao,
+        dados_extras: dados_extras ?? null,
+        criado_por_nome: usuario_nome,
+        criado_por_tipo: usuario_tipo,
+        criado_por_email: usuario_email,
+      })
+      .select()
+      .single()
+
+    if (ocErr) throw new Error(ocErr.message)
+
+    await registrarAtividade({
+      usuario_nome,
+      usuario_tipo,
+      tipo_acao: tipo,
+      sale_id,
+      descricao,
+    })
+
+    return NextResponse.json({ success: true, ocorrencia })
   } catch (err) {
+    console.error('[terapeutas/vendas POST]', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }

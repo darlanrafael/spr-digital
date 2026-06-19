@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Calendar, CheckCircle, RefreshCw, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
@@ -10,6 +10,7 @@ import SenhaModal from '@/components/SenhaModal'
 type Preset = 'today' | 'yesterday' | 'last_7d' | 'this_month' | 'custom'
 type AbaAtiva = 'aprovadas' | 'reembolsos'
 type SubAba = 'pendentes' | 'ativos'
+type OcorrenciaTipo = null | 'select' | 'nota' | 'remarcacao' | 'reembolso'
 
 type Sale = {
   id: string
@@ -40,8 +41,34 @@ type Sessao = {
   paciente_email: string
   agendado_por: string | null
   entregue_confirmado_por: string | null
-  observacoes: string | null
   terapeutas: { nome: string } | null
+}
+
+type Ocorrencia = {
+  id: string
+  sale_id: string
+  tipo: string
+  titulo: string
+  descricao: string
+  dados_extras: Record<string, unknown> | null
+  criado_por_nome: string
+  criado_por_tipo: string
+  criado_por_email: string
+  created_at: string
+}
+
+type Remarcacao = {
+  id: string
+  sessao_id: string
+  sale_id: string
+  paciente_nome: string
+  remarcado_por_nome: string
+  remarcado_por_tipo: string
+  solicitado_por: string
+  motivo: string
+  data_anterior: string
+  data_nova: string
+  created_at: string
 }
 
 type Terapeuta = { id: string; nome: string }
@@ -52,6 +79,8 @@ type PageData = {
   vendas_ativos: Sale[]
   vendas_reembolsos: Sale[]
   sessoes_por_venda: Record<string, Sessao[]>
+  ocorrencias_por_venda: Record<string, Ocorrencia[]>
+  remarcacoes_por_sessao: Record<string, Remarcacao[]>
   terapeutas: Terapeuta[]
   formatos: string[]
 }
@@ -67,10 +96,6 @@ function fmtDt(iso: string | null) {
     hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
   })
 }
-function fmtHora(iso: string | null) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
-}
 
 function inferirNumeroSessoes(produto: string): number {
   const p = produto.toLowerCase()
@@ -80,27 +105,42 @@ function inferirNumeroSessoes(produto: string): number {
   return 1
 }
 
+function nomeFromEmail(email: string): string {
+  const prefix = email.split('@')[0]
+  return prefix.replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
 const PRESET_LABELS: Record<Preset, string> = {
   today: 'Hoje', yesterday: 'Ontem', last_7d: '7 dias', this_month: 'Este mês', custom: 'Personalizado',
 }
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  pendente: { label: 'Pendente', cls: 'text-amber-400 bg-amber-400/10' },
-  agendada: { label: 'Agendada', cls: 'text-blue-400 bg-blue-400/10' },
-  entregue: { label: 'Entregue ✓', cls: 'text-green-500 bg-green-500/10' },
-  cancelada: { label: 'Cancelada', cls: 'text-red-400 bg-red-400/10' },
-  remarcada: { label: 'Remarcada', cls: 'text-yellow-400 bg-yellow-400/10' },
+  pendente:  { label: 'Pendente',    cls: 'text-gray-400 bg-gray-400/10' },
+  agendada:  { label: 'Agendada',    cls: 'text-blue-400 bg-blue-400/10' },
+  entregue:  { label: 'Entregue ✓', cls: 'text-green-500 bg-green-500/10' },
+  cancelada: { label: 'Cancelada',   cls: 'text-red-400 bg-red-400/10' },
+  remarcada: { label: 'Remarcada',   cls: 'text-yellow-400 bg-yellow-400/10' },
+}
+
+const OCORRENCIA_META: Record<string, { icon: string; label: string; cls: string }> = {
+  nota:                  { icon: '📝', label: 'Nota',                    cls: 'text-gray-400 bg-gray-400/10 border-gray-400/20' },
+  remarcacao:            { icon: '📅', label: 'Remarcação',              cls: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20' },
+  confirmacao_entrega:   { icon: '✅', label: 'Sessão Entregue',         cls: 'text-green-500 bg-green-500/10 border-green-500/20' },
+  solicitacao_reembolso: { icon: '💰', label: 'Solicitação de Reembolso', cls: 'text-orange-400 bg-orange-400/10 border-orange-400/20' },
+  reembolso_aprovado:    { icon: '✅', label: 'Reembolso Aprovado',      cls: 'text-green-500 bg-green-500/10 border-green-500/20' },
+  reembolso_rejeitado:   { icon: '❌', label: 'Reembolso Rejeitado',     cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
 }
 
 const EMPTY_DATA: PageData = {
   counts: { aprovadas: 0, pendentes: 0, ativos: 0, reembolsos: 0 },
   vendas_pendentes: [], vendas_ativos: [], vendas_reembolsos: [],
-  sessoes_por_venda: {}, terapeutas: [], formatos: [],
+  sessoes_por_venda: {}, ocorrencias_por_venda: {}, remarcacoes_por_sessao: {},
+  terapeutas: [], formatos: [],
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function TerapeutasVendas() {
-  // Filters
+  // Filtros
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('aprovadas')
   const [subAba, setSubAba] = useState<SubAba>('pendentes')
   const [preset, setPreset] = useState<Preset>('this_month')
@@ -110,7 +150,7 @@ export default function TerapeutasVendas() {
   const [filtroTerapeuta, setFiltroTerapeuta] = useState('all')
   const [filtroFormato, setFiltroFormato] = useState('all')
 
-  // Data
+  // Dados
   const [pageData, setPageData] = useState<PageData>(EMPTY_DATA)
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState('')
@@ -124,7 +164,7 @@ export default function TerapeutasVendas() {
   function showToast(msg: string) {
     setToast(msg)
     if (toastRef.current) clearTimeout(toastRef.current)
-    toastRef.current = setTimeout(() => setToast(''), 3000)
+    toastRef.current = setTimeout(() => setToast(''), 3500)
   }
 
   // Modal agendar
@@ -136,26 +176,37 @@ export default function TerapeutasVendas() {
   const [agendarLoading, setAgendarLoading] = useState(false)
   const [agendarErro, setAgendarErro] = useState('')
 
-  // Modal prontuário
+  // Prontuário
   const [prontuarioVendaId, setProntuarioVendaId] = useState<string | null>(null)
-  const [obsValues, setObsValues] = useState<Record<string, string>>({})
-  const [obsSaving, setObsSaving] = useState<Record<string, boolean>>({})
-  const [obsSuccess, setObsSuccess] = useState<Record<string, boolean>>({})
-  const [prontuarioExpandido, setProntuarioExpandido] = useState<Record<string, boolean>>({})
 
-  // Confirmar entrega (dentro do prontuário)
+  // Confirmar entrega
   const [confirmarSessaoId, setConfirmarSessaoId] = useState<string | null>(null)
+  const [confirmarSenhaOpen, setConfirmarSenhaOpen] = useState(false)
   const [confirmarLoading, setConfirmarLoading] = useState(false)
   const [confirmarErro, setConfirmarErro] = useState('')
-  const [confirmarSenhaOpen, setConfirmarSenhaOpen] = useState(false)
 
-  // Remarcar (dentro do prontuário)
-  const [remarcarSessaoId, setRemarcarSessaoId] = useState<string | null>(null)
-  const [remarcarNovaData, setRemarcarNovaData] = useState('')
-  const [remarcarMotivo, setRemarcarMotivo] = useState('')
-  const [remarcarSenhaOpen, setRemarcarSenhaOpen] = useState(false)
-  const [remarcarLoading, setRemarcarLoading] = useState(false)
-  const [remarcarErro, setRemarcarErro] = useState('')
+  // ── Ocorrências inline no prontuário ──
+  const [ocorrenciaTipo, setOcorrenciaTipo] = useState<OcorrenciaTipo>(null)
+  // Nota
+  const [notaTitulo, setNotaTitulo] = useState('')
+  const [notaDesc, setNotaDesc] = useState('')
+  const [notaErro, setNotaErro] = useState('')
+  const [notaLoading, setNotaLoading] = useState(false)
+  const [notaSenhaOpen, setNotaSenhaOpen] = useState(false)
+  // Remarcar
+  const [remSessaoId, setRemSessaoId] = useState('')
+  const [remNovaData, setRemNovaData] = useState('')
+  const [remSolicitadoPor, setRemSolicitadoPor] = useState('')
+  const [remMotivo, setRemMotivo] = useState('')
+  const [remErro, setRemErro] = useState('')
+  const [remLoading, setRemLoading] = useState(false)
+  const [remSenhaOpen, setRemSenhaOpen] = useState(false)
+  // Reembolso
+  const [reeSessoes, setReeSessoes] = useState<string[]>([])
+  const [reeMotivo, setReeMotivo] = useState('')
+  const [reeErro, setReeErro] = useState('')
+  const [reeLoading, setReeLoading] = useState(false)
+  const [reeSenhaOpen, setReeSenhaOpen] = useState(false)
 
   // ── Load data ──
   const loadData = useCallback(async () => {
@@ -184,24 +235,19 @@ export default function TerapeutasVendas() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  // Inicializar obsValues quando prontuário abre
+  // Reset ocorrência state quando prontuário abre/fecha
   useEffect(() => {
-    if (!prontuarioVendaId) return
-    const sessoes = pageData.sessoes_por_venda[prontuarioVendaId] ?? []
-    const init: Record<string, string> = {}
-    sessoes.forEach(s => { init[s.id] = s.observacoes ?? '' })
-    setObsValues(init)
-    setObsSuccess({})
-  }, [prontuarioVendaId, pageData.sessoes_por_venda])
+    setOcorrenciaTipo(null)
+    setNotaTitulo(''); setNotaDesc(''); setNotaErro('')
+    setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo(''); setRemErro('')
+    setReeSessoes([]); setReeMotivo(''); setReeErro('')
+  }, [prontuarioVendaId])
 
-  // ── Derived values ──
+  // ── Derived ──
   const searchLower = busca.toLowerCase()
   function filterList(list: Sale[]) {
     return list
-      .filter(v => !busca ||
-        v.nome.toLowerCase().includes(searchLower) ||
-        v.email.toLowerCase().includes(searchLower)
-      )
+      .filter(v => !busca || v.nome.toLowerCase().includes(searchLower) || v.email.toLowerCase().includes(searchLower))
       .filter(v => filtroFormato === 'all' || v.produto === filtroFormato)
   }
   function filterAtivos(list: Sale[]) {
@@ -215,7 +261,9 @@ export default function TerapeutasVendas() {
   const vendasAtivosDisplay = filterAtivos(pageData.vendas_ativos)
   const vendasReembolsosDisplay = filterList(pageData.vendas_reembolsos)
 
-  const agendarVenda = agendarVendaId ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId) : null
+  const agendarVenda = agendarVendaId
+    ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId)
+    : null
   const agendarNumSessoes = agendarVenda ? inferirNumeroSessoes(agendarVenda.produto) : 1
   const agendarPreviewDatas = agendarDataPrimeira && agendarVenda
     ? Array.from({ length: agendarNumSessoes }, (_, i) => {
@@ -229,39 +277,48 @@ export default function TerapeutasVendas() {
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos, ...pageData.vendas_reembolsos].find(v => v.id === prontuarioVendaId)
     : null
   const prontuarioSessoes = prontuarioVendaId ? (pageData.sessoes_por_venda[prontuarioVendaId] ?? []) : []
+  const prontuarioOcorrencias = prontuarioVendaId ? (pageData.ocorrencias_por_venda[prontuarioVendaId] ?? []) : []
+
+  const sessoesPendentesProntuario = prontuarioSessoes.filter(s => s.status === 'agendada' || s.status === 'pendente')
+  const entreguesProntuario = prontuarioSessoes.filter(s => s.status === 'entregue').length
+  const totalProntuario = prontuarioSessoes[0]?.total_sessoes ?? prontuarioSessoes.length
+
+  // Cálculo valor reembolso selecionado
+  const valorReembolso = prontuarioSale && reeSessoes.length > 0
+    ? (prontuarioSale.valor_pago_cliente / (totalProntuario || 1)) * reeSessoes.length
+    : 0
+
+  // Validações
+  const remValido = remSessaoId && remNovaData && new Date(remNovaData) > new Date() && remSolicitadoPor && remMotivo.length >= 10
+  const reeValido = reeSessoes.length > 0 && reeMotivo.length >= 20
+  const notaValida = notaTitulo.trim().length > 0 && notaDesc.trim().length >= 10
 
   // ── Handlers ──
   async function handleAgendar(senha: string) {
     if (!agendarVendaId || !agendarTerapeutaId || !agendarDataPrimeira) return
-    setAgendarLoading(true)
-    setAgendarErro('')
+    setAgendarLoading(true); setAgendarErro('')
     const res = await fetch('/api/terapeutas/sessoes/agendar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sale_id: agendarVendaId,
-        terapeuta_id: agendarTerapeutaId,
+        sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaId,
         data_primeira_sessao: agendarDataPrimeira,
         link_meet: agendarLinkMeet || undefined,
-        usuario_email: adminEmail,
-        senha,
+        usuario_email: adminEmail, senha,
       }),
     })
     const json = await res.json()
     setAgendarLoading(false)
-    if (!res.ok) { setAgendarErro(json.error ?? 'Erro ao agendar'); return }
-    setAgendarSenhaOpen(false)
-    setAgendarVendaId(null)
-    setAgendarDataPrimeira('')
-    setAgendarLinkMeet('')
+    if (!res.ok) { setAgendarErro(json.error ?? 'Erro'); return }
+    setAgendarSenhaOpen(false); setAgendarVendaId(null)
+    setAgendarDataPrimeira(''); setAgendarLinkMeet('')
     showToast(`✓ ${json.sessoes_criadas} sessões agendadas com sucesso!`)
     loadData()
   }
 
   async function handleConfirmar(senha: string) {
     if (!confirmarSessaoId) return
-    setConfirmarLoading(true)
-    setConfirmarErro('')
+    setConfirmarLoading(true); setConfirmarErro('')
     const res = await fetch('/api/terapeutas/sessoes/confirmar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -270,58 +327,107 @@ export default function TerapeutasVendas() {
     const json = await res.json()
     setConfirmarLoading(false)
     if (!res.ok) { setConfirmarErro(json.error ?? 'Erro'); return }
-    setConfirmarSessaoId(null)
-    setConfirmarSenhaOpen(false)
+    setConfirmarSessaoId(null); setConfirmarSenhaOpen(false)
     showToast('✓ Sessão confirmada como entregue!')
     loadData()
   }
 
-  async function handleRemarcar(senha: string) {
-    if (!remarcarSessaoId || !remarcarNovaData) return
-    setRemarcarLoading(true)
-    setRemarcarErro('')
-    const res = await fetch('/api/terapeutas/sessoes/remarcar', {
+  async function postOcorrencia(senha: string, payload: {
+    tipo: string; titulo: string; descricao: string
+    dados_extras?: Record<string, unknown>
+  }, onSuccess: () => void, setLoading: (v: boolean) => void, setErro: (v: string) => void) {
+    if (!prontuarioVendaId) return
+    setLoading(true); setErro('')
+    const res = await fetch('/api/terapeutas/vendas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessao_id: remarcarSessaoId, nova_data: remarcarNovaData, motivo: remarcarMotivo, usuario_email: adminEmail, senha }),
+      body: JSON.stringify({
+        sale_id: prontuarioVendaId,
+        ...payload,
+        senha,
+        usuario_nome: nomeFromEmail(adminEmail),
+        usuario_tipo: 'admin',
+        usuario_email: adminEmail,
+      }),
     })
     const json = await res.json()
-    setRemarcarLoading(false)
-    if (!res.ok) { setRemarcarErro(json.error ?? 'Erro'); return }
-    setRemarcarSessaoId(null)
-    setRemarcarSenhaOpen(false)
-    setRemarcarNovaData('')
-    setRemarcarMotivo('')
-    showToast('✓ Sessão remarcada com sucesso!')
+    setLoading(false)
+    if (!res.ok) { setErro(json.error ?? 'Erro'); return }
+    onSuccess()
     loadData()
   }
 
-  async function handleSalvarObs(sessaoId: string) {
-    setObsSaving(p => ({ ...p, [sessaoId]: true }))
-    setObsSuccess(p => ({ ...p, [sessaoId]: false }))
-    const res = await fetch('/api/terapeutas/vendas', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessao_id: sessaoId, observacoes: obsValues[sessaoId] ?? '' }),
-    })
-    setObsSaving(p => ({ ...p, [sessaoId]: false }))
-    if (res.ok) {
-      setObsSuccess(p => ({ ...p, [sessaoId]: true }))
-      setTimeout(() => setObsSuccess(p => ({ ...p, [sessaoId]: false })), 2000)
-    }
+  async function handleNota(senha: string) {
+    await postOcorrencia(
+      senha,
+      { tipo: 'nota', titulo: notaTitulo, descricao: notaDesc },
+      () => {
+        setNotaSenhaOpen(false); setOcorrenciaTipo(null)
+        setNotaTitulo(''); setNotaDesc('')
+        showToast('✓ Nota registrada com sucesso!')
+      },
+      setNotaLoading, setNotaErro
+    )
+  }
+
+  async function handleRemarcar(senha: string) {
+    const sessao = prontuarioSessoes.find(s => s.id === remSessaoId)
+    await postOcorrencia(
+      senha,
+      {
+        tipo: 'remarcacao',
+        titulo: `Remarcação — Sessão ${sessao?.numero_sessao ?? ''}`,
+        descricao: `Solicitado por: ${remSolicitadoPor}. Motivo: ${remMotivo}`,
+        dados_extras: {
+          sessao_id: remSessaoId,
+          nova_data: remNovaData,
+          data_anterior: sessao?.data_agendada ?? '',
+          solicitado_por: remSolicitadoPor,
+          motivo: remMotivo,
+        },
+      },
+      () => {
+        setRemSenhaOpen(false); setOcorrenciaTipo(null)
+        setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
+        showToast('✓ Sessão remarcada com sucesso!')
+      },
+      setRemLoading, setRemErro
+    )
+  }
+
+  async function handleReembolso(senha: string) {
+    if (!prontuarioSale) return
+    const sessoesSel = prontuarioSessoes.filter(s => reeSessoes.includes(s.id))
+    await postOcorrencia(
+      senha,
+      {
+        tipo: 'solicitacao_reembolso',
+        titulo: `Solicitação de reembolso parcial — ${sessoesSel.length} sessão(ões)`,
+        descricao: `Sessões: ${sessoesSel.map(s => s.numero_sessao).join(', ')}. Valor: ${fmtBRL(valorReembolso)}. Motivo: ${reeMotivo}`,
+        dados_extras: {
+          sessoes_ids: reeSessoes,
+          sessoes_numeros: sessoesSel.map(s => s.numero_sessao),
+          valor_reembolso: valorReembolso,
+          motivo: reeMotivo,
+          paciente_nome: prontuarioSale.nome,
+          paciente_email: prontuarioSale.email,
+        },
+      },
+      () => {
+        setReeSenhaOpen(false); setOcorrenciaTipo(null)
+        setReeSessoes([]); setReeMotivo('')
+        showToast('✓ Solicitação enviada para aprovação do CEO!')
+      },
+      setReeLoading, setReeErro
+    )
   }
 
   // ── Render helpers ──
   function renderFiltros(showTerapeuta: boolean) {
     return (
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <input
-          type="text"
-          placeholder="Buscar paciente..."
-          value={busca}
-          onChange={e => setBusca(e.target.value)}
-          className="bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50 w-44"
-        />
+        <input type="text" placeholder="Buscar paciente..." value={busca} onChange={e => setBusca(e.target.value)}
+          className="bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50 w-44" />
         {showTerapeuta && (
           <select value={filtroTerapeuta} onChange={e => setFiltroTerapeuta(e.target.value)}
             className="bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50">
@@ -339,9 +445,7 @@ export default function TerapeutasVendas() {
             <button key={p} onClick={() => setPreset(p)}
               className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 preset === p ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white border border-white/10'
-              }`}>
-              {PRESET_LABELS[p]}
-            </button>
+              }`}>{PRESET_LABELS[p]}</button>
           ))}
         </div>
         {preset === 'custom' && (
@@ -353,6 +457,14 @@ export default function TerapeutasVendas() {
               className="bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none" />
           </div>
         )}
+      </div>
+    )
+  }
+
+  function Spinner() {
+    return (
+      <div className="flex justify-center h-40 items-center">
+        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
@@ -385,30 +497,24 @@ export default function TerapeutasVendas() {
 
         {/* Abas principais */}
         <div className="flex items-center gap-2 mb-4">
-          <button onClick={() => setAbaAtiva('aprovadas')}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-              abaAtiva === 'aprovadas' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white border border-white/10'
-            }`}>
-            Aprovadas [{pageData.counts.aprovadas}]
-          </button>
-          <button onClick={() => setAbaAtiva('reembolsos')}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-              abaAtiva === 'reembolsos' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white border border-white/10'
-            }`}>
-            Reembolsos [{pageData.counts.reembolsos}]
-          </button>
+          {[
+            { id: 'aprovadas', label: `Aprovadas [${pageData.counts.aprovadas}]`, cls: 'bg-green-600' },
+            { id: 'reembolsos', label: `Reembolsos [${pageData.counts.reembolsos}]`, cls: 'bg-gray-600' },
+          ].map(({ id, label, cls }) => (
+            <button key={id} onClick={() => setAbaAtiva(id as AbaAtiva)}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                abaAtiva === id ? `${cls} text-white` : 'bg-gray-800 text-gray-400 hover:text-white border border-white/10'
+              }`}>{label}</button>
+          ))}
         </div>
 
         {erro && (
-          <div className="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">
-            {erro}
-          </div>
+          <div className="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">{erro}</div>
         )}
 
         {/* ABA: APROVADAS */}
         {abaAtiva === 'aprovadas' && (
           <>
-            {/* Sub-abas */}
             <div className="flex items-center gap-2 mb-4">
               <button onClick={() => setSubAba('pendentes')}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
@@ -428,17 +534,13 @@ export default function TerapeutasVendas() {
             {subAba === 'pendentes' && (
               <>
                 {renderFiltros(false)}
-                {loading ? (
-                  <div className="flex justify-center h-40 items-center">
-                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                ) : (
+                {loading ? <Spinner /> : (
                   <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-white/10">
-                            {['Data', 'Paciente', 'Formato', 'Qtd. Sessões', 'Fat. Bruto', 'Líquido', 'Ações'].map(h => (
+                            {['Data da compra', 'Paciente', 'Formato', 'Qtd. Sessões', 'Fat. Bruto', 'Líquido', 'Ações'].map(h => (
                               <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -460,16 +562,11 @@ export default function TerapeutasVendas() {
                               <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
                               <td className="px-4 py-3">
-                                <button
-                                  onClick={() => {
-                                    setAgendarVendaId(sale.id)
-                                    setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
-                                    setAgendarDataPrimeira('')
-                                    setAgendarLinkMeet('')
-                                    setAgendarErro('')
-                                  }}
-                                  className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap"
-                                >
+                                <button onClick={() => {
+                                  setAgendarVendaId(sale.id)
+                                  setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
+                                  setAgendarDataPrimeira(''); setAgendarLinkMeet(''); setAgendarErro('')
+                                }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                   <Calendar className="w-3 h-3" /> Agendar
                                 </button>
                               </td>
@@ -487,17 +584,13 @@ export default function TerapeutasVendas() {
             {subAba === 'ativos' && (
               <>
                 {renderFiltros(true)}
-                {loading ? (
-                  <div className="flex justify-center h-40 items-center">
-                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                ) : (
+                {loading ? <Spinner /> : (
                   <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-white/10">
-                            {['Data', 'Paciente', 'Qtd. Sessões', 'Sessões Feitas', 'Fat. Bruto', 'Líquido', 'Progresso', 'Ações'].map(h => (
+                            {['Data da compra', 'Paciente', 'Qtd. Sessões', 'Sessões Feitas', 'Fat. Bruto', 'Líquido', 'Progresso', 'Ações'].map(h => (
                               <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -518,7 +611,7 @@ export default function TerapeutasVendas() {
                                   <p className="text-white font-medium">{sale.nome}</p>
                                   <p className="text-xs text-gray-500">{sale.email}</p>
                                 </td>
-                                <td className="px-4 py-3 text-gray-300">{total} sessões</td>
+                                <td className="px-4 py-3 text-gray-300">{total}</td>
                                 <td className="px-4 py-3 text-green-500 font-medium">{entregues}</td>
                                 <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
                                 <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
@@ -531,10 +624,8 @@ export default function TerapeutasVendas() {
                                   </p>
                                 </td>
                                 <td className="px-4 py-3">
-                                  <button
-                                    onClick={() => setProntuarioVendaId(sale.id)}
-                                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap"
-                                  >
+                                  <button onClick={() => setProntuarioVendaId(sale.id)}
+                                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                     Ver prontuário
                                   </button>
                                 </td>
@@ -555,11 +646,7 @@ export default function TerapeutasVendas() {
         {abaAtiva === 'reembolsos' && (
           <>
             {renderFiltros(false)}
-            {loading ? (
-              <div className="flex justify-center h-40 items-center">
-                <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : (
+            {loading ? <Spinner /> : (
               <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -572,7 +659,7 @@ export default function TerapeutasVendas() {
                     </thead>
                     <tbody>
                       {vendasReembolsosDisplay.length === 0 ? (
-                        <EmptyRow cols={6} msg="Nenhum reembolso no período selecionado" />
+                        <EmptyRow cols={6} msg="Nenhum reembolso no período" />
                       ) : vendasReembolsosDisplay.map(sale => {
                         const sessoes = pageData.sessoes_por_venda[sale.id] ?? []
                         const canceladas = sessoes.filter(s => s.status === 'cancelada').length
@@ -606,14 +693,9 @@ export default function TerapeutasVendas() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">
-                Agendar sessões — {agendarVenda?.nome}
-              </h3>
-              <button onClick={() => setAgendarVendaId(null)} className="text-gray-500 hover:text-white">
-                <X className="w-4 h-4" />
-              </button>
+              <h3 className="text-sm font-semibold text-white">Agendar sessões — {agendarVenda?.nome}</h3>
+              <button onClick={() => setAgendarVendaId(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
             </div>
-
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Terapeuta <span className="text-red-400">*</span></label>
@@ -622,59 +704,39 @@ export default function TerapeutasVendas() {
                   {pageData.terapeutas.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
                 </select>
               </div>
-
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Data e horário da 1ª sessão <span className="text-red-400">*</span></label>
-                <input type="datetime-local" value={agendarDataPrimeira}
-                  onChange={e => setAgendarDataPrimeira(e.target.value)}
+                <input type="datetime-local" value={agendarDataPrimeira} onChange={e => setAgendarDataPrimeira(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
-
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Link Google Meet (opcional)</label>
                 <input type="url" value={agendarLinkMeet} placeholder="https://meet.google.com/..."
                   onChange={e => setAgendarLinkMeet(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
-
-              {/* Preview datas */}
               {agendarPreviewDatas.length > 0 && (
                 <div className="bg-gray-800/60 rounded-lg p-3">
-                  <p className="text-xs text-gray-400 mb-2 font-medium">
-                    Datas das {agendarNumSessoes} sessões (intervalo de 7 dias):
-                  </p>
+                  <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {agendarNumSessoes} sessões (intervalo de 7 dias):</p>
                   <div className="space-y-1">
                     {agendarPreviewDatas.map((d, i) => (
                       <div key={i} className="flex items-center gap-3 text-xs">
                         <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
-                        <span className="text-white">{d.toLocaleString('pt-BR', {
-                          day: '2-digit', month: '2-digit', year: 'numeric',
-                          hour: '2-digit', minute: '2-digit',
-                        })}</span>
+                        <span className="text-white">{d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-
               {agendarErro && <p className="text-xs text-red-400">{agendarErro}</p>}
             </div>
-
             <div className="flex gap-3 mt-5">
               <button onClick={() => setAgendarVendaId(null)}
-                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  if (!agendarTerapeutaId || !agendarDataPrimeira) {
-                    setAgendarErro('Selecione o terapeuta e a data')
-                    return
-                  }
-                  setAgendarErro('')
-                  setAgendarSenhaOpen(true)
-                }}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg transition-colors">
+                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => {
+                if (!agendarTerapeutaId || !agendarDataPrimeira) { setAgendarErro('Selecione o terapeuta e a data'); return }
+                setAgendarErro(''); setAgendarSenhaOpen(true)
+              }} className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg transition-colors">
                 Confirmar agendamento
               </button>
             </div>
@@ -686,7 +748,8 @@ export default function TerapeutasVendas() {
       {prontuarioVendaId && prontuarioSale && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-gray-900 border border-white/10 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-            {/* Header do prontuário */}
+
+            {/* Header sticky */}
             <div className="sticky top-0 bg-gray-900 border-b border-white/10 px-6 py-4 flex items-start justify-between z-10">
               <div>
                 <h3 className="text-sm font-semibold text-white">Prontuário — {prontuarioSale.nome}</h3>
@@ -698,7 +761,8 @@ export default function TerapeutasVendas() {
             </div>
 
             <div className="px-6 py-5 space-y-6">
-              {/* Seção 1 — Info do paciente */}
+
+              {/* SEÇÃO 1 — Informações do paciente */}
               <div>
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Informações do paciente</h4>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -708,7 +772,7 @@ export default function TerapeutasVendas() {
                     { label: 'Telefone', value: prontuarioSale.telefone ?? '—' },
                     { label: 'Formato comprado', value: prontuarioSale.produto },
                     { label: 'Data da compra', value: fmtDt(prontuarioSale.data_hora) },
-                    { label: 'Faturamento bruto', value: fmtBRL(prontuarioSale.valor_pago_cliente) },
+                    { label: 'Fat. bruto', value: fmtBRL(prontuarioSale.valor_pago_cliente) },
                     { label: 'Valor líquido', value: fmtBRL(prontuarioSale.valor_liquido) },
                     { label: 'Plataforma', value: prontuarioSale.plataforma ?? '—' },
                   ].map(({ label, value }) => (
@@ -720,35 +784,41 @@ export default function TerapeutasVendas() {
                 </div>
               </div>
 
-              {/* Seção 2 — Histórico de sessões */}
+              {/* SEÇÃO 2 — Histórico de sessões */}
               <div>
-                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
                   Histórico de sessões ({prontuarioSessoes.length})
                 </h4>
+
+                {/* Barra de progresso geral */}
+                {prontuarioSessoes.length > 0 && (
+                  <div className="mb-4">
+                    <div className="w-full bg-gray-800 rounded-full h-2">
+                      <div className="bg-green-500 h-2 rounded-full transition-all"
+                        style={{ width: `${totalProntuario > 0 ? (entreguesProntuario / totalProntuario) * 100 : 0}%` }} />
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1">{entreguesProntuario} de {totalProntuario} sessões entregues</p>
+                  </div>
+                )}
+
                 <div className="space-y-3">
                   {prontuarioSessoes.length === 0 ? (
                     <p className="text-xs text-gray-600 text-center py-4">Nenhuma sessão criada ainda.</p>
                   ) : prontuarioSessoes.map(s => {
                     const badge = STATUS_BADGE[s.status] ?? { label: s.status, cls: 'text-gray-400 bg-gray-400/10' }
-                    const isRemarcar = remarcarSessaoId === s.id
+                    const remarcacoes = pageData.remarcacoes_por_sessao[s.id] ?? []
                     return (
                       <div key={s.id} className="bg-gray-800/40 border border-white/5 rounded-xl p-4">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 font-medium">Sessão {s.numero_sessao} de {s.total_sessoes}</span>
-                            <span className={`text-[11px] px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-                            {s.numero_sessao === s.total_sessoes && (
-                              <span className="text-[10px] text-red-400 border border-red-400/30 px-1.5 py-0.5 rounded">Última sessão</span>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => setProntuarioExpandido(p => ({ ...p, [s.id]: !p[s.id] }))}
-                            className="text-gray-500 hover:text-white"
-                          >
-                            {prontuarioExpandido[s.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          </button>
+                        {/* Header do card */}
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="text-xs text-gray-500 font-medium">Sessão {s.numero_sessao} de {s.total_sessoes}</span>
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                          {s.numero_sessao === s.total_sessoes && (
+                            <span className="text-[10px] text-red-400 border border-red-400/30 px-1.5 py-0.5 rounded">Última sessão</span>
+                          )}
                         </div>
 
+                        {/* Dados */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-3">
                           <div>
                             <p className="text-gray-500">Data agendada</p>
@@ -778,100 +848,52 @@ export default function TerapeutasVendas() {
                           {s.agendado_por && (
                             <div>
                               <p className="text-gray-500">Agendado por</p>
-                              <p className="text-gray-300">{s.agendado_por}</p>
-                            </div>
-                          )}
-                          {s.data_agendada && s.status === 'agendada' && (
-                            <div>
-                              <p className="text-gray-500">Horário</p>
-                              <p className="text-indigo-400 font-medium">{fmtHora(s.data_agendada)}</p>
+                              <p className="text-gray-300 text-[11px]">{s.agendado_por}</p>
                             </div>
                           )}
                         </div>
 
                         {/* Ações */}
-                        <div className="flex items-center gap-3 mb-3">
+                        <div className="flex items-center gap-3">
                           {s.status === 'agendada' && (
-                            <button
-                              onClick={() => { setConfirmarSessaoId(s.id); setConfirmarErro(''); setConfirmarSenhaOpen(true) }}
-                              className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors"
-                            >
+                            <button onClick={() => { setConfirmarSessaoId(s.id); setConfirmarErro(''); setConfirmarSenhaOpen(true) }}
+                              className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors">
                               <CheckCircle className="w-3 h-3" /> Confirmar entrega
                             </button>
                           )}
                           {(s.status === 'agendada' || s.status === 'pendente') && (
-                            <button
-                              onClick={() => {
-                                setRemarcarSessaoId(isRemarcar ? null : s.id)
-                                setRemarcarNovaData(s.data_agendada?.slice(0, 16) ?? '')
-                                setRemarcarMotivo('')
-                                setRemarcarErro('')
-                              }}
-                              className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors"
-                            >
+                            <button onClick={() => {
+                              setOcorrenciaTipo('remarcacao')
+                              setRemSessaoId(s.id)
+                              setRemNovaData(s.data_agendada?.slice(0, 16) ?? '')
+                              setRemSolicitadoPor(''); setRemMotivo(''); setRemErro('')
+                            }} className="flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300 transition-colors">
                               <RefreshCw className="w-3 h-3" /> Remarcar
                             </button>
                           )}
                         </div>
 
-                        {/* Formulário remarcar inline */}
-                        {isRemarcar && (
-                          <div className="bg-gray-800 rounded-lg p-3 mb-3 space-y-2">
-                            <p className="text-xs text-gray-400 font-medium">Remarcar sessão</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="text-[10px] text-gray-500 block mb-1">Nova data e hora</label>
-                                <input type="datetime-local" value={remarcarNovaData}
-                                  onChange={e => setRemarcarNovaData(e.target.value)}
-                                  className="w-full bg-gray-700 border border-white/10 rounded px-2 py-1.5 text-xs text-white focus:outline-none" />
+                        {/* Histórico de remarcações desta sessão */}
+                        {remarcacoes.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+                            <p className="text-[10px] text-gray-500 uppercase tracking-wide font-medium">
+                              Histórico de remarcações ({remarcacoes.length})
+                            </p>
+                            {remarcacoes.map(r => (
+                              <div key={r.id} className="bg-yellow-500/5 border border-yellow-500/15 rounded-lg p-2.5 text-xs space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-yellow-400 text-[10px] font-medium px-1.5 py-0.5 bg-yellow-400/10 rounded">⚠️ Remarcada</span>
+                                  <span className="text-gray-500 text-[10px]">Remarcado em {fmtDt(r.created_at)}</span>
+                                </div>
+                                <p className="text-gray-400"><span className="text-gray-500">Por:</span> {r.remarcado_por_nome} ({r.remarcado_por_tipo})</p>
+                                <p className="text-gray-400"><span className="text-gray-500">Solicitado pelo/a:</span> {r.solicitado_por}</p>
+                                <p className="text-gray-400"><span className="text-gray-500">De:</span> {fmtDt(r.data_anterior)} → <span className="text-gray-500">Para:</span> {fmtDt(r.data_nova)}</p>
+                                <div className="bg-gray-800/60 rounded p-2 text-gray-300">
+                                  <span className="text-gray-500">Motivo: </span>{r.motivo}
+                                </div>
                               </div>
-                              <div>
-                                <label className="text-[10px] text-gray-500 block mb-1">Motivo (opcional)</label>
-                                <input type="text" value={remarcarMotivo} placeholder="Ex: Paciente solicitou"
-                                  onChange={e => setRemarcarMotivo(e.target.value)}
-                                  className="w-full bg-gray-700 border border-white/10 rounded px-2 py-1.5 text-xs text-white focus:outline-none" />
-                              </div>
-                            </div>
-                            {remarcarErro && <p className="text-xs text-red-400">{remarcarErro}</p>}
-                            <div className="flex gap-2 pt-1">
-                              <button onClick={() => setRemarcarSessaoId(null)}
-                                className="px-3 py-1 text-xs text-gray-400 bg-gray-700 rounded">Cancelar</button>
-                              <button onClick={() => { if (!remarcarNovaData) return; setRemarcarSenhaOpen(true) }}
-                                className="px-3 py-1 text-xs font-medium text-white bg-purple-600 hover:bg-purple-500 rounded transition-colors">
-                                Confirmar data
-                              </button>
-                            </div>
+                            ))}
                           </div>
-                        )}
-
-                        {/* Observações */}
-                        {(prontuarioExpandido[s.id] || s.observacoes) && (
-                          <div>
-                            <label className="text-[10px] text-gray-500 block mb-1">Observações / Transcrição da sessão</label>
-                            <textarea
-                              value={obsValues[s.id] ?? s.observacoes ?? ''}
-                              onChange={e => setObsValues(p => ({ ...p, [s.id]: e.target.value }))}
-                              rows={3}
-                              placeholder="Adicionar notas sobre esta sessão..."
-                              className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 resize-y"
-                            />
-                            <div className="flex items-center gap-2 mt-1.5">
-                              <button
-                                onClick={() => handleSalvarObs(s.id)}
-                                disabled={obsSaving[s.id]}
-                                className="px-3 py-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded transition-colors"
-                              >
-                                {obsSaving[s.id] ? 'Salvando...' : 'Salvar observações'}
-                              </button>
-                              {obsSuccess[s.id] && <span className="text-xs text-green-500">✓ Salvo!</span>}
-                            </div>
-                          </div>
-                        )}
-                        {!prontuarioExpandido[s.id] && !s.observacoes && (
-                          <button onClick={() => setProntuarioExpandido(p => ({ ...p, [s.id]: true }))}
-                            className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors">
-                            + Adicionar observações
-                          </button>
                         )}
                       </div>
                     )
@@ -879,27 +901,245 @@ export default function TerapeutasVendas() {
                 </div>
               </div>
 
-              {/* Seção 3 — Resumo financeiro */}
+              {/* SEÇÃO 3 — OCORRÊNCIAS */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Ocorrências</h4>
+                  {ocorrenciaTipo === null && (
+                    <button onClick={() => setOcorrenciaTipo('select')}
+                      className="text-xs text-green-500 hover:text-green-400 font-medium transition-colors">
+                      + Registrar Ocorrência
+                    </button>
+                  )}
+                </div>
+
+                {/* Seleção de tipo */}
+                {ocorrenciaTipo === 'select' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4">
+                    <p className="text-xs text-gray-400 mb-3 font-medium">Selecione o tipo de ocorrência:</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {[
+                        { tipo: 'nota' as const, icon: '📝', title: 'Nota / Observação', desc: 'Registre uma nota ou observação sobre o paciente' },
+                        { tipo: 'remarcacao' as const, icon: '📅', title: 'Remarcar Consulta', desc: 'Solicite a remarcação de uma consulta agendada' },
+                        { tipo: 'reembolso' as const, icon: '💰', title: 'Solicitação de Reembolso Parcial', desc: 'Reembolso de sessões não realizadas — vai para aprovação do CEO' },
+                      ].map(({ tipo, icon, title, desc }) => (
+                        <button key={tipo} onClick={() => setOcorrenciaTipo(tipo)}
+                          className="text-left p-3 bg-gray-800 hover:bg-gray-700 border border-white/10 hover:border-white/20 rounded-xl transition-colors">
+                          <p className="text-base mb-1">{icon}</p>
+                          <p className="text-xs font-medium text-white mb-1">{title}</p>
+                          <p className="text-[10px] text-gray-500 leading-relaxed">{desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => setOcorrenciaTipo(null)}
+                      className="mt-3 text-xs text-gray-500 hover:text-gray-400 transition-colors">Cancelar</button>
+                  </div>
+                )}
+
+                {/* Formulário: NOTA */}
+                {ocorrenciaTipo === 'nota' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-white">📝 Nova nota / observação</p>
+                      <button onClick={() => setOcorrenciaTipo(null)} className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Título <span className="text-red-400">*</span></label>
+                      <input type="text" value={notaTitulo} onChange={e => setNotaTitulo(e.target.value)} maxLength={100}
+                        placeholder="Ex: Observação após sessão 2..."
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Descrição <span className="text-red-400">*</span> (mín. 10 caracteres)</label>
+                      <textarea value={notaDesc} onChange={e => setNotaDesc(e.target.value)} rows={4}
+                        placeholder="Descreva a nota ou observação sobre este paciente..."
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 resize-y" />
+                      <p className="text-[10px] text-gray-600 mt-0.5">{notaDesc.length} caracteres</p>
+                    </div>
+                    {notaErro && <p className="text-xs text-red-400">{notaErro}</p>}
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => setOcorrenciaTipo(null)}
+                        className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
+                      <button onClick={() => { if (!notaValida) { setNotaErro('Preencha o título e a descrição (mín. 10 caracteres)'); return } setNotaErro(''); setNotaSenhaOpen(true) }}
+                        disabled={!notaValida}
+                        className="px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors">
+                        Salvar nota
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Formulário: REMARCAR */}
+                {ocorrenciaTipo === 'remarcacao' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-white">📅 Remarcar consulta</p>
+                      <button onClick={() => setOcorrenciaTipo(null)} className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Qual sessão remarcar? <span className="text-red-400">*</span></label>
+                      <select value={remSessaoId} onChange={e => {
+                        const s = prontuarioSessoes.find(x => x.id === e.target.value)
+                        setRemSessaoId(e.target.value)
+                        setRemNovaData(s?.data_agendada?.slice(0, 16) ?? '')
+                      }} className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
+                        <option value="">Selecionar sessão...</option>
+                        {sessoesPendentesProntuario.map(s => (
+                          <option key={s.id} value={s.id}>
+                            Sessão {s.numero_sessao} — {fmtDt(s.data_agendada)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-gray-500 block mb-1">Nova data e horário <span className="text-red-400">*</span></label>
+                        <input type="datetime-local" value={remNovaData} onChange={e => setRemNovaData(e.target.value)}
+                          className="w-full bg-gray-700 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        {remNovaData && new Date(remNovaData) <= new Date() && (
+                          <p className="text-[10px] text-red-400 mt-0.5">A nova data deve ser no futuro</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500 block mb-1">Solicitado por <span className="text-red-400">*</span></label>
+                        <select value={remSolicitadoPor} onChange={e => setRemSolicitadoPor(e.target.value)}
+                          className="w-full bg-gray-700 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
+                          <option value="">Selecionar...</option>
+                          <option value="paciente">Paciente</option>
+                          <option value="terapeuta">Terapeuta</option>
+                          <option value="comercial">Comercial/Admin</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Motivo da remarcação <span className="text-red-400">*</span> (mín. 10 caracteres)</label>
+                      <textarea value={remMotivo} onChange={e => setRemMotivo(e.target.value)} rows={3}
+                        placeholder="Descreva o motivo pelo qual a consulta está sendo remarcada..."
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 resize-y" />
+                      {remMotivo.length > 0 && remMotivo.length < 10 && (
+                        <p className="text-[10px] text-red-400 mt-0.5">O motivo é obrigatório (mínimo 10 caracteres)</p>
+                      )}
+                    </div>
+                    {remErro && <p className="text-xs text-red-400">{remErro}</p>}
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => setOcorrenciaTipo(null)}
+                        className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
+                      <button onClick={() => {
+                        if (!remSessaoId) { setRemErro('Selecione a sessão'); return }
+                        if (!remSolicitadoPor) { setRemErro('Informe quem solicitou a remarcação'); return }
+                        if (remMotivo.length < 10) { setRemErro('Descreva o motivo com pelo menos 10 caracteres'); return }
+                        if (!remNovaData || new Date(remNovaData) <= new Date()) { setRemErro('A nova data deve ser no futuro'); return }
+                        setRemErro(''); setRemSenhaOpen(true)
+                      }} disabled={!remValido}
+                        className="px-4 py-1.5 text-xs font-medium text-white bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 rounded-lg transition-colors">
+                        Confirmar remarcação
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Formulário: REEMBOLSO */}
+                {ocorrenciaTipo === 'reembolso' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-white">💰 Solicitação de reembolso parcial</p>
+                      <button onClick={() => setOcorrenciaTipo(null)} className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-2">Sessões elegíveis para reembolso <span className="text-red-400">*</span></label>
+                      {sessoesPendentesProntuario.length === 0 ? (
+                        <p className="text-xs text-gray-600">Nenhuma sessão pendente/agendada para reembolso.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {sessoesPendentesProntuario.map(s => {
+                            const valorSessao = prontuarioSale
+                              ? prontuarioSale.valor_pago_cliente / (totalProntuario || 1)
+                              : 0
+                            return (
+                              <label key={s.id} className="flex items-center gap-2.5 cursor-pointer p-2 bg-gray-700/50 rounded-lg hover:bg-gray-700">
+                                <input type="checkbox" checked={reeSessoes.includes(s.id)}
+                                  onChange={e => setReeSessoes(p => e.target.checked ? [...p, s.id] : p.filter(x => x !== s.id))}
+                                  className="accent-indigo-500 w-3.5 h-3.5" />
+                                <span className="text-xs text-white">
+                                  Sessão {s.numero_sessao} — {fmtDt(s.data_agendada)} — <span className="text-green-500">{fmtBRL(valorSessao)}</span>
+                                </span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    {reeSessoes.length > 0 && (
+                      <div className="bg-gray-700/50 rounded-lg p-3">
+                        <p className="text-[10px] text-gray-500 mb-0.5">Valor total a reembolsar:</p>
+                        <p className="text-lg font-bold text-red-400">{fmtBRL(valorReembolso)}</p>
+                        <p className="text-[10px] text-gray-500">({reeSessoes.length} sessão(ões) selecionada(s))</p>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Motivo do reembolso <span className="text-red-400">*</span> (mín. 20 caracteres)</label>
+                      <textarea value={reeMotivo} onChange={e => setReeMotivo(e.target.value)} rows={3}
+                        placeholder="Descreva detalhadamente o motivo do reembolso..."
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 resize-y" />
+                      {reeMotivo.length > 0 && reeMotivo.length < 20 && (
+                        <p className="text-[10px] text-red-400 mt-0.5">{20 - reeMotivo.length} caracteres restantes</p>
+                      )}
+                    </div>
+                    <div className="flex items-start gap-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg p-3">
+                      <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-yellow-400">Esta solicitação será enviada para aprovação do CEO antes de ser processada. As sessões NÃO serão canceladas imediatamente.</p>
+                    </div>
+                    {reeErro && <p className="text-xs text-red-400">{reeErro}</p>}
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => setOcorrenciaTipo(null)}
+                        className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
+                      <button onClick={() => {
+                        if (reeSessoes.length === 0) { setReeErro('Selecione pelo menos uma sessão'); return }
+                        if (reeMotivo.length < 20) { setReeErro('Descreva o motivo com pelo menos 20 caracteres'); return }
+                        setReeErro(''); setReeSenhaOpen(true)
+                      }} disabled={!reeValido}
+                        className="px-4 py-1.5 text-xs font-medium text-white bg-orange-600 hover:bg-orange-500 disabled:opacity-50 rounded-lg transition-colors">
+                        Enviar solicitação
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Lista de ocorrências */}
+                <div className="space-y-2">
+                  {prontuarioOcorrencias.length === 0 ? (
+                    <p className="text-xs text-gray-600 text-center py-4">Nenhuma ocorrência registrada.</p>
+                  ) : prontuarioOcorrencias.map(o => {
+                    const meta = OCORRENCIA_META[o.tipo] ?? { icon: '📌', label: o.tipo, cls: 'text-gray-400 bg-gray-400/10 border-gray-400/20' }
+                    return (
+                      <div key={o.id} className={`border rounded-xl p-3 ${meta.cls}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span>{meta.icon}</span>
+                            <span className="text-[11px] font-medium">{meta.label}</span>
+                          </div>
+                          <span className="text-[10px] opacity-60">{fmtDt(o.created_at)}</span>
+                        </div>
+                        <p className="text-xs text-white font-medium mb-0.5">{o.titulo}</p>
+                        <p className="text-xs opacity-80 leading-relaxed">{o.descricao}</p>
+                        <p className="text-[10px] opacity-50 mt-2">
+                          Registrado por {o.criado_por_nome} ({o.criado_por_tipo}) — {o.criado_por_email}
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* SEÇÃO 4 — Resumo financeiro */}
               {prontuarioSessoes.length > 0 && (
                 <div>
                   <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Resumo financeiro</h4>
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      {
-                        label: 'Comissão total',
-                        value: fmtBRL(prontuarioSessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)),
-                        color: 'text-white',
-                      },
-                      {
-                        label: 'Comissão gerada (entregues)',
-                        value: fmtBRL(prontuarioSessoes.filter(s => s.status === 'entregue').reduce((a, s) => a + (s.comissao_valor || 0), 0)),
-                        color: 'text-green-500',
-                      },
-                      {
-                        label: 'Comissão pendente',
-                        value: fmtBRL(prontuarioSessoes.filter(s => ['pendente', 'agendada'].includes(s.status)).reduce((a, s) => a + (s.comissao_valor || 0), 0)),
-                        color: 'text-gray-400',
-                      },
+                      { label: 'Comissão total', value: fmtBRL(prontuarioSessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)), color: 'text-white' },
+                      { label: 'Comissão gerada', value: fmtBRL(prontuarioSessoes.filter(s => s.status === 'entregue').reduce((a, s) => a + (s.comissao_valor || 0), 0)), color: 'text-green-500' },
+                      { label: 'Comissão pendente', value: fmtBRL(prontuarioSessoes.filter(s => ['pendente', 'agendada'].includes(s.status)).reduce((a, s) => a + (s.comissao_valor || 0), 0)), color: 'text-gray-400' },
                     ].map(({ label, value, color }) => (
                       <div key={label} className="bg-gray-800/40 rounded-lg p-3">
                         <p className="text-[10px] text-gray-500 mb-1">{label}</p>
@@ -914,38 +1154,26 @@ export default function TerapeutasVendas() {
         </div>
       )}
 
-      {/* SenhaModal: Agendar */}
-      <SenhaModal
-        isOpen={agendarSenhaOpen}
-        onClose={() => { setAgendarSenhaOpen(false); setAgendarErro('') }}
-        onConfirm={handleAgendar}
-        titulo="Confirmar agendamento"
-        descricao="Digite sua senha para registrar as sessões"
-        loading={agendarLoading}
-        erro={agendarErro}
-      />
+      {/* ── SenhaModals ── */}
+      <SenhaModal isOpen={agendarSenhaOpen} onClose={() => { setAgendarSenhaOpen(false); setAgendarErro('') }}
+        onConfirm={handleAgendar} titulo="Confirmar agendamento"
+        descricao="Digite sua senha para registrar as sessões" loading={agendarLoading} erro={agendarErro} />
 
-      {/* SenhaModal: Confirmar entrega */}
-      <SenhaModal
-        isOpen={confirmarSenhaOpen}
-        onClose={() => { setConfirmarSenhaOpen(false); setConfirmarErro('') }}
-        onConfirm={handleConfirmar}
-        titulo="Confirmar entrega de sessão"
-        descricao="Digite sua senha para confirmar que a sessão foi realizada"
-        loading={confirmarLoading}
-        erro={confirmarErro}
-      />
+      <SenhaModal isOpen={confirmarSenhaOpen} onClose={() => { setConfirmarSenhaOpen(false); setConfirmarErro('') }}
+        onConfirm={handleConfirmar} titulo="Confirmar entrega de sessão"
+        descricao="Digite sua senha para confirmar que a sessão foi realizada" loading={confirmarLoading} erro={confirmarErro} />
 
-      {/* SenhaModal: Remarcar */}
-      <SenhaModal
-        isOpen={remarcarSenhaOpen}
-        onClose={() => { setRemarcarSenhaOpen(false); setRemarcarErro('') }}
-        onConfirm={handleRemarcar}
-        titulo="Confirmar remarcação"
-        descricao="Digite sua senha para remarcar a sessão"
-        loading={remarcarLoading}
-        erro={remarcarErro}
-      />
+      <SenhaModal isOpen={notaSenhaOpen} onClose={() => { setNotaSenhaOpen(false); setNotaErro('') }}
+        onConfirm={handleNota} titulo="Salvar nota" descricao="Digite sua senha para registrar a ocorrência"
+        loading={notaLoading} erro={notaErro} />
+
+      <SenhaModal isOpen={remSenhaOpen} onClose={() => { setRemSenhaOpen(false); setRemErro('') }}
+        onConfirm={handleRemarcar} titulo="Confirmar remarcação"
+        descricao="Digite sua senha para remarcar a sessão" loading={remLoading} erro={remErro} />
+
+      <SenhaModal isOpen={reeSenhaOpen} onClose={() => { setReeSenhaOpen(false); setReeErro('') }}
+        onConfirm={handleReembolso} titulo="Enviar solicitação de reembolso"
+        descricao="Digite sua senha para enviar para aprovação do CEO" loading={reeLoading} erro={reeErro} />
 
       {/* Toast */}
       {toast && (
