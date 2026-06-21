@@ -23,6 +23,7 @@ export default function TerapeutasLogin() {
       const json = await res.json()
       if (!res.ok) { setErro(json.error ?? 'Credenciais inválidas'); return }
       localStorage.setItem('terapeutas_session', JSON.stringify(json.usuario))
+      await new Promise(r => setTimeout(r, 100))
       if (json.usuario.tipo === 'terapeuta' && json.usuario.terapeuta_id) {
         router.push(`/terapeutas/${json.usuario.terapeuta_id}`)
       } else {
