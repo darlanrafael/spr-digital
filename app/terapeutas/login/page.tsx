@@ -26,7 +26,7 @@ export default function TerapeutasLogin() {
       if (json.usuario.tipo === 'terapeuta' && json.usuario.terapeuta_id) {
         router.push(`/terapeutas/${json.usuario.terapeuta_id}`)
       } else {
-        router.push('/terapeutas')
+        router.push('/terapeutas/vendas')
       }
     } catch {
       setErro('Erro de conexão. Tente novamente.')

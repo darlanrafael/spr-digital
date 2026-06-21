@@ -1,18 +1,44 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import ProtectedRoute from '@/components/ProtectedRoute'
+
+type TerapeutaSession = {
+  id: string
+  nome: string
+  email: string
+  tipo: string
+  terapeuta_id: string | null
+}
 
 export default function TerapeutasLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const router = useRouter()
   const [hasTerapeutaSession, setHasTerapeutaSession] = useState(false)
   const [checked, setChecked] = useState(false)
 
   useEffect(() => {
-    setHasTerapeutaSession(!!localStorage.getItem('terapeutas_session'))
+    if (pathname === '/terapeutas/login') { setChecked(true); return }
+
+    const raw = localStorage.getItem('terapeutas_session')
+    if (!raw) { setChecked(true); return }
+
+    try {
+      const session = JSON.parse(raw) as TerapeutaSession
+      setHasTerapeutaSession(true)
+
+      if (session.tipo === 'terapeuta' && session.terapeuta_id) {
+        const allowed = `/terapeutas/${session.terapeuta_id}`
+        if (!pathname.startsWith(allowed)) {
+          router.replace(allowed)
+          return
+        }
+      }
+    } catch { /* ignore malformed session */ }
+
     setChecked(true)
-  }, [pathname])
+  }, [pathname, router])
 
   if (pathname === '/terapeutas/login') return <>{children}</>
   if (!checked) return null

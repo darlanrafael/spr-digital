@@ -26,6 +26,14 @@ function fmtBRL(n: number) {
   return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+type TerapeutaSession = {
+  id: string
+  nome: string
+  email: string
+  tipo: string
+  terapeuta_id: string | null
+}
+
 export default function TerapeutasLista() {
   const router = useRouter()
   const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])
@@ -33,6 +41,17 @@ export default function TerapeutasLista() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const raw = localStorage.getItem('terapeutas_session')
+    if (raw) {
+      try {
+        const session = JSON.parse(raw) as TerapeutaSession
+        if (session.tipo === 'terapeuta' && session.terapeuta_id) {
+          router.replace(`/terapeutas/${session.terapeuta_id}`)
+          return
+        }
+      } catch { /* ignore */ }
+    }
+
     async function load() {
       const client = getSupabaseClient()
       if (!client) return

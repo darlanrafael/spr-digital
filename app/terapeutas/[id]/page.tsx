@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { CheckCircle, RefreshCw, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -51,14 +51,24 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   remarcada: { label: 'Remarcada', color: 'text-purple-400 bg-purple-400/10' },
 }
 
+type TerapeutaSession = {
+  id: string
+  nome: string
+  email: string
+  tipo: string
+  terapeuta_id: string | null
+}
+
 export default function PainelTerapeuta() {
   const params = useParams()
+  const router = useRouter()
   const id = params.id as string
 
   const [terapeuta, setTerapeuta] = useState<Terapeuta | null>(null)
   const [sessoes, setSessoes] = useState<Sessao[]>([])
   const [loading, setLoading] = useState(true)
   const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
+  const [isTerapeutaSession, setIsTerapeutaSession] = useState(false)
 
   // Modal status_consulta (iniciar / concluir / anular)
   const [statusSessaoId, setStatusSessaoId] = useState<string | null>(null)
@@ -89,7 +99,23 @@ export default function PainelTerapeuta() {
     setLoading(false)
   }
 
-  useEffect(() => { if (id) loadData() }, [id])
+  useEffect(() => {
+    const raw = localStorage.getItem('terapeutas_session')
+    if (raw) {
+      try {
+        const session = JSON.parse(raw) as TerapeutaSession
+        setAdminEmail(session.email)
+        if (session.tipo === 'terapeuta') {
+          setIsTerapeutaSession(true)
+          if (session.terapeuta_id && session.terapeuta_id !== id) {
+            router.replace(`/terapeutas/${session.terapeuta_id}`)
+            return
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    if (id) loadData()
+  }, [id])
 
   const entregues = sessoes.filter(s => s.status === 'entregue')
   const pendentes = sessoes.filter(s => s.status === 'pendente' || s.status === 'agendada')
@@ -148,9 +174,11 @@ export default function PainelTerapeuta() {
       <Header />
       <main className="max-w-5xl mx-auto px-4 py-6">
         <div className="mb-6">
-          <Link href="/terapeutas/lista" className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 mb-4 transition-colors">
-            <ArrowLeft className="w-3 h-3" /> Voltar para lista
-          </Link>
+          {!isTerapeutaSession && (
+            <Link href="/terapeutas/lista" className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 mb-4 transition-colors">
+              <ArrowLeft className="w-3 h-3" /> Voltar para lista
+            </Link>
+          )}
           {terapeuta && (
             <div>
               <h1 className="text-xl font-semibold text-white">{terapeuta.nome}</h1>
