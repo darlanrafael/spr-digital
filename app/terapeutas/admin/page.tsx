@@ -104,27 +104,19 @@ export default function AdminPage() {
     toastTimer.current = setTimeout(() => setToast(''), 3500)
   }
 
-  async function hashSenhaClient(senha: string): Promise<string> {
-    const encoder = new TextEncoder()
-    const data = encoder.encode(senha + 'spr-terapeutas-salt-2026')
-    const buf = await window.crypto.subtle.digest('SHA-256', data)
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
-  }
-
   async function handleAlterarSenha() {
     if (!senhaTarget) return
     setSenhaErro('')
     if (novaSenha.length < 6) { setSenhaErro('Mínimo 6 caracteres'); return }
     if (novaSenha !== confirmarSenha) { setSenhaErro('As senhas não conferem'); return }
     setSenhaLoading(true)
-    const senha_hash = await hashSenhaClient(novaSenha)
     const endpoint = senhaTarget.tipo === 'terapeuta'
       ? '/api/terapeutas/admin/terapeutas'
       : '/api/terapeutas/admin/usuarios'
     const res = await fetch(endpoint, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: senhaTarget.id, senha_hash }),
+      body: JSON.stringify({ id: senhaTarget.id, senha: novaSenha }),
     })
     const json = await res.json()
     setSenhaLoading(false)
