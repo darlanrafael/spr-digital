@@ -75,7 +75,7 @@ export default function AdminPage() {
     setULoading(true)
     const res = await fetch('/api/terapeutas/admin/usuarios')
     const json = await res.json()
-    setUsuarios(json.usuarios ?? [])
+    setUsuarios(Array.isArray(json) ? json : (json.usuarios ?? []))
     setULoading(false)
   }
 
