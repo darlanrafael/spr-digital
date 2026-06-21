@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const NOMENCLATURAS = ['[F01-IRM]', '[PF01_RC]']
+const NOMENCLATURAS = ['[F01-IRM', '[PF01_RC']
 
 export async function GET(req: NextRequest) {
   const token = process.env.META_ACCESS_TOKEN ?? null

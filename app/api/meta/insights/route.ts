@@ -5,7 +5,7 @@ export const revalidate = 300
 
 // Nomenclaturas por projeto — fallback enquanto não buscamos do Supabase
 const PROJECT_NOMENCLATURAS: Record<string, string[]> = {
-  'proj_1': ['[F01-IRM]', '[PF01_RC]'],
+  'proj_1': ['[F01-IRM', '[PF01_RC'],
 }
 
 export async function GET(req: NextRequest) {
