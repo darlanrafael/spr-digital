@@ -65,3 +65,19 @@ export async function PUT(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
 }
+
+export async function PATCH(req: NextRequest) {
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
+  }
+  const { id, senha_hash } = body as { id: string; senha_hash: string }
+  if (!id || !senha_hash) return NextResponse.json({ error: 'ID e senha_hash obrigatórios' }, { status: 400 })
+  const client = getSupabaseAdmin()
+  const { error } = await client
+    .from('usuarios_sistema')
+    .update({ senha_hash, updated_at: new Date().toISOString() })
+    .eq('terapeuta_id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}

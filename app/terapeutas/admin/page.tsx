@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Plus, User, Users, Activity, Eye, EyeOff, CheckCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Plus, User, Users, Activity, Eye, EyeOff, CheckCircle, Key, X } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import { useApp } from '@/contexts/AppContext'
@@ -63,6 +63,17 @@ export default function AdminPage() {
   const [log, setLog] = useState<LogEntry[]>([])
   const [logLoading, setLogLoading] = useState(false)
 
+  // Alterar senha
+  type SenhaTarget = { tipo: 'terapeuta' | 'usuario'; id: string; nome: string }
+  const [senhaTarget, setSenhaTarget] = useState<SenhaTarget | null>(null)
+  const [novaSenha, setNovaSenha] = useState('')
+  const [confirmarSenha, setConfirmarSenha] = useState('')
+  const [showNovaSenha, setShowNovaSenha] = useState(false)
+  const [senhaLoading, setSenhaLoading] = useState(false)
+  const [senhaErro, setSenhaErro] = useState('')
+  const [toast, setToast] = useState('')
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   async function loadTerapeutas() {
     setTLoading(true)
     const res = await fetch('/api/terapeutas/admin/terapeutas')
@@ -85,6 +96,41 @@ export default function AdminPage() {
     const json = await res.json()
     setLog(json.log ?? [])
     setLogLoading(false)
+  }
+
+  function showToast(msg: string) {
+    setToast(msg)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(''), 3500)
+  }
+
+  async function hashSenhaClient(senha: string): Promise<string> {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(senha + 'spr-terapeutas-salt-2026')
+    const buf = await window.crypto.subtle.digest('SHA-256', data)
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  async function handleAlterarSenha() {
+    if (!senhaTarget) return
+    setSenhaErro('')
+    if (novaSenha.length < 6) { setSenhaErro('Mínimo 6 caracteres'); return }
+    if (novaSenha !== confirmarSenha) { setSenhaErro('As senhas não conferem'); return }
+    setSenhaLoading(true)
+    const senha_hash = await hashSenhaClient(novaSenha)
+    const endpoint = senhaTarget.tipo === 'terapeuta'
+      ? '/api/terapeutas/admin/terapeutas'
+      : '/api/terapeutas/admin/usuarios'
+    const res = await fetch(endpoint, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: senhaTarget.id, senha_hash }),
+    })
+    const json = await res.json()
+    setSenhaLoading(false)
+    if (!res.ok) { setSenhaErro(json.error ?? 'Erro ao alterar senha'); return }
+    setSenhaTarget(null); setNovaSenha(''); setConfirmarSenha('')
+    showToast(`✓ Senha de ${senhaTarget.nome} alterada com sucesso!`)
   }
 
   useEffect(() => { loadTerapeutas() }, [])
@@ -265,10 +311,16 @@ export default function AdminPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <button onClick={() => handleToggleTerapeuta(t)}
-                            className={`text-xs ${t.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
-                            {t.ativo ? 'Desativar' : 'Ativar'}
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button onClick={() => handleToggleTerapeuta(t)}
+                              className={`text-xs ${t.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
+                              {t.ativo ? 'Desativar' : 'Ativar'}
+                            </button>
+                            <button onClick={() => { setSenhaTarget({ tipo: 'terapeuta', id: t.id, nome: t.nome }); setNovaSenha(''); setConfirmarSenha(''); setSenhaErro('') }}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+                              <Key className="w-3 h-3" /> Senha
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -383,10 +435,16 @@ export default function AdminPage() {
                         </td>
                         <td className="px-4 py-3 text-gray-500 text-xs">{fmtDt(u.created_at)}</td>
                         <td className="px-4 py-3">
-                          <button onClick={() => handleToggleUsuario(u)}
-                            className={`text-xs ${u.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
-                            {u.ativo ? 'Desativar' : 'Ativar'}
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button onClick={() => handleToggleUsuario(u)}
+                              className={`text-xs ${u.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
+                              {u.ativo ? 'Desativar' : 'Ativar'}
+                            </button>
+                            <button onClick={() => { setSenhaTarget({ tipo: 'usuario', id: u.id, nome: u.nome }); setNovaSenha(''); setConfirmarSenha(''); setSenhaErro('') }}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+                              <Key className="w-3 h-3" /> Senha
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -441,6 +499,68 @@ export default function AdminPage() {
         )}
       </main>
       <MobileNav />
+
+      {/* Modal alterar senha */}
+      {senhaTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Key className="w-4 h-4 text-indigo-400" /> Alterar senha — {senhaTarget.nome}
+              </h3>
+              <button onClick={() => setSenhaTarget(null)} className="text-gray-500 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Nova senha <span className="text-red-400">*</span></label>
+                <div className="relative">
+                  <input
+                    type={showNovaSenha ? 'text' : 'password'}
+                    value={novaSenha}
+                    onChange={e => setNovaSenha(e.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 pr-9 text-sm text-white focus:outline-none focus:border-indigo-500/50"
+                  />
+                  <button type="button" onClick={() => setShowNovaSenha(p => !p)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                    {showNovaSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Confirmar senha <span className="text-red-400">*</span></label>
+                <input
+                  type="password"
+                  value={confirmarSenha}
+                  onChange={e => setConfirmarSenha(e.target.value)}
+                  placeholder="Repita a nova senha"
+                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50"
+                />
+              </div>
+              {senhaErro && <p className="text-xs text-red-400">{senhaErro}</p>}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setSenhaTarget(null)}
+                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">
+                Cancelar
+              </button>
+              <button onClick={handleAlterarSenha} disabled={senhaLoading}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg transition-colors">
+                {senhaLoading ? 'Salvando...' : 'Salvar senha'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 border border-white/10 text-white text-xs px-4 py-2.5 rounded-full shadow-lg whitespace-nowrap">
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
