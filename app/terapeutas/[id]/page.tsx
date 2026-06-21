@@ -8,6 +8,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSupabaseClient } from '@/lib/supabase'
+import { getSession } from '@/lib/auth'
 
 type Terapeuta = {
   id: string
@@ -101,6 +102,16 @@ export default function PainelTerapeuta() {
   }
 
   useEffect(() => {
+    // Admin session takes absolute priority over terapeutas_session
+    const adminSession = getSession()
+    if (adminSession) {
+      setAdminEmail(adminSession.email)
+      setSessionNome(adminSession.name)
+      // isTerapeutaSession stays false — admin sees full view
+      if (id) loadData()
+      return
+    }
+
     const raw = localStorage.getItem('terapeutas_session')
     if (raw) {
       try {

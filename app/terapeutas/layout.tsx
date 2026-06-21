@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import { getSession } from '@/lib/auth'
 
 type TerapeutaSession = {
   id: string
@@ -20,6 +21,9 @@ export default function TerapeutasLayout({ children }: { children: React.ReactNo
 
   useEffect(() => {
     if (pathname === '/terapeutas/login') { setChecked(true); return }
+
+    // Admin session always takes priority — ignore terapeutas_session completely
+    if (getSession()) { setChecked(true); return }
 
     const raw = localStorage.getItem('terapeutas_session')
     if (!raw) { setChecked(true); return }
