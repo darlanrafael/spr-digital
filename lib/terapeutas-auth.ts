@@ -64,3 +64,40 @@ export function calcularComissao(params: {
   const comissao_por_sessao = comissao_total / params.numero_sessoes
   return { comissao_total, comissao_por_sessao, imposto, base }
 }
+
+export function calcularReembolso(params: {
+  terapeuta_nome: string
+  sessoes_total: number
+  sessoes_feitas: number
+  valor_pago: number
+}): { valor_reembolso: number; explicacao: string } {
+  const tabelaPedro: Record<number, number> = { 1: 1300, 2: 1550, 4: 2860, 8: 5280 }
+  const tabelaDenise: Record<number, number> = { 1: 550, 2: 790, 4: 1400, 8: 2640 }
+  const isPedro = params.terapeuta_nome.toLowerCase().includes('pedro')
+  const tabela = isPedro ? tabelaPedro : tabelaDenise
+  const planos = Object.keys(tabela).map(Number).sort((a, b) => a - b)
+
+  if (params.sessoes_feitas === 0) {
+    return {
+      valor_reembolso: params.valor_pago,
+      explicacao: `Nenhuma sessão realizada — reembolso integral de R$ ${params.valor_pago.toFixed(2)}`,
+    }
+  }
+  if (params.sessoes_feitas >= params.sessoes_total) {
+    return { valor_reembolso: 0, explicacao: 'Todas as sessões foram realizadas — sem reembolso' }
+  }
+
+  let plano_equivalente = 0
+  let valor_plano_equivalente = 0
+  for (const plano of planos) {
+    if (plano <= params.sessoes_feitas) {
+      plano_equivalente = plano
+      valor_plano_equivalente = tabela[plano]
+    }
+  }
+  const valor_reembolso = Math.max(0, params.valor_pago - valor_plano_equivalente)
+  return {
+    valor_reembolso,
+    explicacao: `Comprou ${params.sessoes_total} sessão(ões) (R$ ${params.valor_pago.toFixed(2)}), realizou ${params.sessoes_feitas} sessão(ões) — equivale ao plano de ${plano_equivalente} sessão(ões) = R$ ${valor_plano_equivalente.toFixed(2)} → Reembolso: R$ ${valor_reembolso.toFixed(2)}`,
+  }
+}

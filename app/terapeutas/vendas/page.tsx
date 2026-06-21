@@ -32,6 +32,7 @@ type Sessao = {
   numero_sessao: number
   total_sessoes: number
   status: string
+  status_consulta: string | null
   data_agendada: string | null
   data_entrega: string | null
   link_meet: string | null
@@ -40,7 +41,11 @@ type Sessao = {
   paciente_nome: string
   paciente_email: string
   agendado_por: string | null
+  vendedor_nome: string | null
+  vendedor_email: string | null
   entregue_confirmado_por: string | null
+  iniciado_em: string | null
+  concluido_em: string | null
   terapeutas: { nome: string } | null
 }
 
@@ -131,6 +136,40 @@ const OCORRENCIA_META: Record<string, { icon: string; label: string; cls: string
   reembolso_rejeitado:   { icon: '❌', label: 'Reembolso Rejeitado',     cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
 }
 
+const SC_BADGE: Record<string, { label: string; cls: string }> = {
+  aguardando:     { label: 'Aguardando',    cls: 'text-amber-400 bg-amber-400/10' },
+  em_atendimento: { label: 'Em atendimento', cls: 'text-blue-400 bg-blue-400/10' },
+  concluida:      { label: 'Concluída',     cls: 'text-green-500 bg-green-500/10' },
+  cancelada:      { label: 'Cancelada',     cls: 'text-red-400 bg-red-400/10' },
+  remarcada:      { label: 'Remarcada',     cls: 'text-purple-400 bg-purple-400/10' },
+}
+
+function calcularReembolsoLocal(params: {
+  terapeuta_nome: string
+  sessoes_total: number
+  sessoes_feitas: number
+  valor_pago: number
+}): { valor_reembolso: number; explicacao: string } {
+  const tabelaPedro: Record<number, number> = { 1: 1300, 2: 1550, 4: 2860, 8: 5280 }
+  const tabelaDenise: Record<number, number> = { 1: 550, 2: 790, 4: 1400, 8: 2640 }
+  const isPedro = params.terapeuta_nome.toLowerCase().includes('pedro')
+  const tabela = isPedro ? tabelaPedro : tabelaDenise
+  const planos = Object.keys(tabela).map(Number).sort((a, b) => a - b)
+  if (params.sessoes_feitas === 0) {
+    return { valor_reembolso: params.valor_pago, explicacao: `Nenhuma sessão realizada — reembolso integral de ${fmtBRL(params.valor_pago)}` }
+  }
+  if (params.sessoes_feitas >= params.sessoes_total) {
+    return { valor_reembolso: 0, explicacao: 'Todas as sessões foram realizadas — sem reembolso' }
+  }
+  let plano_eq = 0, valor_eq = 0
+  for (const p of planos) { if (p <= params.sessoes_feitas) { plano_eq = p; valor_eq = tabela[p] } }
+  const valor_reembolso = Math.max(0, params.valor_pago - valor_eq)
+  return {
+    valor_reembolso,
+    explicacao: `Comprou ${params.sessoes_total} sessão(ões) (${fmtBRL(params.valor_pago)}), realizou ${params.sessoes_feitas} sessão(ões) → equivale ao plano de ${plano_eq} sessão(ões) = ${fmtBRL(valor_eq)} → Reembolso: ${fmtBRL(valor_reembolso)}`,
+  }
+}
+
 const EMPTY_DATA: PageData = {
   counts: { aprovadas: 0, pendentes: 0, ativos: 0, reembolsos: 0 },
   vendas_pendentes: [], vendas_ativos: [], vendas_reembolsos: [],
@@ -171,7 +210,6 @@ export default function TerapeutasVendas() {
   const [agendarVendaId, setAgendarVendaId] = useState<string | null>(null)
   const [agendarTerapeutaId, setAgendarTerapeutaId] = useState('')
   const [agendarDataPrimeira, setAgendarDataPrimeira] = useState('')
-  const [agendarLinkMeet, setAgendarLinkMeet] = useState('')
   const [agendarSenhaOpen, setAgendarSenhaOpen] = useState(false)
   const [agendarLoading, setAgendarLoading] = useState(false)
   const [agendarErro, setAgendarErro] = useState('')
@@ -179,11 +217,13 @@ export default function TerapeutasVendas() {
   // Prontuário
   const [prontuarioVendaId, setProntuarioVendaId] = useState<string | null>(null)
 
-  // Confirmar entrega
-  const [confirmarSessaoId, setConfirmarSessaoId] = useState<string | null>(null)
-  const [confirmarSenhaOpen, setConfirmarSenhaOpen] = useState(false)
-  const [confirmarLoading, setConfirmarLoading] = useState(false)
-  const [confirmarErro, setConfirmarErro] = useState('')
+  // Status consulta (iniciar / concluir / anular)
+  const [scSessaoId, setScSessaoId] = useState<string | null>(null)
+  const [scAcao, setScAcao] = useState<'iniciar' | 'concluir' | 'anular'>('iniciar')
+  const [scSenhaOpen, setScSenhaOpen] = useState(false)
+  const [scLoading, setScLoading] = useState(false)
+  const [scErro, setScErro] = useState('')
+  const [anularMotivo, setAnularMotivo] = useState('')
 
   // ── Ocorrências inline no prontuário ──
   const [ocorrenciaTipo, setOcorrenciaTipo] = useState<OcorrenciaTipo>(null)
@@ -283,10 +323,24 @@ export default function TerapeutasVendas() {
   const entreguesProntuario = prontuarioSessoes.filter(s => s.status === 'entregue').length
   const totalProntuario = prontuarioSessoes[0]?.total_sessoes ?? prontuarioSessoes.length
 
-  // Cálculo valor reembolso selecionado
-  const valorReembolso = prontuarioSale && reeSessoes.length > 0
-    ? (prontuarioSale.valor_pago_cliente / (totalProntuario || 1)) * reeSessoes.length
-    : 0
+  // Reembolso calculado por tabela de preços
+  const terapeutaIdProntuario = prontuarioSessoes[0]?.terapeuta_id ?? ''
+  const terapeutaNomeProntuario = pageData.terapeutas.find(t => t.id === terapeutaIdProntuario)?.nome ?? ''
+  const reembolsoCalc = prontuarioSale && terapeutaNomeProntuario
+    ? calcularReembolsoLocal({
+        terapeuta_nome: terapeutaNomeProntuario,
+        sessoes_total: totalProntuario,
+        sessoes_feitas: entreguesProntuario,
+        valor_pago: prontuarioSale.valor_pago_cliente,
+      })
+    : null
+  const valorReembolso = reembolsoCalc?.valor_reembolso ?? 0
+
+  function getVendedor(saleId: string): string {
+    const sessoes = pageData.sessoes_por_venda[saleId] ?? []
+    const s = sessoes.find(x => x.vendedor_nome) ?? sessoes.find(x => x.agendado_por)
+    return s?.vendedor_nome ?? s?.agendado_por ?? '—'
+  }
 
   // Validações
   const remValido = remSessaoId && remNovaData && new Date(remNovaData) > new Date() && remSolicitadoPor && remMotivo.length >= 10
@@ -303,7 +357,6 @@ export default function TerapeutasVendas() {
       body: JSON.stringify({
         sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaId,
         data_primeira_sessao: agendarDataPrimeira,
-        link_meet: agendarLinkMeet || undefined,
         usuario_email: adminEmail, senha,
       }),
     })
@@ -311,24 +364,33 @@ export default function TerapeutasVendas() {
     setAgendarLoading(false)
     if (!res.ok) { setAgendarErro(json.error ?? 'Erro'); return }
     setAgendarSenhaOpen(false); setAgendarVendaId(null)
-    setAgendarDataPrimeira(''); setAgendarLinkMeet('')
+    setAgendarDataPrimeira('')
     showToast(`✓ ${json.sessoes_criadas} sessões agendadas com sucesso!`)
     loadData()
   }
 
-  async function handleConfirmar(senha: string) {
-    if (!confirmarSessaoId) return
-    setConfirmarLoading(true); setConfirmarErro('')
-    const res = await fetch('/api/terapeutas/sessoes/confirmar', {
-      method: 'POST',
+  async function handleStatusConsulta(senha: string) {
+    if (!scSessaoId) return
+    setScLoading(true); setScErro('')
+    const res = await fetch('/api/terapeutas/sessoes', {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessao_id: confirmarSessaoId, usuario_email: adminEmail, senha }),
+      body: JSON.stringify({
+        sessao_id: scSessaoId,
+        acao: scAcao,
+        motivo: scAcao === 'anular' ? anularMotivo : undefined,
+        usuario_nome: nomeFromEmail(adminEmail),
+        usuario_tipo: 'admin',
+        usuario_email: adminEmail,
+        senha,
+      }),
     })
     const json = await res.json()
-    setConfirmarLoading(false)
-    if (!res.ok) { setConfirmarErro(json.error ?? 'Erro'); return }
-    setConfirmarSessaoId(null); setConfirmarSenhaOpen(false)
-    showToast('✓ Sessão confirmada como entregue!')
+    setScLoading(false)
+    if (!res.ok) { setScErro(json.error ?? 'Erro'); return }
+    setScSessaoId(null); setScSenhaOpen(false); setAnularMotivo('')
+    const msgs: Record<string, string> = { iniciar: '▶ Consulta iniciada!', concluir: '✓ Consulta concluída!', anular: '✓ Sessão anulada.' }
+    showToast(msgs[scAcao] ?? '✓ Feito!')
     loadData()
   }
 
@@ -398,16 +460,17 @@ export default function TerapeutasVendas() {
   async function handleReembolso(senha: string) {
     if (!prontuarioSale) return
     const sessoesSel = prontuarioSessoes.filter(s => reeSessoes.includes(s.id))
+    const valorFinal = reembolsoCalc?.valor_reembolso ?? 0
     await postOcorrencia(
       senha,
       {
         tipo: 'solicitacao_reembolso',
-        titulo: `Solicitação de reembolso parcial — ${sessoesSel.length} sessão(ões)`,
-        descricao: `Sessões: ${sessoesSel.map(s => s.numero_sessao).join(', ')}. Valor: ${fmtBRL(valorReembolso)}. Motivo: ${reeMotivo}`,
+        titulo: `Solicitação de reembolso parcial — ${entreguesProntuario} sessão(ões) realizadas`,
+        descricao: `${reembolsoCalc?.explicacao ?? ''}. Sessões a cancelar: ${sessoesSel.map(s => s.numero_sessao).join(', ')}. Motivo: ${reeMotivo}`,
         dados_extras: {
           sessoes_ids: reeSessoes,
           sessoes_numeros: sessoesSel.map(s => s.numero_sessao),
-          valor_reembolso: valorReembolso,
+          valor_reembolso: valorFinal,
           motivo: reeMotivo,
           paciente_nome: prontuarioSale.nome,
           paciente_email: prontuarioSale.email,
@@ -540,14 +603,14 @@ export default function TerapeutasVendas() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-white/10">
-                            {['Data da compra', 'Paciente', 'Formato', 'Qtd. Sessões', 'Fat. Bruto', 'Líquido', 'Ações'].map(h => (
+                            {['Data da compra', 'Paciente', 'Formato', 'Qtd. Sessões', 'Fat. Bruto', 'Líquido', 'Vendedor', 'Ações'].map(h => (
                               <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {vendasPendentesDisplay.length === 0 ? (
-                            <EmptyRow cols={7} msg="Nenhuma venda pendente de agendamento" />
+                            <EmptyRow cols={8} msg="Nenhuma venda pendente de agendamento" />
                           ) : vendasPendentesDisplay.map(sale => (
                             <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                               <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(sale.data_hora)}</td>
@@ -561,11 +624,12 @@ export default function TerapeutasVendas() {
                               </td>
                               <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
+                              <td className="px-4 py-3 text-gray-500 text-xs">—</td>
                               <td className="px-4 py-3">
                                 <button onClick={() => {
                                   setAgendarVendaId(sale.id)
                                   setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
-                                  setAgendarDataPrimeira(''); setAgendarLinkMeet(''); setAgendarErro('')
+                                  setAgendarDataPrimeira(''); setAgendarErro('')
                                 }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                   <Calendar className="w-3 h-3" /> Agendar
                                 </button>
@@ -590,14 +654,14 @@ export default function TerapeutasVendas() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-white/10">
-                            {['Data da compra', 'Paciente', 'Qtd. Sessões', 'Sessões Feitas', 'Fat. Bruto', 'Líquido', 'Progresso', 'Ações'].map(h => (
+                            {['Data da compra', 'Paciente', 'Qtd. Sessões', 'Sessões Feitas', 'Fat. Bruto', 'Líquido', 'Vendedor', 'Progresso', 'Ações'].map(h => (
                               <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {vendasAtivosDisplay.length === 0 ? (
-                            <EmptyRow cols={8} msg="Nenhum paciente ativo encontrado" />
+                            <EmptyRow cols={9} msg="Nenhum paciente ativo encontrado" />
                           ) : vendasAtivosDisplay.map(sale => {
                             const sessoes = pageData.sessoes_por_venda[sale.id] ?? []
                             const total = sessoes[0]?.total_sessoes ?? sessoes.length
@@ -615,6 +679,7 @@ export default function TerapeutasVendas() {
                                 <td className="px-4 py-3 text-green-500 font-medium">{entregues}</td>
                                 <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
                                 <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
+                                <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{getVendedor(sale.id)}</td>
                                 <td className="px-4 py-3 min-w-[120px]">
                                   <div className="w-full bg-gray-800 rounded-full h-1.5">
                                     <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{ width: `${progresso}%` }} />
@@ -707,12 +772,6 @@ export default function TerapeutasVendas() {
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Data e horário da 1ª sessão <span className="text-red-400">*</span></label>
                 <input type="datetime-local" value={agendarDataPrimeira} onChange={e => setAgendarDataPrimeira(e.target.value)}
-                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Link Google Meet (opcional)</label>
-                <input type="url" value={agendarLinkMeet} placeholder="https://meet.google.com/..."
-                  onChange={e => setAgendarLinkMeet(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
               {agendarPreviewDatas.length > 0 && (
@@ -810,9 +869,14 @@ export default function TerapeutasVendas() {
                     return (
                       <div key={s.id} className="bg-gray-800/40 border border-white/5 rounded-xl p-4">
                         {/* Header do card */}
-                        <div className="flex items-center gap-2 mb-3">
+                        <div className="flex items-center gap-2 mb-3 flex-wrap">
                           <span className="text-xs text-gray-500 font-medium">Sessão {s.numero_sessao} de {s.total_sessoes}</span>
                           <span className={`text-[11px] px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                          {s.status !== 'entregue' && s.status !== 'cancelada' && (
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full ${(SC_BADGE[s.status_consulta ?? 'aguardando'] ?? SC_BADGE.aguardando).cls}`}>
+                              {(SC_BADGE[s.status_consulta ?? 'aguardando'] ?? SC_BADGE.aguardando).label}
+                            </span>
+                          )}
                           {s.numero_sessao === s.total_sessoes && (
                             <span className="text-[10px] text-red-400 border border-red-400/30 px-1.5 py-0.5 rounded">Última sessão</span>
                           )}
@@ -854,11 +918,23 @@ export default function TerapeutasVendas() {
                         </div>
 
                         {/* Ações */}
-                        <div className="flex items-center gap-3">
-                          {s.status === 'agendada' && (
-                            <button onClick={() => { setConfirmarSessaoId(s.id); setConfirmarErro(''); setConfirmarSenhaOpen(true) }}
+                        <div className="flex items-center gap-3 flex-wrap">
+                          {(s.status === 'agendada' || s.status === 'pendente') && (s.status_consulta ?? 'aguardando') === 'aguardando' && (
+                            <button onClick={() => { setScSessaoId(s.id); setScAcao('iniciar'); setScErro(''); setScSenhaOpen(true) }}
+                              className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors">
+                              ▶ Iniciar consulta
+                            </button>
+                          )}
+                          {s.status_consulta === 'em_atendimento' && (
+                            <button onClick={() => { setScSessaoId(s.id); setScAcao('concluir'); setScErro(''); setScSenhaOpen(true) }}
                               className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors">
-                              <CheckCircle className="w-3 h-3" /> Confirmar entrega
+                              <CheckCircle className="w-3 h-3" /> Concluir consulta
+                            </button>
+                          )}
+                          {s.status === 'entregue' && (
+                            <button onClick={() => { setScSessaoId(s.id); setScAcao('anular'); setAnularMotivo(''); setScErro('') }}
+                              className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors">
+                              Anular sessão
                             </button>
                           )}
                           {(s.status === 'agendada' || s.status === 'pendente') && (
@@ -1069,11 +1145,11 @@ export default function TerapeutasVendas() {
                         </div>
                       )}
                     </div>
-                    {reeSessoes.length > 0 && (
-                      <div className="bg-gray-700/50 rounded-lg p-3">
-                        <p className="text-[10px] text-gray-500 mb-0.5">Valor total a reembolsar:</p>
-                        <p className="text-lg font-bold text-red-400">{fmtBRL(valorReembolso)}</p>
-                        <p className="text-[10px] text-gray-500">({reeSessoes.length} sessão(ões) selecionada(s))</p>
+                    {reembolsoCalc && (
+                      <div className="bg-gray-700/50 rounded-lg p-3 space-y-1">
+                        <p className="text-[10px] text-gray-500">Cálculo por tabela de preços:</p>
+                        <p className="text-lg font-bold text-red-400">{fmtBRL(reembolsoCalc.valor_reembolso)}</p>
+                        <p className="text-[11px] text-gray-400 leading-relaxed">{reembolsoCalc.explicacao}</p>
                       </div>
                     )}
                     <div>
@@ -1159,9 +1235,34 @@ export default function TerapeutasVendas() {
         onConfirm={handleAgendar} titulo="Confirmar agendamento"
         descricao="Digite sua senha para registrar as sessões" loading={agendarLoading} erro={agendarErro} />
 
-      <SenhaModal isOpen={confirmarSenhaOpen} onClose={() => { setConfirmarSenhaOpen(false); setConfirmarErro('') }}
-        onConfirm={handleConfirmar} titulo="Confirmar entrega de sessão"
-        descricao="Digite sua senha para confirmar que a sessão foi realizada" loading={confirmarLoading} erro={confirmarErro} />
+      {/* Anular sessão — precisa de motivo antes da senha */}
+      {scSessaoId && scAcao === 'anular' && !scSenhaOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Anular sessão concluída</h3>
+            <p className="text-xs text-gray-400 mb-4">Informe o motivo. A sessão voltará ao status &quot;Agendada&quot;.</p>
+            <textarea value={anularMotivo} onChange={e => setAnularMotivo(e.target.value)} rows={3}
+              placeholder="Motivo da anulação (mínimo 10 caracteres)..."
+              className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500/50 resize-none mb-3" />
+            {scErro && <p className="text-xs text-red-400 mb-3">{scErro}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setScSessaoId(null); setAnularMotivo('') }}
+                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => {
+                if (anularMotivo.trim().length < 10) { setScErro('Mínimo 10 caracteres'); return }
+                setScErro(''); setScSenhaOpen(true)
+              }} className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg transition-colors">
+                Próximo →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SenhaModal isOpen={scSenhaOpen} onClose={() => { setScSenhaOpen(false); setScErro('') }}
+        onConfirm={handleStatusConsulta}
+        titulo={scAcao === 'iniciar' ? 'Iniciar consulta' : scAcao === 'concluir' ? 'Concluir consulta' : 'Anular sessão'}
+        descricao="Digite sua senha para confirmar" loading={scLoading} erro={scErro} />
 
       <SenhaModal isOpen={notaSenhaOpen} onClose={() => { setNotaSenhaOpen(false); setNotaErro('') }}
         onConfirm={handleNota} titulo="Salvar nota" descricao="Digite sua senha para registrar a ocorrência"

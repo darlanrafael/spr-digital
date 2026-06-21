@@ -43,6 +43,15 @@ type ConsultaHoje = {
   terapeuta_nome: string
   link_meet: string | null
   status: string
+  status_consulta: string
+}
+
+const STATUS_CONSULTA_BADGE: Record<string, { label: string; cls: string }> = {
+  aguardando:     { label: 'Aguardando',    cls: 'text-amber-400 bg-amber-400/10' },
+  em_atendimento: { label: 'Em atendimento', cls: 'text-blue-400 bg-blue-400/10 animate-pulse' },
+  concluida:      { label: 'Concluída',     cls: 'text-green-500 bg-green-500/10' },
+  cancelada:      { label: 'Cancelada',     cls: 'text-red-400 bg-red-400/10' },
+  remarcada:      { label: 'Remarcada',     cls: 'text-purple-400 bg-purple-400/10' },
 }
 
 type TerapeutaFiltro = { id: string; nome: string }
@@ -126,6 +135,17 @@ export default function TerapeutasDashboard() {
     if (preset === 'custom' && (!dateStart || !dateEnd)) return
     loadDashboard()
   }, [loadDashboard, preset, dateStart, dateEnd, terapeutaId])
+
+  // Auto-refresh consultas de hoje a cada 60 segundos
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetch(`/api/terapeutas/dashboard?datePreset=${preset}&terapeutaId=${terapeutaId}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(json => { if (json?.consultas_hoje) setConsultasHoje(json.consultas_hoje) })
+        .catch(() => {})
+    }, 60000)
+    return () => clearInterval(interval)
+  }, [preset, terapeutaId])
 
   // ── Cards ──
   const cards = [
@@ -321,11 +341,12 @@ export default function TerapeutasDashboard() {
 
             {/* Consultas de hoje */}
             <div className="bg-gray-900 border border-white/10 rounded-xl">
-              <div className="p-4 border-b border-white/10">
+              <div className="p-4 border-b border-white/10 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-indigo-400" />
                   Consultas de Hoje ({consultasHoje.length})
                 </h2>
+                <span className="text-[10px] text-gray-600">Atualiza a cada 60s</span>
               </div>
               {consultasHoje.length === 0 ? (
                 <p className="px-4 py-6 text-center text-gray-600 text-xs">Nenhuma consulta agendada para hoje</p>
@@ -334,34 +355,25 @@ export default function TerapeutasDashboard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/5">
-                        {['Horário', 'Paciente', 'Terapeuta', 'Link Meet', 'Status'].map(h => (
+                        {['Horário', 'Paciente', 'Terapeuta', 'Status Consulta'].map(h => (
                           <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {consultasHoje.map(s => (
-                        <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
-                          <td className="px-4 py-3 text-indigo-400 font-medium">{s.horario}</td>
-                          <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
-                          <td className="px-4 py-3 text-gray-300">{s.terapeuta_nome}</td>
-                          <td className="px-4 py-3">
-                            {s.link_meet ? (
-                              <a href={s.link_meet} target="_blank" rel="noopener noreferrer"
-                                className="text-xs text-indigo-400 hover:text-indigo-300 underline">
-                                Abrir Meet
-                              </a>
-                            ) : (
-                              <span className="text-gray-600 text-xs">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                              s.status === 'agendada' ? 'text-blue-400 bg-blue-400/10' : 'text-amber-400 bg-amber-400/10'
-                            }`}>{s.status === 'agendada' ? 'Agendada' : 'Pendente'}</span>
-                          </td>
-                        </tr>
-                      ))}
+                      {consultasHoje.map(s => {
+                        const scBadge = STATUS_CONSULTA_BADGE[s.status_consulta] ?? STATUS_CONSULTA_BADGE.aguardando
+                        return (
+                          <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
+                            <td className="px-4 py-3 text-indigo-400 font-medium">{s.horario}</td>
+                            <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                            <td className="px-4 py-3 text-gray-300">{s.terapeuta_nome}</td>
+                            <td className="px-4 py-3">
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${scBadge.cls}`}>{scBadge.label}</span>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

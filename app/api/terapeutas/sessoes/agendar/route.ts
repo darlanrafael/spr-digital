@@ -8,11 +8,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sale_id, terapeuta_id, data_primeira_sessao, link_meet, usuario_email, senha } = body as {
+  const { sale_id, terapeuta_id, data_primeira_sessao, usuario_email, senha } = body as {
     sale_id: string
     terapeuta_id: string
     data_primeira_sessao: string
-    link_meet?: string
     usuario_email: string
     senha: string
   }
@@ -56,13 +55,16 @@ export async function POST(req: NextRequest) {
       numero_sessao: i + 1,
       total_sessoes: numSessoes,
       status: 'agendada',
+      status_consulta: 'aguardando',
       data_agendada: data.toISOString(),
-      link_meet: (link_meet as string | undefined) ?? null,
+      link_meet: null,
       comissao_valor: comissao_por_sessao,
       comissao_paga: false,
       paciente_nome: sale.nome as string,
       paciente_email: sale.email as string,
       agendado_por: (usuario as Record<string, unknown>)?.nome as string ?? usuario_email,
+      vendedor_nome: (usuario as Record<string, unknown>)?.nome as string ?? usuario_email,
+      vendedor_email: usuario_email,
     }
   })
 

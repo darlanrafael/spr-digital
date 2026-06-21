@@ -27,6 +27,7 @@ type SessaoHojeRow = {
   paciente_nome: string
   link_meet: string | null
   status: string
+  status_consulta: string | null
   terapeuta_id: string
   terapeutas: { nome: string } | null
 }
@@ -192,10 +193,10 @@ export async function GET(req: NextRequest) {
 
     let hojeQ = supabase
       .from('sessoes')
-      .select('id,data_agendada,paciente_nome,link_meet,status,terapeuta_id,terapeutas(nome)')
+      .select('id,data_agendada,paciente_nome,link_meet,status,status_consulta,terapeuta_id,terapeutas(nome)')
       .gte('data_agendada', hojeStart)
       .lte('data_agendada', hojeEnd)
-      .in('status', ['agendada', 'pendente'])
+      .in('status', ['agendada', 'pendente', 'entregue'])
       .order('data_agendada', { ascending: true })
 
     if (terapeutaId !== 'all') {
@@ -214,6 +215,7 @@ export async function GET(req: NextRequest) {
       terapeuta_nome: (s.terapeutas as { nome: string } | null)?.nome ?? '—',
       link_meet: s.link_meet,
       status: s.status,
+      status_consulta: s.status_consulta ?? 'aguardando',
     }))
 
     return NextResponse.json({

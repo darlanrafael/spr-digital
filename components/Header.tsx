@@ -7,6 +7,8 @@ import { useApp } from '@/contexts/AppContext'
 import { logout, getInitials } from '@/lib/auth'
 import { useEffect, useState } from 'react'
 
+type TerapeutaSession = { id: string; nome: string; email: string; tipo: string; terapeuta_id: string | null }
+
 type NavLink = { href: string; label: string; badge?: number }
 
 const NAV_LINKS: NavLink[] = [
@@ -32,6 +34,13 @@ export default function Header() {
   const isTerapeutas = pathname.startsWith('/terapeutas')
 
   const [aprovacoesPendentes, setAprovacoesPendentes] = useState(0)
+  const [terapeutaSession, setTerapeutaSession] = useState<TerapeutaSession | null>(null)
+
+  useEffect(() => {
+    const stored = localStorage.getItem('terapeutas_session')
+    if (stored) { try { setTerapeutaSession(JSON.parse(stored)) } catch { setTerapeutaSession(null) } }
+    else setTerapeutaSession(null)
+  }, [pathname])
 
   useEffect(() => {
     if (!isTerapeutas || user?.role !== 'admin') { setAprovacoesPendentes(0); return }
@@ -50,6 +59,45 @@ export default function Header() {
     logout()
     setUser(null)
     router.replace('/login')
+  }
+
+  function handleTerapeutaLogout() {
+    localStorage.removeItem('terapeutas_session')
+    router.replace('/terapeutas/login')
+  }
+
+  if (pathname === '/terapeutas/login') return null
+
+  // Header simplificado para terapeutas sem sessão do sistema principal
+  if (isTerapeutas && !user && terapeutaSession) {
+    return (
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-gray-900/80 backdrop-blur-md">
+        <div className="max-w-screen-xl mx-auto px-4">
+          <div className="flex items-center justify-between h-14">
+            <div className="flex items-center gap-3">
+              <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center">
+                <span className="text-white text-xs font-bold">SP</span>
+              </div>
+              <span className="font-semibold text-sm text-white hidden md:block">
+                SPR Digital <span className="text-gray-400 font-normal">· Área do Terapeuta</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center">
+                <span className="text-white text-xs font-semibold">
+                  {terapeutaSession.nome.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                </span>
+              </div>
+              <span className="text-xs text-gray-400 hidden lg:block">{terapeutaSession.nome}</span>
+              <button onClick={handleTerapeutaLogout}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-colors" title="Sair">
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+    )
   }
 
   return (

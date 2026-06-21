@@ -22,6 +22,7 @@ type Sessao = {
   numero_sessao: number
   total_sessoes: number
   status: string
+  status_consulta: string | null
   data_agendada: string | null
   data_entrega: string | null
   link_meet: string | null
@@ -30,6 +31,8 @@ type Sessao = {
   paciente_nome: string
   paciente_email: string
   entregue_confirmado_por: string | null
+  iniciado_em: string | null
+  concluido_em: string | null
 }
 
 function fmtBRL(n: number) {
@@ -57,10 +60,12 @@ export default function PainelTerapeuta() {
   const [loading, setLoading] = useState(true)
   const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
 
-  // Modal confirmar entrega
-  const [confirmarSessaoId, setConfirmarSessaoId] = useState<string | null>(null)
-  const [confirmarErro, setConfirmarErro] = useState('')
-  const [confirmarLoading, setConfirmarLoading] = useState(false)
+  // Modal status_consulta (iniciar / concluir / anular)
+  const [statusSessaoId, setStatusSessaoId] = useState<string | null>(null)
+  const [statusAcao, setStatusAcao] = useState<'iniciar' | 'concluir' | 'anular'>('iniciar')
+  const [statusErro, setStatusErro] = useState('')
+  const [statusLoading, setStatusLoading] = useState(false)
+  const [anularMotivo, setAnularMotivo] = useState('')
 
   // Modal remarcar
   const [remarcarSessaoId, setRemarcarSessaoId] = useState<string | null>(null)
@@ -76,7 +81,7 @@ export default function PainelTerapeuta() {
     setLoading(true)
     const [tResp, sResp] = await Promise.all([
       client.from('terapeutas').select('id,nome,email,percentual_comissao').eq('id', id).single(),
-      client.from('sessoes').select('id,sale_id,numero_sessao,total_sessoes,status,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,entregue_confirmado_por')
+      client.from('sessoes').select('id,sale_id,numero_sessao,total_sessoes,status,status_consulta,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,entregue_confirmado_por,iniciado_em,concluido_em')
         .eq('terapeuta_id', id).order('sale_id').order('numero_sessao', { ascending: true }),
     ])
     if (tResp.data) setTerapeuta(tResp.data as unknown as Terapeuta)
@@ -89,21 +94,32 @@ export default function PainelTerapeuta() {
   const entregues = sessoes.filter(s => s.status === 'entregue')
   const pendentes = sessoes.filter(s => s.status === 'pendente' || s.status === 'agendada')
   const receitaGerada = entregues.filter(s => !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
-  const receitaFutura = pendentes.reduce((a, s) => a + s.comissao_valor, 0)
+  const receitaFutura = pendentes.filter(s => !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
 
-  async function handleConfirmar(senha: string) {
-    if (!confirmarSessaoId) return
-    setConfirmarLoading(true)
-    setConfirmarErro('')
-    const res = await fetch('/api/terapeutas/sessoes/confirmar', {
-      method: 'POST',
+  async function handleStatusAcao(senha: string) {
+    if (!statusSessaoId) return
+    setStatusLoading(true)
+    setStatusErro('')
+    if (statusAcao === 'anular' && anularMotivo.trim().length < 10) {
+      setStatusErro('Informe o motivo (mínimo 10 caracteres)'); setStatusLoading(false); return
+    }
+    const res = await fetch('/api/terapeutas/sessoes', {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessao_id: confirmarSessaoId, usuario_email: adminEmail, senha }),
+      body: JSON.stringify({
+        sessao_id: statusSessaoId,
+        acao: statusAcao,
+        motivo: statusAcao === 'anular' ? anularMotivo : undefined,
+        usuario_nome: adminEmail.split('@')[0],
+        usuario_tipo: 'admin',
+        usuario_email: adminEmail,
+        senha,
+      }),
     })
     const json = await res.json()
-    setConfirmarLoading(false)
-    if (!res.ok) { setConfirmarErro(json.error ?? 'Erro'); return }
-    setConfirmarSessaoId(null)
+    setStatusLoading(false)
+    if (!res.ok) { setStatusErro(json.error ?? 'Erro'); return }
+    setStatusSessaoId(null); setAnularMotivo('')
     loadData()
   }
 
@@ -165,14 +181,14 @@ export default function PainelTerapeuta() {
                   color: 'text-yellow-400',
                 },
                 {
-                  label: 'Receita gerada',
+                  label: 'Comissão gerada',
                   sub: 'Sessões entregues — aguardando pagamento',
                   value: fmtBRL(receitaGerada),
                   color: 'text-green-500',
                 },
                 {
-                  label: 'Receita futura',
-                  sub: 'Baseado nas sessões agendadas e pendentes',
+                  label: 'Comissão futura',
+                  sub: 'Sessões agendadas e pendentes não pagas',
                   value: fmtBRL(receitaFutura),
                   color: 'text-gray-400',
                 },
@@ -237,24 +253,28 @@ export default function PainelTerapeuta() {
                               )}
                             </td>
                             <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                {s.status === 'agendada' && (
-                                  <button
-                                    onClick={() => setConfirmarSessaoId(s.id)}
-                                    className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors"
-                                  >
-                                    <CheckCircle className="w-3 h-3" /> Confirmar
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {(s.status === 'agendada' || s.status === 'pendente') && (s.status_consulta ?? 'aguardando') === 'aguardando' && (
+                                  <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('iniciar'); setStatusErro('') }}
+                                    className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap">
+                                    ▶ Iniciar
+                                  </button>
+                                )}
+                                {s.status_consulta === 'em_atendimento' && (
+                                  <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setStatusErro('') }}
+                                    className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors whitespace-nowrap">
+                                    <CheckCircle className="w-3 h-3" /> Concluir
+                                  </button>
+                                )}
+                                {s.status === 'entregue' && (
+                                  <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }}
+                                    className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors whitespace-nowrap">
+                                    Anular
                                   </button>
                                 )}
                                 {(s.status === 'agendada' || s.status === 'pendente') && (
-                                  <button
-                                    onClick={() => {
-                                      setRemarcarSessaoId(s.id)
-                                      setRemarcarData(s.data_agendada?.slice(0, 16) ?? '')
-                                      setRemarcarMotivo('')
-                                    }}
-                                    className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors"
-                                  >
+                                  <button onClick={() => { setRemarcarSessaoId(s.id); setRemarcarData(s.data_agendada?.slice(0, 16) ?? ''); setRemarcarMotivo('') }}
+                                    className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors whitespace-nowrap">
                                     <RefreshCw className="w-3 h-3" /> Remarcar
                                   </button>
                                 )}
@@ -276,15 +296,39 @@ export default function PainelTerapeuta() {
         )}
       </main>
 
-      {/* Modal confirmar entrega */}
+      {/* Modal anular — precisa de motivo antes da senha */}
+      {statusSessaoId && statusAcao === 'anular' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Anular sessão concluída</h3>
+            <p className="text-xs text-gray-400 mb-4">Informe o motivo da anulação. A sessão voltará ao status &quot;Agendada&quot;.</p>
+            <textarea value={anularMotivo} onChange={e => setAnularMotivo(e.target.value)} rows={3}
+              placeholder="Motivo da anulação (mínimo 10 caracteres)..."
+              className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500/50 resize-none mb-3" />
+            {statusErro && <p className="text-xs text-red-400 mb-3">{statusErro}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setStatusSessaoId(null); setAnularMotivo('') }}
+                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => {
+                if (anularMotivo.trim().length < 10) { setStatusErro('Mínimo 10 caracteres'); return }
+                setStatusErro('')
+              }}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg transition-colors">
+                Próximo →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SenhaModal
-        isOpen={!!confirmarSessaoId}
-        onClose={() => { setConfirmarSessaoId(null); setConfirmarErro('') }}
-        onConfirm={handleConfirmar}
-        titulo="Confirmar entrega de sessão"
-        descricao="Digite sua senha para confirmar que a sessão foi realizada"
-        loading={confirmarLoading}
-        erro={confirmarErro}
+        isOpen={!!statusSessaoId && (statusAcao !== 'anular' || anularMotivo.trim().length >= 10)}
+        onClose={() => { setStatusSessaoId(null); setStatusErro(''); setAnularMotivo('') }}
+        onConfirm={handleStatusAcao}
+        titulo={statusAcao === 'iniciar' ? 'Iniciar consulta' : statusAcao === 'concluir' ? 'Concluir consulta' : 'Anular sessão'}
+        descricao="Digite sua senha para confirmar"
+        loading={statusLoading}
+        erro={statusErro}
       />
 
       {/* Modal remarcar — data primeiro */}

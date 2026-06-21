@@ -23,6 +23,7 @@ type SessaoRow = {
   numero_sessao: number
   total_sessoes: number
   status: string
+  status_consulta: string | null
   data_agendada: string | null
   data_entrega: string | null
   link_meet: string | null
@@ -31,7 +32,11 @@ type SessaoRow = {
   paciente_nome: string
   paciente_email: string
   agendado_por: string | null
+  vendedor_nome: string | null
+  vendedor_email: string | null
   entregue_confirmado_por: string | null
+  iniciado_em: string | null
+  concluido_em: string | null
   terapeutas: { nome: string } | null
 }
 
@@ -136,7 +141,7 @@ export async function GET(req: NextRequest) {
         const batch = allSaleIds.slice(i, i + BATCH)
         const { data } = await supabase
           .from('sessoes')
-          .select('id,sale_id,terapeuta_id,numero_sessao,total_sessoes,status,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,agendado_por,entregue_confirmado_por,terapeutas(nome)')
+          .select('id,sale_id,terapeuta_id,numero_sessao,total_sessoes,status,status_consulta,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,agendado_por,vendedor_nome,vendedor_email,entregue_confirmado_por,iniciado_em,concluido_em,terapeutas(nome)')
           .in('sale_id', batch)
           .order('numero_sessao', { ascending: true })
         if (data) {
