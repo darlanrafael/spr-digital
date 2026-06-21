@@ -23,12 +23,7 @@ async function fetchAccountPages(
   accountId: string,
   dateParam: string,  // "date_preset=today" ou "time_range=<encoded-json>"
   token: string,
-  nameFilter?: string,
 ): Promise<RawCampaign[]> {
-  const filteringParam = nameFilter
-    ? `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'name', operator: 'CONTAIN', value: nameFilter }]))}`
-    : ''
-
   // A Meta API ignora time_range e date_preset como params separados para insights inline.
   // A forma correta é aplicar o modificador diretamente no campo: insights.date_preset(x){spend}
   // ou insights.time_range({"since":"...","until":"..."}){spend}
@@ -42,11 +37,12 @@ async function fetchAccountPages(
     fields = `name,insights.time_range(${rangeJson}){spend}`
   }
 
+  // No name filter sent to the API — CONTAIN can silently drop campaigns when
+  // there are hundreds of results. Fetch everything and filter locally instead.
   let nextUrl: string | null =
     `${BASE_URL}/act_${accountId}/campaigns` +
     `?fields=${fields}` +
     `&limit=500` +
-    filteringParam +
     `&access_token=${token}`
 
   const allCampaigns: RawCampaign[] = []
@@ -91,7 +87,7 @@ export async function getAdAccountCampaigns(
   accountId: string,
   dateStart: string,
   dateEnd: string,
-  nomenclaturas?: string[],
+  _nomenclaturas?: string[],
   datePreset?: string,
 ): Promise<{ name: string; spend: number }[]> {
   const token = getToken()
@@ -101,22 +97,8 @@ export async function getAdAccountCampaigns(
     ? `date_preset=${datePreset}`
     : `time_range=${encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))}`
 
-  let rawCampaigns: RawCampaign[]
-
-  if (nomenclaturas && nomenclaturas.length > 0) {
-    // Uma chamada por nomenclatura em paralelo; CONTAIN não suporta OR na mesma chamada
-    const perNom = await Promise.all(
-      nomenclaturas.map(n => fetchAccountPages(accountId, dateParam, token, n))
-    )
-    const seen = new Set<string>()
-    rawCampaigns = perNom.flat().filter(c => {
-      if (seen.has(c.name)) return false
-      seen.add(c.name)
-      return true
-    })
-  } else {
-    rawCampaigns = await fetchAccountPages(accountId, dateParam, token)
-  }
+  // Always fetch all campaigns without API-side name filter — filter locally in getProjectInvestment
+  const rawCampaigns = await fetchAccountPages(accountId, dateParam, token)
 
   return rawCampaigns.map(c => ({
     name: c.name,
