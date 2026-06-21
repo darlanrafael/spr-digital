@@ -67,8 +67,9 @@ export default function PainelTerapeuta() {
   const [terapeuta, setTerapeuta] = useState<Terapeuta | null>(null)
   const [sessoes, setSessoes] = useState<Sessao[]>([])
   const [loading, setLoading] = useState(true)
-  const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
+  const [adminEmail, setAdminEmail] = useState('')
   const [isTerapeutaSession, setIsTerapeutaSession] = useState(false)
+  const [sessionNome, setSessionNome] = useState('')
 
   // Modal status_consulta (iniciar / concluir / anular)
   const [statusSessaoId, setStatusSessaoId] = useState<string | null>(null)
@@ -105,6 +106,7 @@ export default function PainelTerapeuta() {
       try {
         const session = JSON.parse(raw) as TerapeutaSession
         setAdminEmail(session.email)
+        setSessionNome(session.nome)
         if (session.tipo === 'terapeuta') {
           setIsTerapeutaSession(true)
           if (session.terapeuta_id && session.terapeuta_id !== id) {
@@ -136,8 +138,8 @@ export default function PainelTerapeuta() {
         sessao_id: statusSessaoId,
         acao: statusAcao,
         motivo: statusAcao === 'anular' ? anularMotivo : undefined,
-        usuario_nome: adminEmail.split('@')[0],
-        usuario_tipo: 'admin',
+        usuario_nome: sessionNome || adminEmail.split('@')[0],
+        usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
         senha,
       }),
@@ -230,11 +232,18 @@ export default function PainelTerapeuta() {
             </div>
 
             {/* Email do usuário */}
-            <div className="mb-4 flex items-center gap-3">
-              <label className="text-xs text-gray-500 whitespace-nowrap">Seu e-mail (para autenticação):</label>
-              <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)}
-                className="bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50 w-56" />
-            </div>
+            {isTerapeutaSession ? (
+              <div className="mb-4 flex items-center gap-2">
+                <span className="text-xs text-gray-500">Autenticando como:</span>
+                <span className="text-xs text-gray-300 font-medium">{adminEmail}</span>
+              </div>
+            ) : (
+              <div className="mb-4 flex items-center gap-3">
+                <label className="text-xs text-gray-500 whitespace-nowrap">Seu e-mail (para autenticação):</label>
+                <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)}
+                  className="bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50 w-56" />
+              </div>
+            )}
 
             {/* Tabela de sessões */}
             <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
