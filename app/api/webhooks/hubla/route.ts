@@ -50,21 +50,26 @@ export async function POST(req: NextRequest) {
       const sellerTotalCents = (sellerReceiver?.totalCents as number) ?? 0
 
       const invoiceId = (invoice?.id as string) ?? null
+      const productId = (product?.id as string) ?? null
+      const orderId = invoiceId && productId ? `${invoiceId}-${productId}` : invoiceId
+
+      const childInvoiceIds = (invoice?.childInvoiceIds as string[]) ?? []
+      const numProdutos = childInvoiceIds.length > 0 ? childInvoiceIds.length : 1
 
       const sale = {
         id:                 crypto.randomUUID(),
         project_id:         PROJECT_ID,
         plataforma:         'hubla',
         status:             'aprovada',
-        order_id:           invoiceId,
+        order_id:           orderId,
         data_hora:          (invoice?.saleDate as string) ?? new Date().toISOString(),
         nome:               `${payer?.firstName ?? ''} ${payer?.lastName ?? ''}`.trim(),
         email:              (payer?.email as string) ?? '',
         telefone:           (payer?.phone as string) ?? '',
         produto:            (product?.name as string) ?? '',
-        preco_base:         ((amount?.subtotalCents as number) ?? 0) / 100,
-        valor_pago_cliente: ((amount?.totalCents as number) ?? 0) / 100,
-        valor_liquido:      sellerTotalCents / 100,
+        preco_base:         ((amount?.subtotalCents as number) ?? 0) / numProdutos / 100,
+        valor_pago_cliente: ((amount?.totalCents as number) ?? 0) / numProdutos / 100,
+        valor_liquido:      sellerTotalCents / numProdutos / 100,
         utm_source:         (utm?.source as string) ?? '',
         utm_medium:         (utm?.medium as string) ?? '',
         utm_campaign:       (utm?.campaign as string) ?? '',
@@ -74,14 +79,14 @@ export async function POST(req: NextRequest) {
 
       const client = getSupabaseAdmin()
 
-      if (invoiceId) {
+      if (orderId) {
         const { data: existingRows } = await client
           .from('sales')
           .select('id')
-          .eq('order_id', invoiceId)
+          .eq('order_id', orderId)
           .limit(1)
         if (existingRows && existingRows.length > 0) {
-          console.log('[Hubla Webhook] duplicata ignorada por order_id:', invoiceId)
+          console.log('[Hubla Webhook] duplicata ignorada por order_id:', orderId)
           return NextResponse.json({ success: true, event: 'duplicate_ignored' })
         }
       } else {
