@@ -53,9 +53,6 @@ export async function POST(req: NextRequest) {
       const productId = (product?.id as string) ?? null
       const orderId = invoiceId && productId ? `${invoiceId}-${productId}` : invoiceId
 
-      const childInvoiceIds = (invoice?.childInvoiceIds as string[]) ?? []
-      const numProdutos = childInvoiceIds.length > 0 ? childInvoiceIds.length : 1
-
       const sale = {
         id:                 crypto.randomUUID(),
         project_id:         PROJECT_ID,
@@ -67,9 +64,9 @@ export async function POST(req: NextRequest) {
         email:              (payer?.email as string) ?? '',
         telefone:           (payer?.phone as string) ?? '',
         produto:            (product?.name as string) ?? '',
-        preco_base:         ((amount?.subtotalCents as number) ?? 0) / numProdutos / 100,
-        valor_pago_cliente: ((amount?.totalCents as number) ?? 0) / numProdutos / 100,
-        valor_liquido:      sellerTotalCents / numProdutos / 100,
+        preco_base:         ((amount?.subtotalCents as number) ?? 0) / 100,
+        valor_pago_cliente: ((amount?.totalCents as number) ?? 0) / 100,
+        valor_liquido:      sellerTotalCents / 100,
         utm_source:         (utm?.source as string) ?? '',
         utm_medium:         (utm?.medium as string) ?? '',
         utm_campaign:       (utm?.campaign as string) ?? '',
