@@ -39,6 +39,14 @@ export async function POST(req: NextRequest) {
   if (type === 'invoice.payment_succeeded') {
     try {
       const invoice = event.invoice as Record<string, unknown>
+
+      const hasParentInvoice = !!(invoice?.parentInvoiceId)
+      const hasChildInvoices = ((invoice?.childInvoiceIds as unknown[]) ?? []).length > 0
+      if (hasChildInvoices && !hasParentInvoice) {
+        console.log('[Hubla Webhook] fatura pai ignorada — aguardando webhooks dos produtos filhos')
+        return NextResponse.json({ success: true, event: 'parent_invoice_ignored' })
+      }
+
       const payer = invoice?.payer as Record<string, unknown>
       const product = event.product as Record<string, unknown>
       const amount = invoice?.amount as Record<string, unknown>
