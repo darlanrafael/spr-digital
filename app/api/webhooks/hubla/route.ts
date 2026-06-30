@@ -59,7 +59,18 @@ export async function POST(req: NextRequest) {
 
       const invoiceId = (invoice?.id as string) ?? null
       const productId = (product?.id as string) ?? null
-      const orderId = invoiceId && productId ? `${invoiceId}-${productId}` : invoiceId
+
+      // Hubla dispara dois webhooks por produto em pedidos multi-produto (bundle):
+      //   offer format:   invoice.id = "{parentId}-offer-N"  →  subtotalCents = preço individual ✅
+      //   simples format: invoice.id = "{parentId}"           →  subtotalCents = soma inflada de todos ❌
+      // Ambos carregam o mesmo productId. Remove "-offer-N" do invoiceId para obter o canonicalParentId,
+      // fazendo offer e simples colidirem no mesmo orderId — permitindo dedup e correção de valor.
+      // Produto único legítimo também tem invoice.id sem "-offer-N" mas com valor individual correto;
+      // é indistinguível do simples no payload. Por isso usamos offer como autoritativo: se offer
+      // chega e já existe uma linha (gravada pelo simples com valor somado/inflado), corrigimos o valor.
+      const isOfferFormat = !!invoiceId && /-offer-\d+$/.test(invoiceId)
+      const canonicalParentId = invoiceId?.replace(/-offer-\d+$/, '') ?? invoiceId
+      const orderId = canonicalParentId && productId ? `${canonicalParentId}-${productId}` : canonicalParentId
 
       const sale = {
         id:                 crypto.randomUUID(),
@@ -91,6 +102,24 @@ export async function POST(req: NextRequest) {
           .eq('order_id', orderId)
           .limit(1)
         if (existingRows && existingRows.length > 0) {
+          if (isOfferFormat) {
+            // Offer chegou depois do simples: o simples gravou valor somado/inflado.
+            // Offer é sempre autoritativo — atualizar para o valor individual correto.
+            const { error: updateError } = await client
+              .from('sales')
+              .update({
+                preco_base:         sale.preco_base,
+                valor_pago_cliente: sale.valor_pago_cliente,
+                valor_liquido:      sale.valor_liquido,
+              })
+              .eq('order_id', orderId)
+            if (updateError) {
+              console.error('[Hubla Webhook] erro ao corrigir valor (offer priority):', updateError)
+              return NextResponse.json({ error: updateError.message }, { status: 500 })
+            }
+            console.log('[Hubla Webhook] valor corrigido para offer individual:', orderId, 'valor:', sale.valor_pago_cliente)
+            return NextResponse.json({ success: true, event: 'sale_updated_offer_priority' })
+          }
           console.log('[Hubla Webhook] duplicata ignorada por order_id:', orderId)
           return NextResponse.json({ success: true, event: 'duplicate_ignored' })
         }
