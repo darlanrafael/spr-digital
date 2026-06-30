@@ -228,7 +228,7 @@ function DashboardContent() {
   const yd = new Date(today); yd.setDate(today.getDate() - 1)
   const yesterdayStr = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, '0')}-${String(yd.getDate()).padStart(2, '0')}`
   const monthStr = todayStr.slice(0, 7)
-  const weekRange = getCurrentWeekRange()
+  const weekRange = useMemo(() => getCurrentWeekRange(), [todayStr])
 
   const periodBounds = useMemo(() => {
     if (period === 'today') return { start: todayStr, end: todayStr }
@@ -240,7 +240,10 @@ function DashboardContent() {
   }, [period, todayStr, yesterdayStr, monthStr, weekRange, customStart, customEnd])
 
   useEffect(() => {
-    if (!periodBounds) return
+    if (!periodBounds) {
+      setSalesLoading(false)
+      return
+    }
     let cancelled = false
     const fetchPeriodSales = async () => {
       setSalesLoading(true)

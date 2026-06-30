@@ -20,6 +20,7 @@ function normTs(ts: string | null | undefined): string {
 
 // Converte uma data Brasília (YYYY-MM-DD) nos limites UTC corretos para filtro
 // no Supabase. Brasília = UTC-3: o dia D vai de D T03:00:00Z até (D+1) T02:59:59Z.
+// Usado para HUBLA, que grava data_hora em UTC real.
 function brtDayRangeToUTC(dateStr: string): { startUTC: string; endUTC: string } {
   const startUTC = `${dateStr}T03:00:00`
   // +1 dia via Date UTC para cobrir virada de mês e de ano corretamente
@@ -27,6 +28,13 @@ function brtDayRangeToUTC(dateStr: string): { startUTC: string; endUTC: string }
   next.setUTCDate(next.getUTCDate() + 1)
   const endUTC = `${next.toISOString().slice(0, 10)}T02:59:59`
   return { startUTC, endUTC }
+}
+
+// Limites para KIWIFY, que grava data_hora em BRT-como-UTC:
+// hora de Brasília com sufixo +00:00 sem conversão para UTC real.
+// Dia D em BRT = D T00:00:00 até D T23:59:59 no campo data_hora.
+function kiwifyBrtRange(dateStr: string): { start: string; end: string } {
+  return { start: `${dateStr}T00:00:00`, end: `${dateStr}T23:59:59` }
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
@@ -89,7 +97,13 @@ export async function getSales(
       .select('*')
       .eq('project_id', projectId)
 
-    if (dateStart) q = q.gte('data_hora', brtDayRangeToUTC(dateStart).startUTC)
+    // Wide early filter: cobre ambas as plataformas com um único range de banco.
+    // Hubla (UTC real): dia D começa em D T03:00:00 UTC.
+    // Kiwify (BRT-como-UTC): dia D começa em D T00:00:00 "UTC".
+    // → lower wide: dateStart T00:00:00 (mínimo entre os dois inícios)
+    // → upper wide: brtDayRangeToUTC(dateEnd).endUTC = (dateEnd+1) T02:59:59 (máximo entre os dois fins)
+    // O corte exato por plataforma é feito em memória abaixo.
+    if (dateStart) q = q.gte('data_hora', `${dateStart}T00:00:00`)
     if (dateEnd)   q = q.lte('data_hora', brtDayRangeToUTC(dateEnd).endUTC)
     if (statusFilter.length === 1) {
       q = q.eq('status', statusFilter[0])
@@ -108,7 +122,29 @@ export async function getSales(
     from += PAGE_SIZE
   }
 
-  return all.map(mapSaleRow)
+  // Filtro de precisão em memória por convenção de armazenamento:
+  // Hubla grava UTC real → janela BRT→UTC (T03:00 a T02:59 do dia seguinte).
+  // Kiwify grava BRT-como-UTC → comparar direto contra os limites BRT (T00:00 a T23:59).
+  const filtered = dateStart || dateEnd
+    ? all.filter(r => {
+        const dh = String(r.data_hora ?? '').slice(0, 19)
+        const isKiwify = String(r.plataforma ?? '').toLowerCase() === 'kiwify'
+        if (isKiwify) {
+          const lo = dateStart ? kiwifyBrtRange(dateStart).start : ''
+          const hi = dateEnd   ? kiwifyBrtRange(dateEnd).end     : ''
+          if (lo && dh < lo) return false
+          if (hi && dh > hi) return false
+        } else {
+          const lo = dateStart ? brtDayRangeToUTC(dateStart).startUTC : ''
+          const hi = dateEnd   ? brtDayRangeToUTC(dateEnd).endUTC     : ''
+          if (lo && dh < lo) return false
+          if (hi && dh > hi) return false
+        }
+        return true
+      })
+    : all
+
+  return filtered.map(mapSaleRow)
 }
 
 function mapSaleRow(r: Record<string, unknown>): Sale {
