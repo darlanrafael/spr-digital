@@ -18,6 +18,17 @@ function normTs(ts: string | null | undefined): string {
   return ts.slice(0, 19)
 }
 
+// Converte uma data Brasília (YYYY-MM-DD) nos limites UTC corretos para filtro
+// no Supabase. Brasília = UTC-3: o dia D vai de D T03:00:00Z até (D+1) T02:59:59Z.
+function brtDayRangeToUTC(dateStr: string): { startUTC: string; endUTC: string } {
+  const startUTC = `${dateStr}T03:00:00`
+  // +1 dia via Date UTC para cobrir virada de mês e de ano corretamente
+  const next = new Date(`${dateStr}T00:00:00Z`)
+  next.setUTCDate(next.getUTCDate() + 1)
+  const endUTC = `${next.toISOString().slice(0, 10)}T02:59:59`
+  return { startUTC, endUTC }
+}
+
 // ─── Projects ────────────────────────────────────────────────────────────────
 
 export async function getProjects(): Promise<Project[]> {
@@ -78,8 +89,8 @@ export async function getSales(
       .select('*')
       .eq('project_id', projectId)
 
-    if (dateStart) q = q.gte('data_hora', dateStart)
-    if (dateEnd) q = q.lte('data_hora', `${dateEnd}T23:59:59`)
+    if (dateStart) q = q.gte('data_hora', brtDayRangeToUTC(dateStart).startUTC)
+    if (dateEnd)   q = q.lte('data_hora', brtDayRangeToUTC(dateEnd).endUTC)
     if (statusFilter.length === 1) {
       q = q.eq('status', statusFilter[0])
     } else if (statusFilter.length > 1) {
