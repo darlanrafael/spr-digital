@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
         produto:            (product?.name as string) ?? '',
         preco_base:         ((amount?.subtotalCents as number) ?? 0) / 100,
         valor_pago_cliente: ((amount?.subtotalCents as number) ?? 0) / 100,
+        valor_com_juros:    ((amount?.totalCents as number) ?? 0) / 100,
         valor_liquido:      Math.round(sellerTotalCents) / 100,
         utm_source:         (utm?.source as string) ?? '',
         utm_medium:         (utm?.medium as string) ?? '',

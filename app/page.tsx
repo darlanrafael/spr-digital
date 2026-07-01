@@ -10,7 +10,7 @@ import Modal from '@/components/Modal'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import BestTimesComparison from '@/components/BestTimesPanel'
 import {
-  formatCurrency, formatDate, getSaleBruto, getAliquotaByPreco,
+  formatCurrency, formatDate, getSaleBruto, getAliquotaByPreco, getImpostoBase,
   getCurrentWeekRange,
 } from '@/lib/formatters'
 import {
@@ -280,7 +280,7 @@ function DashboardContent() {
   const impostoTotal = useMemo(() => {
     return periodSales.reduce((acc, s) => {
       const aliquota = getAliquotaByPreco(s.preco_base)
-      return acc + getSaleBruto(s) * (aliquota / 100)
+      return acc + getImpostoBase(s) * (aliquota / 100)
     }, 0)
   }, [periodSales])
 
@@ -299,7 +299,7 @@ function DashboardContent() {
   const varCostsTotal = varCostsFiltered.reduce((a, c) => a + c.valor, 0)
 
   const byProduct = useMemo(() => {
-    const map: Record<string, { produto: string; plataforma: string; qtd: number; bruto: number; aliquota: number; imposto: number; liquido: number }> = {}
+    const map: Record<string, { produto: string; plataforma: string; qtd: number; bruto: number; aliquota: number; imposto: number; liquido: number; liquido_pos_impostos: number }> = {}
     for (const s of periodSales) {
       const prod = productMap[s.produto]
       const aliquota = getAliquotaByPreco(s.preco_base)
@@ -307,13 +307,15 @@ function DashboardContent() {
         map[s.produto] = {
           produto: prod?.nome ?? s.produto,
           plataforma: s.plataforma,
-          qtd: 0, bruto: 0, aliquota, imposto: 0, liquido: 0,
+          qtd: 0, bruto: 0, aliquota, imposto: 0, liquido: 0, liquido_pos_impostos: 0,
         }
       }
+      const impostoVenda = getImpostoBase(s) * (aliquota / 100)
       map[s.produto].qtd++
       map[s.produto].bruto += getSaleBruto(s)
-      map[s.produto].imposto += getSaleBruto(s) * (aliquota / 100)
+      map[s.produto].imposto += impostoVenda
       map[s.produto].liquido += s.valor_liquido
+      map[s.produto].liquido_pos_impostos += s.valor_liquido - impostoVenda
     }
     return Object.values(map)
   }, [periodSales, productMap])
@@ -552,11 +554,12 @@ function DashboardContent() {
                     <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Alíquota</th>
                     <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Imposto</th>
                     <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Fat. Líq. Plataforma</th>
+                    <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Líquido Pós-Impostos</th>
                   </tr>
                 </thead>
                 <tbody>
                   {byProduct.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center py-8 text-gray-600">Nenhuma venda no período</td></tr>
+                    <tr><td colSpan={8} className="text-center py-8 text-gray-600">Nenhuma venda no período</td></tr>
                   ) : byProduct.map((row, i) => (
                     <tr key={i} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                       <td className="px-4 py-3 text-gray-200 font-medium">{row.produto}</td>
@@ -566,6 +569,7 @@ function DashboardContent() {
                       <td className="px-4 py-3 text-right text-amber-400">{row.aliquota}%</td>
                       <td className="px-4 py-3 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                       <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(row.liquido)}</td>
+                      <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(row.liquido_pos_impostos)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -578,6 +582,7 @@ function DashboardContent() {
                       <td />
                       <td className="px-4 py-3 text-right text-red-400 font-semibold">-{formatCurrency(byProduct.reduce((a, r) => a + r.imposto, 0))}</td>
                       <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(byProduct.reduce((a, r) => a + r.liquido, 0))}</td>
+                      <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(byProduct.reduce((a, r) => a + r.liquido_pos_impostos, 0))}</td>
                     </tr>
                   </tfoot>
                 )}

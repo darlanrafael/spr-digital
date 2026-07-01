@@ -6,7 +6,7 @@ import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import ProtectedRoute from '@/components/ProtectedRoute'
-import { formatCurrency, getMonthLabel, getSaleBruto, getAliquotaByPreco } from '@/lib/formatters'
+import { formatCurrency, getMonthLabel, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 
 type DREToggle = 'dre' | 'fluxo'
 
@@ -52,10 +52,14 @@ function DREContent() {
     const receitaBruta = monthSales.reduce((a, s) => a + getSaleBruto(s), 0)
     const impostos = monthSales.reduce((a, s) => {
       const aliquota = getAliquotaByPreco(s.preco_base)
-      return a + getSaleBruto(s) * (aliquota / 100)
+      return a + getImpostoBase(s) * (aliquota / 100)
     }, 0)
     const taxasPlataforma = monthSales.reduce((a, s) => a + (getSaleBruto(s) - s.valor_liquido), 0) - impostos
     const receitaLiquida = receitaBruta - impostos - taxasPlataforma
+    const liquidoPosImpostos = monthSales.reduce((a, s) => {
+      const aliquota = getAliquotaByPreco(s.preco_base)
+      return a + s.valor_liquido - getImpostoBase(s) * (aliquota / 100)
+    }, 0)
     const metaAds = costs.metaAds
       .filter(m => m.mes === month && (selectedProject === 'all' || m.projetoId === selectedProject))
       .reduce((a, m) => a + m.valor, 0)
@@ -72,7 +76,7 @@ function DREContent() {
     const saldoFinal = entradas - saidaImpostos - metaAds - fixedCosts - varCosts
 
     return {
-      month, receitaBruta, impostos, taxasPlataforma, receitaLiquida,
+      month, receitaBruta, impostos, taxasPlataforma, receitaLiquida, liquidoPosImpostos,
       metaAds, fixedCosts, outros, resultado,
       entradas, saidaImpostos, varCosts, saldoFinal,
     }
@@ -130,6 +134,7 @@ function DREContent() {
                   <DRERow label="(-) Impostos" data={monthData} field="impostos" negative />
                   <DRERow label="(-) Taxas plataforma" data={monthData} field="taxasPlataforma" negative />
                   <DRERow label="= Receita líquida" data={monthData} field="receitaLiquida" bold />
+                  <DRERow label="= Líquido Pós-Impostos" data={monthData} field="liquidoPosImpostos" bold green />
                   <DRERow label="(-) Meta Ads" data={monthData} field="metaAds" negative />
                   <DRERow label="(-) Custos fixos" data={monthData} field="fixedCosts" negative />
 
@@ -229,7 +234,7 @@ function DREContent() {
 type MonthDataItem = Record<string, number | string>
 
 function DRERow({
-  label, data, field, negative, positive, bold,
+  label, data, field, negative, positive, bold, green,
 }: {
   label: string
   data: MonthDataItem[]
@@ -237,15 +242,17 @@ function DRERow({
   negative?: boolean
   positive?: boolean
   bold?: boolean
+  green?: boolean
 }) {
   return (
     <tr className="border-b border-white/5 hover:bg-white/2 transition-colors">
       <td className={`px-4 py-3 ${bold ? 'text-gray-200 font-semibold' : 'text-gray-400'}`}>{label}</td>
       {data.map((d, i) => {
         const val = Number(d[field] ?? 0)
-        const color = negative ? 'text-red-400' : positive ? 'text-emerald-400' : bold ? 'text-blue-400' : 'text-gray-200'
+        const color = negative ? 'text-red-400' : green ? '' : positive ? 'text-emerald-400' : bold ? 'text-blue-400' : 'text-gray-200'
         return (
-          <td key={i} className={`px-4 py-3 text-right ${color} ${bold ? 'font-semibold' : ''}`}>
+          <td key={i} className={`px-4 py-3 text-right ${color} ${bold ? 'font-semibold' : ''}`}
+            style={green ? { color: '#22c55e', fontWeight: 600 } : undefined}>
             {negative && val > 0 ? `-${formatCurrency(val)}` : formatCurrency(val)}
           </td>
         )

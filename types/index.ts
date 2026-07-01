@@ -38,6 +38,7 @@ export interface Sale {
   plataforma_sale_id?: string
   preco_base: number
   valor_pago_cliente: number
+  valor_com_juros?: number
   valor_liquido: number
   data_hora: string
   utm_source: string

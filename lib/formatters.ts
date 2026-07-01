@@ -65,6 +65,11 @@ export function getSaleBruto(sale: Sale): number {
   return sale.plataforma === 'hubla' ? sale.valor_pago_cliente : sale.preco_base
 }
 
+/** Base de cálculo do imposto = valor COM juros (fallback: valor_pago_cliente para histórico sem valor_com_juros) */
+export function getImpostoBase(sale: Sale): number {
+  return sale.valor_com_juros ?? sale.valor_pago_cliente
+}
+
 /** Dias corridos entre duas datas "YYYY-MM-DD" */
 export function diffDays(from: string, to: string): number {
   const a = parseLocalDate(from)

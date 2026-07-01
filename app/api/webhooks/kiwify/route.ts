@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
         produto:            (product?.product_name as string) ?? '',
         preco_base:         ((commissions?.product_base_price as number) ?? 0) / 100,
         valor_pago_cliente: ((commissions?.charge_amount as number) ?? 0) / 100,
+        valor_com_juros:    ((commissions?.charge_amount as number) ?? 0) / 100,
         valor_liquido:      ((commissions?.my_commission as number) ?? 0) / 100,
         utm_source:         (tracking?.utm_source as string) ?? '',
         utm_medium:         (tracking?.utm_medium as string) ?? '',
