@@ -58,7 +58,17 @@ export async function POST(req: NextRequest) {
       const sellerTotalCents = (sellerReceiver?.totalCents as number) ?? 0
 
       const invoiceId = (invoice?.id as string) ?? null
-      const productId = (product?.id as string) ?? null
+
+      // product.id identifica o produto-base do catálogo, mas o mesmo produto-base pode
+      // ser vendido como dois "offers" diferentes na mesma fatura (ex: cohorts/datas
+      // distintas do mesmo order bump). Nesse caso os dois webhooks trazem o mesmo
+      // product.id, e usá-lo sozinho como chave faz a segunda compra colidir com a
+      // primeira e sumir (é tratada como "correção de valor" da primeira em vez de item
+      // novo). O offers[].id aninhado é mais específico e diferencia esse caso.
+      const productsArr = (event.products as Record<string, unknown>[]) ?? []
+      const offers = (productsArr[0]?.offers as Record<string, unknown>[]) ?? []
+      const offerItemId = (offers[0]?.id as string) ?? null
+      const productId = offerItemId ?? (product?.id as string) ?? null
 
       // Hubla dispara dois webhooks por produto em pedidos multi-produto (bundle):
       //   offer format:   invoice.id = "{parentId}-offer-N"  →  subtotalCents = preço individual ✅
@@ -82,7 +92,7 @@ export async function POST(req: NextRequest) {
         nome:               `${payer?.firstName ?? ''} ${payer?.lastName ?? ''}`.trim(),
         email:              (payer?.email as string) ?? '',
         telefone:           (payer?.phone as string) ?? '',
-        produto:            (product?.name as string) ?? '',
+        produto:            ((product?.name as string) ?? '').trim(),
         preco_base:         ((amount?.subtotalCents as number) ?? 0) / 100,
         valor_pago_cliente: ((amount?.subtotalCents as number) ?? 0) / 100,
         valor_com_juros:    ((amount?.totalCents as number) ?? 0) / 100,
