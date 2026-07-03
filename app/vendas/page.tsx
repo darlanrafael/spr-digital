@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import MetricCard from '@/components/MetricCard'
 import PlatformBadge from '@/components/PlatformBadge'
+import Pagination from '@/components/Pagination'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { formatCurrency, formatDateTime, getSaleBruto, daysSincePurchase, diffDays, getDateFromDateTime } from '@/lib/formatters'
 
@@ -212,6 +213,7 @@ function VendasContent() {
         <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
           <div className="overflow-x-auto">
             {tab === 'aprovadas' ? (
+              <>
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/10 bg-gray-800/50">
@@ -227,9 +229,9 @@ function VendasContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.length === 0 ? (
+                  {paginated.length === 0 ? (
                     <tr><td colSpan={9} className="text-center py-12 text-gray-600">Nenhuma venda encontrada</td></tr>
-                  ) : filtered.map(sale => (
+                  ) : paginated.map(sale => (
                     <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                       <td className="px-4 py-3 text-gray-200 font-medium">{sale.nome}</td>
                       <td className="px-4 py-3 text-gray-400 hidden md:table-cell">{sale.email}</td>
@@ -246,6 +248,13 @@ function VendasContent() {
                   ))}
                 </tbody>
               </table>
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPrevious={goToPreviousPage}
+                onNext={goToNextPage}
+              />
+              </>
             ) : (
               <table className="w-full text-xs">
                 <thead>
