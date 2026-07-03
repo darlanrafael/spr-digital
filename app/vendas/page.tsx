@@ -214,92 +214,92 @@ function VendasContent() {
           <div className="overflow-x-auto">
             {tab === 'aprovadas' ? (
               <>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-white/10 bg-gray-800/50">
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium">Nome</th>
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">E-mail</th>
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium hidden lg:table-cell">Telefone</th>
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium">Produto</th>
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium hidden sm:table-cell">Plataforma</th>
-                    <th className="text-right px-4 py-3 text-gray-500 font-medium">Bruto</th>
-                    <th className="text-right px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Líquido</th>
-                    <th className="text-right px-4 py-3 text-gray-500 font-medium">Data</th>
-                    <th className="text-center px-4 py-3 text-gray-500 font-medium hidden lg:table-cell">Prazo garantia</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginated.length === 0 ? (
-                    <tr><td colSpan={9} className="text-center py-12 text-gray-600">Nenhuma venda encontrada</td></tr>
-                  ) : paginated.map(sale => (
-                    <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
-                      <td className="px-4 py-3 text-gray-200 font-medium">{sale.nome}</td>
-                      <td className="px-4 py-3 text-gray-400 hidden md:table-cell">{sale.email}</td>
-                      <td className="px-4 py-3 text-gray-400 hidden lg:table-cell">{sale.telefone}</td>
-                      <td className="px-4 py-3 text-gray-300">{productMap[sale.produto]?.nome ?? sale.produto}</td>
-                      <td className="px-4 py-3 hidden sm:table-cell"><PlatformBadge platform={sale.plataforma} /></td>
-                      <td className="px-4 py-3 text-right text-gray-200">{formatCurrency(getSaleBruto(sale))}</td>
-                      <td className="px-4 py-3 text-right text-emerald-400 hidden md:table-cell">{formatCurrency(sale.valor_liquido)}</td>
-                      <td className="px-4 py-3 text-right text-gray-400 whitespace-nowrap">{formatDateTime(sale.data_hora)}</td>
-                      <td className="px-4 py-3 text-center hidden lg:table-cell">
-                        <WarrantyBadge dataHora={sale.data_hora} />
-                      </td>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-gray-800/50">
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium">Nome</th>
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">E-mail</th>
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium hidden lg:table-cell">Telefone</th>
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium">Produto</th>
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium hidden sm:table-cell">Plataforma</th>
+                      <th className="text-right px-4 py-3 text-gray-500 font-medium">Bruto</th>
+                      <th className="text-right px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Líquido</th>
+                      <th className="text-right px-4 py-3 text-gray-500 font-medium">Data</th>
+                      <th className="text-center px-4 py-3 text-gray-500 font-medium hidden lg:table-cell">Prazo garantia</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <Pagination
-                currentPage={currentPage}
-                totalPages={totalPages}
-                onPrevious={goToPreviousPage}
-                onNext={goToNextPage}
-              />
+                  </thead>
+                  <tbody>
+                    {paginated.length === 0 ? (
+                      <tr><td colSpan={9} className="text-center py-12 text-gray-600">Nenhuma venda encontrada</td></tr>
+                    ) : paginated.map(sale => (
+                      <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                        <td className="px-4 py-3 text-gray-200 font-medium">{sale.nome}</td>
+                        <td className="px-4 py-3 text-gray-400 hidden md:table-cell">{sale.email}</td>
+                        <td className="px-4 py-3 text-gray-400 hidden lg:table-cell">{sale.telefone}</td>
+                        <td className="px-4 py-3 text-gray-300">{productMap[sale.produto]?.nome ?? sale.produto}</td>
+                        <td className="px-4 py-3 hidden sm:table-cell"><PlatformBadge platform={sale.plataforma} /></td>
+                        <td className="px-4 py-3 text-right text-gray-200">{formatCurrency(getSaleBruto(sale))}</td>
+                        <td className="px-4 py-3 text-right text-emerald-400 hidden md:table-cell">{formatCurrency(sale.valor_liquido)}</td>
+                        <td className="px-4 py-3 text-right text-gray-400 whitespace-nowrap">{formatDateTime(sale.data_hora)}</td>
+                        <td className="px-4 py-3 text-center hidden lg:table-cell">
+                          <WarrantyBadge dataHora={sale.data_hora} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPrevious={goToPreviousPage}
+                  onNext={goToNextPage}
+                />
               </>
             ) : (
               <>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-white/10 bg-gray-800/50">
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium">Nome</th>
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">E-mail</th>
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium">Produto</th>
-                    <th className="text-left px-4 py-3 text-gray-500 font-medium hidden sm:table-cell">Plataforma</th>
-                    <th className="text-right px-4 py-3 text-gray-500 font-medium">Valor</th>
-                    <th className="text-right px-4 py-3 text-gray-500 font-medium">Data compra</th>
-                    <th className="text-right px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Data reembolso</th>
-                    <th className="text-center px-4 py-3 text-gray-500 font-medium">Dias de acesso</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginated.length === 0 ? (
-                    <tr><td colSpan={8} className="text-center py-12 text-gray-600">Nenhum reembolso encontrado</td></tr>
-                  ) : paginated.map(sale => (
-                    <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
-                      <td className="px-4 py-3 text-gray-200 font-medium">{sale.nome}</td>
-                      <td className="px-4 py-3 text-gray-400 hidden md:table-cell">{sale.email}</td>
-                      <td className="px-4 py-3 text-gray-300">{productMap[sale.produto]?.nome ?? sale.produto}</td>
-                      <td className="px-4 py-3 hidden sm:table-cell"><PlatformBadge platform={sale.plataforma} /></td>
-                      <td className="px-4 py-3 text-right text-red-400 font-semibold">{formatCurrency(getSaleBruto(sale))}</td>
-                      <td className="px-4 py-3 text-right text-gray-400 whitespace-nowrap">{formatDateTime(sale.data_hora)}</td>
-                      <td className="px-4 py-3 text-right text-gray-400 hidden md:table-cell">
-                        {sale.data_reembolso ? sale.data_reembolso.split('-').reverse().join('/') : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {sale.data_reembolso
-                          ? <AccessDaysBadge dataHora={sale.data_hora} dataReembolso={sale.data_reembolso} />
-                          : <span className="text-gray-600">—</span>
-                        }
-                      </td>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-gray-800/50">
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium">Nome</th>
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">E-mail</th>
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium">Produto</th>
+                      <th className="text-left px-4 py-3 text-gray-500 font-medium hidden sm:table-cell">Plataforma</th>
+                      <th className="text-right px-4 py-3 text-gray-500 font-medium">Valor</th>
+                      <th className="text-right px-4 py-3 text-gray-500 font-medium">Data compra</th>
+                      <th className="text-right px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Data reembolso</th>
+                      <th className="text-center px-4 py-3 text-gray-500 font-medium">Dias de acesso</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <Pagination
-                currentPage={currentPage}
-                totalPages={totalPages}
-                onPrevious={goToPreviousPage}
-                onNext={goToNextPage}
-              />
+                  </thead>
+                  <tbody>
+                    {paginated.length === 0 ? (
+                      <tr><td colSpan={8} className="text-center py-12 text-gray-600">Nenhum reembolso encontrado</td></tr>
+                    ) : paginated.map(sale => (
+                      <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                        <td className="px-4 py-3 text-gray-200 font-medium">{sale.nome}</td>
+                        <td className="px-4 py-3 text-gray-400 hidden md:table-cell">{sale.email}</td>
+                        <td className="px-4 py-3 text-gray-300">{productMap[sale.produto]?.nome ?? sale.produto}</td>
+                        <td className="px-4 py-3 hidden sm:table-cell"><PlatformBadge platform={sale.plataforma} /></td>
+                        <td className="px-4 py-3 text-right text-red-400 font-semibold">{formatCurrency(getSaleBruto(sale))}</td>
+                        <td className="px-4 py-3 text-right text-gray-400 whitespace-nowrap">{formatDateTime(sale.data_hora)}</td>
+                        <td className="px-4 py-3 text-right text-gray-400 hidden md:table-cell">
+                          {sale.data_reembolso ? sale.data_reembolso.split('-').reverse().join('/') : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {sale.data_reembolso
+                            ? <AccessDaysBadge dataHora={sale.data_hora} dataReembolso={sale.data_reembolso} />
+                            : <span className="text-gray-600">—</span>
+                          }
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPrevious={goToPreviousPage}
+                  onNext={goToNextPage}
+                />
               </>
             )}
           </div>
