@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Search, Filter, Clock } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -11,6 +11,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import { formatCurrency, formatDateTime, getSaleBruto, daysSincePurchase, diffDays, getDateFromDateTime } from '@/lib/formatters'
 
 const WARRANTY_DAYS = 7
+const PAGE_SIZE = 12
 
 function WarrantyBadge({ dataHora }: { dataHora: string }) {
   const days = daysSincePurchase(dataHora)
@@ -67,6 +68,8 @@ function VendasContent() {
   const [search, setSearch] = useState('')
   const [filterProduct, setFilterProduct] = useState('')
   const [filterDate, setFilterDate] = useState('')
+  const [pageAprovadas, setPageAprovadas] = useState(1)
+  const [pageReembolsos, setPageReembolsos] = useState(1)
 
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
 
@@ -91,6 +94,29 @@ function VendasContent() {
     if (filterDate) list = list.filter(s => s.data_hora.startsWith(filterDate))
     return [...list].sort((a, b) => b.data_hora.localeCompare(a.data_hora))
   }, [tab, approved, refunds, search, filterProduct, filterDate])
+
+  useEffect(() => {
+    setPageAprovadas(1)
+    setPageReembolsos(1)
+  }, [search, filterProduct, filterDate])
+
+  const currentPage = tab === 'aprovadas' ? pageAprovadas : pageReembolsos
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+
+  const paginated = useMemo(
+    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [filtered, currentPage]
+  )
+
+  function goToPreviousPage() {
+    if (tab === 'aprovadas') setPageAprovadas(p => Math.max(1, p - 1))
+    else setPageReembolsos(p => Math.max(1, p - 1))
+  }
+
+  function goToNextPage() {
+    if (tab === 'aprovadas') setPageAprovadas(p => Math.min(totalPages, p + 1))
+    else setPageReembolsos(p => Math.min(totalPages, p + 1))
+  }
 
   // Approved metrics
   const totalApproved = approved.length
