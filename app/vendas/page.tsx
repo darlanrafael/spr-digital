@@ -101,8 +101,12 @@ function VendasContent() {
     setPageReembolsos(1)
   }, [search, filterProduct, filterDate])
 
-  const currentPage = tab === 'aprovadas' ? pageAprovadas : pageReembolsos
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  // Clamp against totalPages: filtered can shrink from a path other than the
+  // three filter fields above (e.g. a future background reload) without the
+  // reset effect firing, which would otherwise strand the view on a page
+  // number that no longer exists.
+  const currentPage = Math.min(tab === 'aprovadas' ? pageAprovadas : pageReembolsos, totalPages)
 
   const paginated = useMemo(
     () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
