@@ -256,6 +256,7 @@ function VendasContent() {
               />
               </>
             ) : (
+              <>
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/10 bg-gray-800/50">
@@ -270,9 +271,9 @@ function VendasContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.length === 0 ? (
+                  {paginated.length === 0 ? (
                     <tr><td colSpan={8} className="text-center py-12 text-gray-600">Nenhum reembolso encontrado</td></tr>
-                  ) : filtered.map(sale => (
+                  ) : paginated.map(sale => (
                     <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                       <td className="px-4 py-3 text-gray-200 font-medium">{sale.nome}</td>
                       <td className="px-4 py-3 text-gray-400 hidden md:table-cell">{sale.email}</td>
@@ -293,6 +294,13 @@ function VendasContent() {
                   ))}
                 </tbody>
               </table>
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPrevious={goToPreviousPage}
+                onNext={goToNextPage}
+              />
+              </>
             )}
           </div>
         </div>
