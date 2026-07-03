@@ -93,7 +93,14 @@ function VendasContent() {
     }
     if (filterProduct) list = list.filter(s => s.produto === filterProduct)
     if (filterDate) list = list.filter(s => s.data_hora.startsWith(filterDate))
-    return [...list].sort((a, b) => b.data_hora.localeCompare(a.data_hora))
+    // Aprovadas: mais recente pela data da compra. Reembolsos: mais recente
+    // pela data do reembolso (não a da compra original) — uma venda antiga
+    // reembolsada hoje deve aparecer no topo.
+    return [...list].sort((a, b) => {
+      const aKey = tab === 'aprovadas' ? a.data_hora : (a.data_reembolso ?? a.data_hora)
+      const bKey = tab === 'aprovadas' ? b.data_hora : (b.data_reembolso ?? b.data_hora)
+      return bKey.localeCompare(aKey)
+    })
   }, [tab, approved, refunds, search, filterProduct, filterDate])
 
   useEffect(() => {
