@@ -20,12 +20,14 @@ mais recente sempre no topo da primeira página.
   "Página X de Y", botão "Próxima →".
 - Botões desabilitados (visualmente e funcionalmente) quando não há página anterior
   ou próxima.
-- Trocar de aba (Aprovadas ↔ Reembolsos), digitar na busca, ou mudar o filtro de
-  produto/data reseta a página atual da aba afetada para 1 — evita ficar numa página
-  que não existe mais depois que a lista muda de tamanho.
-- Cada aba mantém sua própria página independentemente: navegar até a página 3 em
-  Aprovadas e trocar para Reembolsos não afeta a página de Aprovadas; ao voltar,
-  Aprovadas continua na página 3.
+- Digitar na busca ou mudar o filtro de produto/data reseta a página da aba afetada
+  (hoje só a aba Aprovadas tem esses filtros) para 1 — evita ficar numa página que
+  não existe mais depois que a lista muda de tamanho.
+- Cada aba mantém sua própria página independentemente, inclusive ao trocar de aba:
+  navegar até a página 3 em Aprovadas e trocar para Reembolsos não afeta a página de
+  Aprovadas nem reseta a de Reembolsos; ao voltar para Aprovadas, ela continua na
+  página 3. Trocar de aba, por si só, nunca reseta página nenhuma — só busca/filtro
+  resetam.
 - Se a lista filtrada tiver 12 itens ou menos (1 página só), os controles de
   paginação continuam visíveis mas os dois botões ficam desabilitados (sem "pular"
   a UI quando a lista cresce/encolhe).
