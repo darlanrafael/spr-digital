@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Sun, Moon, LogOut, ChevronDown } from 'lucide-react'
+import { Sun, Moon, LogOut, ChevronDown, RefreshCw } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import { logout, getInitials } from '@/lib/auth'
 import { useEffect, useState } from 'react'
@@ -28,10 +28,14 @@ const TERAPEUTAS_NAV: NavLink[] = [
 ]
 
 export default function Header() {
-  const { user, setUser, selectedProject, setSelectedProject, projects, isDark, toggleTheme } = useApp()
+  const { user, setUser, selectedProject, setSelectedProject, projects, isDark, toggleTheme, isLoading, lastLoadedAt, reloadData } = useApp()
   const pathname = usePathname()
   const router = useRouter()
   const isTerapeutas = pathname.startsWith('/terapeutas')
+
+  const lastLoadedLabel = lastLoadedAt
+    ? lastLoadedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : null
 
   const [aprovacoesPendentes, setAprovacoesPendentes] = useState(0)
   const [terapeutaSession, setTerapeutaSession] = useState<TerapeutaSession | null>(null)
@@ -173,6 +177,23 @@ export default function Header() {
                 <option value="terapeutas">Atendimentos - Terapeutas</option>
               </select>
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+            </div>
+
+            {/* Atualizar dados */}
+            <div className="flex items-center gap-1.5">
+              {lastLoadedLabel && (
+                <span className="hidden sm:inline text-[10px] text-gray-500 whitespace-nowrap">
+                  Atualizado às {lastLoadedLabel}
+                </span>
+              )}
+              <button
+                onClick={() => reloadData()}
+                disabled={isLoading}
+                title="Atualizar dados"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              </button>
             </div>
 
             {/* Theme toggle */}
