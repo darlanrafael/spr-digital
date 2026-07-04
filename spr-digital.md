@@ -792,7 +792,8 @@ O `AppContext` é o coração do app. Provê estado global para todos os compone
   3. Distribuir entre sócios (percentuais configuráveis)
   4. Confirmar e salvar
 - **Produtos incluídos (step 2):** lista de botões com os nomes reais de produto que aparecem nas vendas do projeto (`Array.from(new Set(sales.map(s => s.produto)))`, ordenado). **Não** usa a tabela `products` (catálogo mock antigo, ids `prod_1`/`prod_2`/etc — nunca bate com o texto gravado pelo webhook) — bug corrigido em 02/07/2026, ver seção 13.
-- **Histórico:** lista de fechamentos passados com detalhe por produto, sócios e alertas (reembolsos/chargebacks). **Se a tabela `closings` estiver vazia**, o app cai no fallback `data/closings.json` (1 registro de exemplo, `close_1`, R$28.450 bruto) — aparece "1 fechamento realizado" mesmo sem nenhum fechamento real feito ainda. Isso é o fallback normal (seção 18), não um bug.
+- **Histórico:** lista de fechamentos passados com detalhe por produto, sócios e alertas (reembolsos/chargebacks). Quando não há nenhum fechamento real, mostra corretamente "Nenhum fechamento realizado ainda" (ver correção do fallback abaixo).
+- **Alertas de reembolso/chargeback no Step 4 (Confirmar):** vêm de `closings[closings.length - 1].alertas` — o último fechamento real. **Cuidado:** antes da correção de 02/07/2026, se `closings` estivesse vazio o app usava o fallback mock (`data/closings.json`, que tem um reembolso fictício de exemplo — "Bruno Ferreira", R$1.497) como se fosse o último fechamento real, e esse valor fictício seria descontado do repasse de um fechamento de verdade. Corrigido — ver seção 18.
 - Geração automática de entrada no fluxo de caixa ao confirmar fechamento
 - Sócios fixos: `SPR DIGITAL LTDA` e `Pedro Roncada`
 - **02/07/2026:** histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa apagados — eram 1 registro de seed/mock e o resto testes duplicados por clique duplo no botão confirmar). Projeto começou o uso "de verdade" a partir dessa data.
@@ -1003,16 +1004,18 @@ Se as variáveis de ambiente não estiverem configuradas, `getSupabaseClient()` 
 
 ## 18. Dados de Fallback (Mock)
 
-A pasta `data/` contém JSONs com dados de exemplo que são usados quando o Supabase não está configurado ou retorna vazio:
+A pasta `data/` contém JSONs com dados de exemplo, usados **somente quando o Supabase não está configurado** (`getSupabaseClient()` retorna `null` — sem `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` no ambiente):
 
 - `projects.json` — exemplo: `[{ "id": "proj_1", "nome": "Projeto Principal", ... }]`
 - `products.json` — produtos de exemplo por projeto
 - `sales.json` — vendas de exemplo
 - `costs.json` — custos fixos, variáveis e Meta Ads de exemplo
-- `closings.json` — fechamentos de exemplo
+- `closings.json` — fechamentos de exemplo (inclui um reembolso fictício de "Bruno Ferreira")
 - `cashflow.json` — extrato de exemplo
 
 Isso permite rodar o app localmente mesmo sem configurar o Supabase, apenas para visualizar o layout.
+
+**Correção importante (02/07/2026):** até essa data, `contexts/AppContext.tsx` trocava pelo fallback mock **qualquer lista vazia**, mesmo com Supabase configurado e funcionando — não só quando `getSupabaseClient()` era `null`. Resultado: assim que uma tabela real ficasse genuinamente vazia (ex: `closings` depois de um reset de histórico), o app injetava o dado de exemplo como se fosse real — incluindo o fechamento fake de R$28.450 e o reembolso fictício do "Bruno Ferreira" sendo descontado de um repasse real (ver seção 12, `/fechamentos`). Corrigido: o fallback agora só entra quando `getSupabaseClient()` é `null`; uma lista vazia vinda de uma consulta bem-sucedida fica vazia mesmo.
 
 ---
 
@@ -1090,4 +1093,6 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
 *Atualizada em 02/07/2026: coluna `valor_com_juros`, imposto sobre valor com juros + "Líquido Pós-Impostos", paginação em `/vendas` (componente `Pagination.tsx`) com ordenação por data de reembolso, e reescrita da seção do webhook Hubla com o mecanismo real de order bump (simples vs. offer) e o histórico da investigação/correção de bugs de 02/07/2026.*
 
-*Atualizada novamente em 02/07/2026: fix do bug de listagem de produtos em `/vendas` e `/fechamentos` (comparava com o catálogo mock `products` em vez do nome real da venda — corrigido nos dois lugares). Histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa, entre seed e testes duplicados) para começar o uso real a partir desta data — ver seção 12 sobre o fallback de "1 fechamento" que aparece quando a tabela está vazia.*
+*Atualizada novamente em 02/07/2026: fix do bug de listagem de produtos em `/vendas` e `/fechamentos` (comparava com o catálogo mock `products` em vez do nome real da venda — corrigido nos dois lugares). Histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa, entre seed e testes duplicados) para começar o uso real a partir desta data.*
+
+*Atualizada em 04/07/2026: corrigido bug crítico em `AppContext.tsx` onde qualquer lista vazia do Supabase (não só quando não configurado) acionava o fallback mock — chegou a injetar um reembolso fictício ("Bruno Ferreira", R$1.497) como dedução real no primeiro fechamento de verdade após o reset do histórico. Ver seção 18.*
