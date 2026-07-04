@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { User, Sale, CostsData, Closing, CashflowEntry, Project, Product } from '@/types'
 import { getSession } from '@/lib/auth'
+import { getSupabaseClient } from '@/lib/supabase'
 import {
   getProjects, getProducts, getSales, getAllCosts,
   getClosings, getCashflow,
@@ -64,16 +65,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         getClosings(projId),
         getCashflow(projId),
       ])
-      setProjects(proj.length > 0 ? proj : projectsFallback as Project[])
-      setProducts(prod.length > 0 ? prod : productsFallback as Product[])
-      setSales(s.length > 0 ? s : salesFallback as Sale[])
+      // Os dados mock só devem substituir o resultado quando o Supabase não
+      // está configurado (getSupabaseClient() null) — nunca quando a consulta
+      // funcionou e retornou uma lista genuinamente vazia. Antes, uma lista
+      // vazia real (ex: nenhum fechamento feito ainda) era tratada igual a
+      // "Supabase indisponível" e o app injetava dado de exemplo fictício
+      // (ex: reembolso fake do "Bruno Ferreira") num fechamento real.
+      const semSupabase = !getSupabaseClient()
+      setProjects(semSupabase && proj.length === 0 ? projectsFallback as Project[] : proj)
+      setProducts(semSupabase && prod.length === 0 ? productsFallback as Product[] : prod)
+      setSales(semSupabase && s.length === 0 ? salesFallback as Sale[] : s)
       setCosts({
-        fixos: c.fixos.length > 0 ? c.fixos : costsFallback.fixos,
-        variaveis: c.variaveis.length > 0 ? c.variaveis : costsFallback.variaveis,
-        metaAds: c.metaAds.length > 0 ? c.metaAds : costsFallback.metaAds,
+        fixos: semSupabase && c.fixos.length === 0 ? costsFallback.fixos : c.fixos,
+        variaveis: semSupabase && c.variaveis.length === 0 ? costsFallback.variaveis : c.variaveis,
+        metaAds: semSupabase && c.metaAds.length === 0 ? costsFallback.metaAds : c.metaAds,
       })
-      setClosings(cl.length > 0 ? cl : closingsFallback as unknown as Closing[])
-      setCashflow(cf.length > 0 ? cf : cashflowFallback as CashflowEntry[])
+      setClosings(semSupabase && cl.length === 0 ? closingsFallback as unknown as Closing[] : cl)
+      setCashflow(semSupabase && cf.length === 0 ? cashflowFallback as CashflowEntry[] : cf)
     } catch (err) {
       console.error('[AppContext] Erro ao carregar Supabase, usando fallback JSON:', err)
       setProjects(projectsFallback as Project[])
