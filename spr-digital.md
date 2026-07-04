@@ -773,6 +773,7 @@ O `AppContext` é o coração do app. Provê estado global para todos os compone
 - Duas abas: **Aprovadas** e **Reembolsos** (`status` in `reembolsada`/`chargeback`/`cancelada`/`em_protesto`)
 - Tabela completa de vendas com filtros de data, plataforma e status (filtros de busca/produto/data só aparecem na aba Aprovadas)
 - Busca por nome/email/produto
+- **Filtro "Todos os produtos":** lista os nomes reais de produto que aparecem nas vendas (não a tabela `products`/catálogo mock — mesmo bug e mesmo fix da seção `/fechamentos` acima, corrigido em 02/07/2026)
 - **Paginação:** 12 linhas por página em cada aba (componente [Pagination.tsx](components/Pagination.tsx)), controles "← Anterior · Página X de Y · Próxima →". Cada aba guarda sua própria página independentemente — trocar de aba não reseta a página da outra. Buscar ou mudar filtro reseta a página das duas abas para 1.
 - **Ordenação:** Aprovadas ordena por `data_hora` (data da compra) decrescente. Reembolsos ordena por `data_reembolso` (data do reembolso, **não** a da compra original) decrescente, com fallback pra `data_hora` se `data_reembolso` estiver ausente — uma venda antiga reembolsada hoje aparece no topo. Ver `app/vendas/page.tsx` (`filtered` useMemo).
 - Ações: marcar como reembolsada/chargeback/cancelada
@@ -790,9 +791,11 @@ O `AppContext` é o coração do app. Provê estado global para todos os compone
   2. Calcular faturamento, impostos, taxas, custos
   3. Distribuir entre sócios (percentuais configuráveis)
   4. Confirmar e salvar
-- **Histórico:** lista de fechamentos passados com detalhe por produto, sócios e alertas (reembolsos/chargebacks)
+- **Produtos incluídos (step 2):** lista de botões com os nomes reais de produto que aparecem nas vendas do projeto (`Array.from(new Set(sales.map(s => s.produto)))`, ordenado). **Não** usa a tabela `products` (catálogo mock antigo, ids `prod_1`/`prod_2`/etc — nunca bate com o texto gravado pelo webhook) — bug corrigido em 02/07/2026, ver seção 13.
+- **Histórico:** lista de fechamentos passados com detalhe por produto, sócios e alertas (reembolsos/chargebacks). **Se a tabela `closings` estiver vazia**, o app cai no fallback `data/closings.json` (1 registro de exemplo, `close_1`, R$28.450 bruto) — aparece "1 fechamento realizado" mesmo sem nenhum fechamento real feito ainda. Isso é o fallback normal (seção 18), não um bug.
 - Geração automática de entrada no fluxo de caixa ao confirmar fechamento
 - Sócios fixos: `SPR DIGITAL LTDA` e `Pedro Roncada`
+- **02/07/2026:** histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa apagados — eram 1 registro de seed/mock e o resto testes duplicados por clique duplo no botão confirmar). Projeto começou o uso "de verdade" a partir dessa data.
 
 ### `/caixa` — Fluxo de Caixa
 - Extrato cronológico com saldo acumulado
@@ -1045,6 +1048,7 @@ Isso permite rodar o app localmente mesmo sem configurar o Supabase, apenas para
 - Webhooks Kiwify e Hubla com deduplicação, incluindo tratamento correto de order bump/offers da Hubla (seção 13, "Histórico de investigação")
 - Imposto calculado sobre valor com juros de parcelamento + coluna "Líquido Pós-Impostos" separada de "Fat. Líq. Plataforma" (seção 14)
 - Paginação (12 linhas/página) nas abas Aprovadas/Reembolsos de `/vendas`, com página independente por aba e ordenação por data de reembolso na aba Reembolsos (seção 12)
+- Filtro/seleção de produto em `/vendas` e `/fechamentos` usa nomes reais das vendas, não o catálogo mock desatualizado (seção 12)
 - Integração Meta Ads API com filtro por nomenclatura de campanha
 - Módulo Terapeutas completo (login, agenda, comissões, aprovações)
 - Autenticação com 3 papéis (admin, gestor, financeiro)
@@ -1054,6 +1058,7 @@ Isso permite rodar o app localmente mesmo sem configurar o Supabase, apenas para
 - Dados mock de fallback para desenvolvimento sem Supabase
 
 ### Pendências conhecidas
+- **Tabela `products` (catálogo, ids `prod_1`/`prod_2`/etc) está desconectada da realidade** — não corresponde a nenhum produto vendido de fato (esses vêm como texto puro em `sales.produto`, direto do webhook). Hoje só serve de fallback de exibição em alguns lugares (`productMap[s.produto]?.nome ?? s.produto`). Considerar aposentar essa tabela ou repopulá-la com os produtos reais, se algum fluxo futuro precisar dela de verdade (preço/aliquota cadastrados, etc — hoje nada real usa esses campos).
 - **~51 faturas Hubla de maio/2026 nunca importadas** ("O RESGATE" + "Formação de Terapeutas em Restauração de Casamento", 10-31/05) — ver seção 13. Mentoria e Kiwify de maio já foram importados e conferidos.
 - **Kiwify dias 10-11/05/2026** sem planilha de referência pra conferir (150 vendas no banco, não auditadas linha a linha — provavelmente ok, só não verificado)
 - Auditoria fatura-a-fatura da Hubla foi feita só pra 01/06-01/07/2026; não repetida pros outros meses além de maio
@@ -1084,3 +1089,5 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 *Documentação gerada em 30/06/2026 com base na leitura completa do código do repositório `darlanrafael/spr-digital`. Revisada e completada com schema de terapeutas, colunas faltantes em `sales`, e arquivos de configuração.*
 
 *Atualizada em 02/07/2026: coluna `valor_com_juros`, imposto sobre valor com juros + "Líquido Pós-Impostos", paginação em `/vendas` (componente `Pagination.tsx`) com ordenação por data de reembolso, e reescrita da seção do webhook Hubla com o mecanismo real de order bump (simples vs. offer) e o histórico da investigação/correção de bugs de 02/07/2026.*
+
+*Atualizada novamente em 02/07/2026: fix do bug de listagem de produtos em `/vendas` e `/fechamentos` (comparava com o catálogo mock `products` em vez do nome real da venda — corrigido nos dois lugares). Histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa, entre seed e testes duplicados) para começar o uso real a partir desta data — ver seção 12 sobre o fallback de "1 fechamento" que aparece quando a tabela está vazia.*
