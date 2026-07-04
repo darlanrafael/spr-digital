@@ -918,7 +918,17 @@ function getSaleBruto(sale: Sale): number {
 Kiwify → usa `preco_base`. Hubla → usa `valor_pago_cliente` (porque Hubla já desconta taxas internamente de forma diferente).
 
 ### Conversão de timezone
-Timestamps do Supabase chegam em UTC. O app converte para Brasília (UTC-3) ao salvar em `data_hora`. Todos os filtros de data usam a data local resultante.
+
+**Isso é diferente por plataforma, e já causou um bug sério — leia antes de mexer aqui de novo.**
+
+- **Hubla** grava `data_hora` em **UTC real**.
+- **Kiwify** grava `data_hora` já em **horário de Brasília**, só com o sufixo `+00:00` por convenção — não é UTC de verdade.
+
+`normTs()` (`lib/services.ts`) é quem converte o timestamp bruto do Supabase pro formato usado no app (`Sale.data_hora`). Ela recebe um segundo parâmetro `isKiwify` — só subtrai 3h (UTC→Brasília) quando a venda **não** é Kiwify. Antes de 04/07/2026 essa função aplicava a subtração de 3h em **todas** as vendas, achando que todo `data_hora` era UTC real — isso empurrava qualquer venda Kiwify feita entre **00:00 e 02:59 (horário de Brasília)** pro dia anterior em todo filtro de período (Vendas, Fechamentos, DRE, Análises), fazendo vendas reais sumirem silenciosamente dessas telas. Corrigido no commit `de0faac`.
+
+Esse mesmo cuidado (Hubla = UTC real, Kiwify = BRT-como-UTC) já existia em outro lugar do código (`kiwifyBrtRange` vs `brtDayRangeToUTC` em `lib/services.ts`, usado no filtro de banco de `getSales`) — o bug era especificamente em `normTs()`, que não seguia essa mesma regra.
+
+**Se for mexer em qualquer lógica de data/hora nova:** sempre pergunte "essa venda é Hubla ou Kiwify?" antes de decidir se precisa converter de UTC pra Brasília.
 
 ### IDs das entidades
 Todos os IDs são strings manuais (`proj_1`, `prod_1`, `sale_001`, `cf_timestamp`, `cv_timestamp`). Não usar UUIDs automáticos para manter controle explícito.
@@ -972,7 +982,7 @@ Todas as operações no Supabase passam por este arquivo. Funções principais:
 |---|---|
 | `getProjects()` | Lista projetos ativos |
 | `getProducts(projectId)` | Produtos do projeto |
-| `getSales(projectId, start?, end?, status[])` | Vendas com paginação (1000/página) |
+| `getSales(projectId, start?, end?, status[])` | Vendas com paginação por cursor (1000/página, `created_at` como cursor — não é offset/`.range()`, ver nota abaixo) |
 | `addSale(sale)` | Insere/upsert venda |
 | `updateSaleStatus(id, status, dataReembolso?)` | Atualiza status da venda |
 | `findSaleByPlatformId(platformId, plataforma)` | Busca por ID da plataforma (deduplicação webhook) |
@@ -988,6 +998,8 @@ Todas as operações no Supabase passam por este arquivo. Funções principais:
 | `addClosing(closing, projectId)` | Salva fechamento |
 | `getCashflow(projectId)` | Extrato de caixa |
 | `addCashflowEntry(entry, projectId)` | Adiciona lançamento |
+
+**Paginação de `getSales` — por que é por cursor e não por offset (04/07/2026):** a tabela `sales` recebe inserts o tempo todo via webhook (produção tem ~5000 linhas, ou seja, sempre mais de uma página de 1000). Com paginação por offset (`.range(from, from+999)`), uma venda nova entrando bem no meio de uma busca de várias páginas empurra a ordenação inteira, e uma linha que já existia antes da busca começar pode "cair" entre duas janelas de offset e sumir do resultado — silenciosamente, sem erro nenhum. Isso já causou vendas reais sumirem em Fechamentos/Vendas/DRE. A correção ancora cada página no `created_at` da última linha da página anterior (`WHERE created_at < cursor`), que é imune a esse deslocamento porque não depende de posição numérica — só de um valor real já visto. **Qualquer nova função de busca paginada no projeto deve seguir esse mesmo padrão, não usar `.range()` num range mutável.**
 
 ---
 
@@ -1052,6 +1064,9 @@ Isso permite rodar o app localmente mesmo sem configurar o Supabase, apenas para
 - Imposto calculado sobre valor com juros de parcelamento + coluna "Líquido Pós-Impostos" separada de "Fat. Líq. Plataforma" (seção 14)
 - Paginação (12 linhas/página) nas abas Aprovadas/Reembolsos de `/vendas`, com página independente por aba e ordenação por data de reembolso na aba Reembolsos (seção 12)
 - Filtro/seleção de produto em `/vendas` e `/fechamentos` usa nomes reais das vendas, não o catálogo mock desatualizado (seção 12)
+- Botão "Atualizar dados" no Header, com horário do último carregamento (seção 15, `Header.tsx`)
+- Login pelo formulário carrega os dados corretamente (antes ficava vazio até um F5)
+- `normTs()` converte timezone corretamente por plataforma (Kiwify não sofre mais a dupla conversão de -3h) e `getSales()` pagina por cursor, não por offset — nenhuma venda desaparece mais de Vendas/Fechamentos/DRE por causa de horário ou paginação (seção 14, "Conversão de timezone" e seção 16)
 - Integração Meta Ads API com filtro por nomenclatura de campanha
 - Módulo Terapeutas completo (login, agenda, comissões, aprovações)
 - Autenticação com 3 papéis (admin, gestor, financeiro)
@@ -1096,3 +1111,5 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 *Atualizada novamente em 02/07/2026: fix do bug de listagem de produtos em `/vendas` e `/fechamentos` (comparava com o catálogo mock `products` em vez do nome real da venda — corrigido nos dois lugares). Histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa, entre seed e testes duplicados) para começar o uso real a partir desta data.*
 
 *Atualizada em 04/07/2026: corrigido bug crítico em `AppContext.tsx` onde qualquer lista vazia do Supabase (não só quando não configurado) acionava o fallback mock — chegou a injetar um reembolso fictício ("Bruno Ferreira", R$1.497) como dedução real no primeiro fechamento de verdade após o reset do histórico. Ver seção 18.*
+
+*Atualizada novamente em 04/07/2026: botão "Atualizar dados" no Header; fix do login pelo formulário não carregando dados; e os dois bugs mais sérios encontrados até agora — `normTs()` aplicando a conversão de UTC→Brasília também nas vendas da Kiwify (que já vêm em horário de Brasília), fazendo vendas entre 00:00-02:59 sumirem pro dia anterior em todo filtro de período; e `getSales()` paginando por offset (`.range()`) numa tabela que recebe inserts o tempo todo, fazendo vendas já existentes somem aleatoriamente da busca. Os dois corrigidos no commit `de0faac`, confirmados batendo exato com consulta direta no banco. Ver seção 14 e seção 16.*
