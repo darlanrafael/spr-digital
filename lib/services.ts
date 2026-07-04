@@ -6,10 +6,16 @@ import type {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function normTs(ts: string | null | undefined): string {
+function normTs(ts: string | null | undefined, isKiwify = false): string {
   if (!ts) return ''
-  // Timestamps do Supabase (timestamptz) chegam com +00:00 ou Z — converter para Brasília (UTC-3)
-  if (ts.includes('+') || ts.endsWith('Z')) {
+  // Timestamps do Supabase (timestamptz) chegam com +00:00 ou Z. A Hubla grava
+  // data_hora em UTC real, então convertemos pra Brasília (UTC-3) subtraindo
+  // 3 horas. A Kiwify grava data_hora já em horário de Brasília, só com o
+  // sufixo +00:00 (não é UTC de verdade) — se aplicarmos a mesma subtração
+  // de 3h nela, o horário desloca 3h a mais do que deveria, e uma venda feita
+  // entre 00:00 e 02:59 (BRT) passa a aparecer com data do dia anterior em
+  // todo filtro de período (Vendas, Fechamentos, DRE, Análises).
+  if (!isKiwify && (ts.includes('+') || ts.endsWith('Z'))) {
     const date = new Date(ts)
     if (!isNaN(date.getTime())) {
       return new Date(date.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 19)
@@ -89,7 +95,14 @@ export async function getSales(
 
   const PAGE_SIZE = 1000
   const all: Record<string, unknown>[] = []
-  let from = 0
+  // Paginação por cursor (keyset), não por offset (.range()). A tabela recebe
+  // inserts o tempo todo via webhook; com .range(from, from+999) uma venda
+  // nova entrando entre duas páginas empurra tudo e faz uma linha já
+  // existente sumir da busca (ela "cai" entre as duas janelas de offset).
+  // Ancorar cada página em created_at < cursor da página anterior evita isso:
+  // linhas que já existiam antes da busca começar nunca deixam de aparecer,
+  // no máximo uma linha inserida no meio da busca fica só pro próximo reload.
+  let cursor: string | null = null
 
   while (true) {
     let q = client
@@ -110,16 +123,17 @@ export async function getSales(
     } else if (statusFilter.length > 1) {
       q = q.in('status', statusFilter)
     }
+    if (cursor) q = q.lt('created_at', cursor)
 
     const { data, error } = await q
-      .order('data_hora', { ascending: false })
-      .range(from, from + PAGE_SIZE - 1)
+      .order('created_at', { ascending: false })
+      .limit(PAGE_SIZE)
 
     if (error) throw error
     if (!data || data.length === 0) break
     all.push(...data)
     if (data.length < PAGE_SIZE) break
-    from += PAGE_SIZE
+    cursor = String(data[data.length - 1].created_at)
   }
 
   // Filtro de precisão em memória por convenção de armazenamento:
@@ -160,7 +174,7 @@ function mapSaleRow(r: Record<string, unknown>): Sale {
     preco_base: Number(r.preco_base),
     valor_pago_cliente: Number(r.valor_pago_cliente),
     valor_liquido: Number(r.valor_liquido),
-    data_hora: normTs(String(r.data_hora ?? '')),
+    data_hora: normTs(String(r.data_hora ?? ''), String(r.plataforma ?? '').toLowerCase() === 'kiwify'),
     utm_source: String(r.utm_source ?? ''),
     utm_medium: String(r.utm_medium ?? ''),
     utm_campaign: String(r.utm_campaign ?? ''),
