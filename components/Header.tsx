@@ -190,6 +190,7 @@ export default function Header() {
                 onClick={() => reloadData()}
                 disabled={isLoading}
                 title="Atualizar dados"
+                aria-label="Atualizar dados"
                 className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
