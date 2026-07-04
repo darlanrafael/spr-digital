@@ -96,9 +96,12 @@ function FechamentosContent() {
   const socioValues = socioPercents.map(pct => lucroReal * (pct / 100))
 
   const availableProducts = useMemo(() => {
-    const ids = new Set(sales.filter(s => selectedProject === 'all' || s.projetoId === selectedProject).map(s => s.produto))
-    return products.filter(p => ids.has(p.id))
-  }, [sales, products, selectedProject])
+    // sale.produto é o nome do produto gravado pelo webhook (Hubla/Kiwify), não
+    // o id do catálogo mock em `products` (prod_1, prod_2...) — nunca batem.
+    // A lista de seleção precisa vir dos nomes reais que aparecem nas vendas.
+    const nomes = new Set(sales.filter(s => selectedProject === 'all' || s.projetoId === selectedProject).map(s => s.produto))
+    return Array.from(nomes).sort().map(nome => ({ id: nome, nome }))
+  }, [sales, selectedProject])
 
   const lastClosed = closings[closings.length - 1]
   const alertas = lastClosed?.alertas ?? []

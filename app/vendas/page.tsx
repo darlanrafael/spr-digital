@@ -144,9 +144,12 @@ function VendasContent() {
   const refundImpact = refunds.reduce((a, s) => a + s.valor_liquido, 0)
 
   const availableProducts = useMemo(() => {
-    const ids = new Set(baseSales.map(s => s.produto))
-    return products.filter(p => ids.has(p.id))
-  }, [baseSales, products])
+    // sale.produto é o nome do produto gravado pelo webhook (Hubla/Kiwify), não
+    // o id do catálogo mock em `products` (prod_1, prod_2...) — nunca batem.
+    // O filtro precisa vir dos nomes reais que aparecem nas vendas.
+    const nomes = new Set(baseSales.map(s => s.produto))
+    return Array.from(nomes).sort().map(nome => ({ id: nome, nome }))
+  }, [baseSales])
 
   return (
     <div className="min-h-screen bg-gray-950">
