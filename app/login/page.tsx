@@ -12,7 +12,7 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { setUser } = useApp()
+  const { setUser, setSelectedProject, reloadData } = useApp()
   const router = useRouter()
 
   useEffect(() => {
@@ -25,12 +25,20 @@ export default function LoginPage() {
     setLoading(true)
     await new Promise(r => setTimeout(r, 400))
     const user = login(email.trim(), password)
-    setLoading(false)
     if (!user) {
+      setLoading(false)
       setError('E-mail ou senha incorretos')
       return
     }
     setUser(user)
+    // Login navega via router.replace (client-side) — o AppProvider já está
+    // montado desde antes do login e seu efeito de carregamento inicial só
+    // roda uma vez, sem sessão. Sem chamar reloadData aqui, a tela pós-login
+    // ficava sem nenhum dado real até um F5 manual.
+    const projId = user.role === 'gestor' && user.projetoId ? user.projetoId : 'proj_1'
+    if (user.role === 'gestor' && user.projetoId) setSelectedProject(user.projetoId)
+    await reloadData(projId)
+    setLoading(false)
     router.replace('/')
   }
 
