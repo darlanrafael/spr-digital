@@ -35,6 +35,7 @@ interface AppContextType {
   isDark: boolean
   toggleTheme: () => void
   isLoading: boolean
+  lastLoadedAt: Date | null
   reloadData: (projectId?: string) => Promise<void>
 }
 
@@ -52,6 +53,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [cashflow, setCashflow] = useState<CashflowEntry[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
 
   const reloadData = useCallback(async (projectId?: string) => {
     const projId = projectId ?? selectedProject
@@ -82,6 +84,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
       setClosings(semSupabase && cl.length === 0 ? closingsFallback as unknown as Closing[] : cl)
       setCashflow(semSupabase && cf.length === 0 ? cashflowFallback as CashflowEntry[] : cf)
+      setLastLoadedAt(new Date())
     } catch (err) {
       console.error('[AppContext] Erro ao carregar Supabase, usando fallback JSON:', err)
       setProjects(projectsFallback as Project[])
@@ -134,7 +137,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         closings, setClosings,
         cashflow, setCashflow,
         isDark, toggleTheme,
-        isLoading, reloadData,
+        isLoading, lastLoadedAt, reloadData,
       }}
     >
       {children}
