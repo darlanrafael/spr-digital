@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { AlertCircle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Download, Loader2, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -155,7 +155,6 @@ function FechamentosContent() {
   const totalCosts = fixedTotal + varTotal + trafego.total
 
   const periodSales = useMemo(() => {
-    if (!periodo.inicio || !periodo.fim) return []
     return sales.filter(s => {
       const matchProject = selectedProject === 'all' || s.projetoId === selectedProject
       const d = s.data_hora.slice(0, 10)
@@ -163,7 +162,7 @@ function FechamentosContent() {
       const efetivoInicio = grupo?.inicio || periodo.inicio
       const efetivoFim = grupo?.fim || periodo.fim
       const matchPeriod = !!efetivoInicio && !!efetivoFim && d >= efetivoInicio && d <= efetivoFim
-      const matchProduct = selectedProducts.length === 0 || selectedProducts.includes(s.produto)
+      const matchProduct = selectedProducts.includes(s.produto)
       return s.status === 'aprovada' && matchProject && matchPeriod && matchProduct
     })
   }, [sales, periodo, selectedProject, selectedProducts, produtoParaGrupo])
@@ -213,6 +212,16 @@ function FechamentosContent() {
     return Array.from(nomes).sort().map(nome => ({ id: nome, nome }))
   }, [sales, selectedProject])
 
+  // Todos os produtos vêm marcados por padrão — evita o "vazio = todos" ambíguo
+  // (o usuário via tudo destacado mesmo sem ter selecionado nada explicitamente).
+  const [produtosInicializados, setProdutosInicializados] = useState(false)
+  useEffect(() => {
+    if (!produtosInicializados && availableProducts.length > 0) {
+      setSelectedProducts(availableProducts.map(p => p.id))
+      setProdutosInicializados(true)
+    }
+  }, [availableProducts, produtosInicializados])
+
   const lastClosed = closings[closings.length - 1]
   const alertas = lastClosed?.alertas ?? []
   const alertasTotal = alertas.reduce((a, x) => a + x.valor, 0)
@@ -223,6 +232,12 @@ function FechamentosContent() {
 
   function toggleProduct(id: string) {
     setSelectedProducts(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
+  }
+  function selecionarTodosProdutos() {
+    setSelectedProducts(availableProducts.map(p => p.id))
+  }
+  function desmarcarTodosProdutos() {
+    setSelectedProducts([])
   }
 
   async function handleConfirm() {
@@ -551,27 +566,42 @@ function FechamentosContent() {
                 </div>
 
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
-                  <h3 className="text-sm font-semibold text-white mb-3">Produtos incluídos</h3>
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-sm font-semibold text-white">Produtos incluídos</h3>
+                    <div className="flex items-center gap-3">
+                      <button onClick={selecionarTodosProdutos} className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">
+                        Selecionar todos
+                      </button>
+                      <button onClick={desmarcarTodosProdutos} className="text-xs text-gray-500 hover:text-gray-300 font-medium transition-colors">
+                        Nenhum
+                      </button>
+                    </div>
+                  </div>
                   <p className="text-xs text-gray-500 mb-3">
-                    Deixe vazio para incluir todos. Produtos marcados com <Clock className="w-3 h-3 inline -mt-0.5" /> usam um período próprio (definido abaixo em &quot;Períodos adicionais&quot;), não o período principal.
+                    Marcado (✓) = entra no fechamento. Produtos com <Clock className="w-3 h-3 inline -mt-0.5" /> usam um período próprio (definido abaixo em &quot;Períodos adicionais&quot;), não o período principal.
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 mb-3">
                     {availableProducts.map(p => {
                       const grupo = produtoParaGrupo[p.id]
+                      const marcado = selectedProducts.includes(p.id)
                       return (
                         <button key={p.id} onClick={() => toggleProduct(p.id)}
                           title={grupo ? `Período próprio: ${formatDate(grupo.inicio)} a ${formatDate(grupo.fim)}` : undefined}
-                          className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
-                            selectedProducts.includes(p.id) || selectedProducts.length === 0
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
+                            marcado
                               ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-300'
-                              : 'bg-gray-800 border-white/10 text-gray-500'
+                              : 'bg-gray-800 border-white/10 text-gray-600'
                           }`}>
+                          <span className={marcado ? 'text-indigo-400' : 'text-gray-700'}>{marcado ? '✓' : '○'}</span>
                           {grupo && <Clock className="w-3 h-3 text-amber-400 shrink-0" />}
                           {p.nome}
                         </button>
                       )
                     })}
                   </div>
+                  <p className="text-xs text-gray-400 bg-gray-800/60 rounded-lg px-3 py-2">
+                    {selectedProducts.length} de {availableProducts.length} produtos selecionados · <span className="text-white font-semibold">{periodSales.length} vendas encontradas</span> no período
+                  </p>
                 </div>
 
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
