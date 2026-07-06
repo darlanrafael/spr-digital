@@ -95,13 +95,14 @@ export async function getSales(
 
   const PAGE_SIZE = 1000
   const all: Record<string, unknown>[] = []
-  // Paginação por cursor (keyset), não por offset (.range()). A tabela recebe
-  // inserts o tempo todo via webhook; com .range(from, from+999) uma venda
-  // nova entrando entre duas páginas empurra tudo e faz uma linha já
-  // existente sumir da busca (ela "cai" entre as duas janelas de offset).
-  // Ancorar cada página em created_at < cursor da página anterior evita isso:
-  // linhas que já existiam antes da busca começar nunca deixam de aparecer,
-  // no máximo uma linha inserida no meio da busca fica só pro próximo reload.
+  // Paginação por cursor (keyset) usando `id` (chave única) em vez de
+  // `created_at`. Lotes de backfill inseridos de uma vez podem compartilhar o
+  // MESMO created_at em dezenas de linhas (visto em produção: até 50 linhas
+  // com timestamp idêntico, do backfill de 01/07/2026) — paginando com
+  // `created_at < cursor` sem desempate, um corte de página no meio desse
+  // grupo derruba silenciosamente as linhas que não couberam na página
+  // anterior, e elas nunca mais aparecem em nenhuma busca. `id` é único, então
+  // `id > cursor` garante que toda linha é visitada exatamente uma vez.
   let cursor: string | null = null
 
   while (true) {
@@ -123,17 +124,17 @@ export async function getSales(
     } else if (statusFilter.length > 1) {
       q = q.in('status', statusFilter)
     }
-    if (cursor) q = q.lt('created_at', cursor)
+    if (cursor) q = q.gt('id', cursor)
 
     const { data, error } = await q
-      .order('created_at', { ascending: false })
+      .order('id', { ascending: true })
       .limit(PAGE_SIZE)
 
     if (error) throw error
     if (!data || data.length === 0) break
     all.push(...data)
     if (data.length < PAGE_SIZE) break
-    cursor = String(data[data.length - 1].created_at)
+    cursor = String(data[data.length - 1].id)
   }
 
   // Filtro de precisão em memória por convenção de armazenamento:
