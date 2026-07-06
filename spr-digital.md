@@ -797,6 +797,7 @@ O `AppContext` é o coração do app. Provê estado global para todos os compone
 - Geração automática de entrada no fluxo de caixa ao confirmar fechamento
 - Sócios fixos: `SPR DIGITAL LTDA` e `Pedro Roncada`
 - **02/07/2026:** histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa apagados — eram 1 registro de seed/mock e o resto testes duplicados por clique duplo no botão confirmar). Projeto começou o uso "de verdade" a partir dessa data.
+- **Custo de Tráfego (Step 1 — Custos, adicionado em 05/07/2026):** terceiro quadrante ao lado de Custos Fixos e Custos Variáveis. Tem período próprio (início/fim, independente do período de vendas escolhido no Step 2) e um ou mais "termos de filtro" adicionados como chips — o sistema busca o gasto do Meta Ads de toda campanha cujo nome contenha (case-insensitive) qualquer um dos termos digitados, somando ao Total de Custos. Reaproveita `getProjectInvestment()` de `lib/meta.ts` (a mesma função usada no Dashboard), só que aqui os termos vêm do usuário em vez da nomenclatura fixa por projeto. Endpoint novo: `GET /api/meta/custo-trafego?dateStart=...&dateEnd=...&termos=...&termos=...`. O valor é persistido no fechamento (`custos_trafego_total`, `custos_trafego_periodo_inicio/fim`, `custos_trafego_termos`, `custos_trafego_campanhas` — colunas novas em `closings`, migration `20260705_add_custo_trafego_closings.sql`) e aparece no Histórico de Fechamento como uma linha "Custo de tráfego" com o período e os termos usados.
 
 ### `/caixa` — Fluxo de Caixa
 - Extrato cronológico com saldo acumulado
@@ -816,6 +817,12 @@ Sistema independente dentro do mesmo projeto para gestão de atendimentos psicol
 - **Vendas** — vendas vinculadas a terapeutas
 - **Aprovações** — novas sessões aguardando aprovação admin (badge no header)
 - **Admin** — gestão de terapeutas e usuários do sistema
+- **Painel do próprio terapeuta (`/terapeutas/[id]`, redesenhado em 05/07/2026):** quando quem loga é o próprio terapeuta (sessão `terapeutas_session` com `tipo === 'terapeuta'`), a tela mudou de uma tabela de gestão de agenda para uma visão de acompanhamento:
+  - 5 cards: Sessões vendidas (total), Sessões entregues, Sessões futuras, Comissão gerada, Comissão futura.
+  - Pacientes agrupados por e-mail (não por venda) em duas abas — **Pacientes ativos** (tem pelo menos uma sessão `pendente`/`agendada`) e **Concluídos** (todas as sessões `entregue`/`cancelada`). Se um paciente concluído comprar de novo, as novas sessões `pendente` fazem ele voltar automaticamente pra "Ativos" no próximo carregamento — não precisou de nenhuma lógica extra, é só recalculado a cada load.
+  - **Prontuário** por paciente (mesmo modal usado pelo CEO em `/terapeutas/vendas`, com dados do paciente + histórico de sessões + ocorrências), mas **sem** os botões de Iniciar/Concluir/Anular/Remarcar sessão nem a opção de pedir reembolso/remarcação — o terapeuta não mexe em agenda. **Mantido**: registrar Nota/Observação (reaproveita o mesmo `POST /api/terapeutas/vendas` usado pelo CEO). Se o paciente tiver mais de uma venda, o histórico de sessões junta todas; os dados da Seção 1 mostram a venda mais recente.
+  - A visão do admin ao inspecionar um terapeuta pela lista (`/terapeutas/lista` → `/terapeutas/[id]`) **não mudou** — continua com a tabela completa e as ações de agenda, exatamente como antes.
+  - Busca os dados direto do Supabase no client (mesmo padrão já usado nesta tela), sem passar pelo endpoint pesado `/api/terapeutas/vendas` GET (que é fixo pra um produto só e mistura todos os terapeutas).
 
 ---
 
