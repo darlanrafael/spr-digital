@@ -159,8 +159,11 @@ export async function GET(req: NextRequest) {
     const faturamento_liquido_spr = faturamento_liquido_total * 0.70
     const faturamento_liquido_terapeutas = faturamento_liquido_total * 0.30
     const ticket_medio = vendasRaw.length > 0 ? faturamento_bruto / vendasRaw.length : 0
-    const comissao_gerada = sessoesFiltradas.filter(s => s.status === 'entregue').reduce((a, s) => a + (s.comissao_valor || 0), 0)
+    const comissao_gerada = sessoesFiltradas.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + (s.comissao_valor || 0), 0)
     const comissao_futura = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0)
+    // Comissão total sobre todas as sessões vendidas no período (entregues + futuras), independente de já ter sido paga —
+    // usado no card "Faturamento Líquido" da visão do próprio terapeuta.
+    const comissao_total_vendida = sessoesFiltradas.reduce((a, s) => a + (s.comissao_valor || 0), 0)
 
     // 6. Stats por terapeuta
     const now = new Date()
@@ -230,6 +233,7 @@ export async function GET(req: NextRequest) {
         comissao_gerada,
         comissao_futura,
         faturamento_liquido_terapeutas,
+        comissao_total_vendida,
       },
       por_terapeuta,
       consultas_hoje,

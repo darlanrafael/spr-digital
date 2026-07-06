@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X,
-  Users, Clock, DollarSign, TrendingUp, BarChart2, Award, Calendar, CalendarDays,
+  Users, Clock, TrendingUp, Award, Calendar,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -99,20 +99,13 @@ type Metricas = {
   sessoes_vendidas: number
   sessoes_entregues: number
   sessoes_futuras: number
-  faturamento_bruto: number
-  faturamento_liquido_spr: number
-  total_impostos: number
-  ticket_medio: number
   comissao_gerada: number
-  comissao_futura: number
-  faturamento_liquido_terapeutas: number
+  comissao_total_vendida: number
 }
 
 const METRICAS_VAZIA: Metricas = {
   sessoes_vendidas: 0, sessoes_entregues: 0, sessoes_futuras: 0,
-  faturamento_bruto: 0, faturamento_liquido_spr: 0, total_impostos: 0,
-  ticket_medio: 0, comissao_gerada: 0, comissao_futura: 0,
-  faturamento_liquido_terapeutas: 0,
+  comissao_gerada: 0, comissao_total_vendida: 0,
 }
 
 type ConsultaHoje = {
@@ -597,19 +590,14 @@ export default function PainelTerapeuta() {
                   </div>
                 ) : (
                   <>
-                    {/* 10 cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    {/* 5 cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                       {[
-                        { label: 'Sessões vendidas', sub: 'Total de sessões contratadas', value: ovMetricas.sessoes_vendidas, icon: Users, color: 'text-white' },
+                        { label: 'Sessões vendidas', sub: 'Total de sessões vendidas para o terapeuta', value: ovMetricas.sessoes_vendidas, icon: Users, color: 'text-white' },
                         { label: 'Sessões entregues', sub: 'Confirmadas pelo terapeuta', value: ovMetricas.sessoes_entregues, icon: CheckCircle, color: 'text-green-500' },
-                        { label: 'Sessões futuras', sub: 'Agendadas e pendentes', value: ovMetricas.sessoes_futuras, icon: Clock, color: 'text-yellow-400' },
-                        { label: 'Faturamento bruto', sub: '100% do valor pago pelos clientes', value: fmtBRL(ovMetricas.faturamento_bruto), icon: DollarSign, color: 'text-white' },
-                        { label: 'Faturamento líquido SPR (70%)', sub: 'Após taxas e impostos — parte SPR', value: fmtBRL(ovMetricas.faturamento_liquido_spr), icon: TrendingUp, color: 'text-green-500' },
-                        { label: 'Total de impostos', sub: '12,85% sobre faturamento bruto', value: fmtBRL(ovMetricas.total_impostos), icon: BarChart2, color: 'text-red-400' },
-                        { label: 'Ticket médio', sub: 'Valor médio por venda', value: ovMetricas.faturamento_bruto > 0 ? fmtBRL(ovMetricas.ticket_medio) : '—', icon: BarChart2, color: 'text-white' },
+                        { label: 'Sessões futuras', sub: 'Serão entregues', value: ovMetricas.sessoes_futuras, icon: Clock, color: 'text-yellow-400' },
+                        { label: 'Faturamento líquido', sub: 'Total de sessões vendidas × comissão do terapeuta', value: fmtBRL(ovMetricas.comissao_total_vendida), icon: TrendingUp, color: 'text-blue-400' },
                         { label: 'Comissão gerada', sub: 'Sessões entregues — a pagar', value: fmtBRL(ovMetricas.comissao_gerada), icon: Award, color: 'text-yellow-400' },
-                        { label: 'Comissão futura', sub: 'Baseado nas sessões futuras', value: fmtBRL(ovMetricas.comissao_futura), icon: CalendarDays, color: 'text-gray-400' },
-                        { label: 'Líquido terapeuta (30%)', sub: 'Sua parte após taxas e impostos', value: fmtBRL(ovMetricas.faturamento_liquido_terapeutas), icon: Users, color: 'text-blue-400' },
                       ].map(({ label, sub, value, icon: Icon, color }) => (
                         <div key={label} className="bg-gray-900 border border-white/10 rounded-xl p-4">
                           <div className="flex items-center gap-2 mb-1">
