@@ -34,7 +34,12 @@ function FechamentosContent() {
 
   const [pageTab, setPageTab] = useState<PageTab>('novo')
   const [activeStep, setActiveStep] = useState<Step>(1)
-  const [periodo, setPeriodo] = useState({ inicio: '', fim: '' })
+  const [periodo, setPeriodo] = useState(() => {
+    const d = new Date()
+    const ano = d.getFullYear()
+    const mes = String(d.getMonth() + 1).padStart(2, '0')
+    return { inicio: `${ano}-${mes}-01`, fim: `${ano}-${mes}-${String(d.getDate()).padStart(2, '0')}` }
+  })
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
 
   type PeriodoGrupo = { id: string; inicio: string; fim: string; produtos: string[] }
@@ -50,10 +55,17 @@ function FechamentosContent() {
     setPeriodosGrupos(prev => prev.map(g => g.id === id ? { ...g, ...patch } : g))
   }
   function toggleProdutoNoGrupo(grupoId: string, produtoId: string) {
+    const grupo = periodosGrupos.find(g => g.id === grupoId)
+    const estaAtribuindo = grupo ? !grupo.produtos.includes(produtoId) : true
     setPeriodosGrupos(prev => prev.map(g => g.id === grupoId
       ? { ...g, produtos: g.produtos.includes(produtoId) ? g.produtos.filter(p => p !== produtoId) : [...g.produtos, produtoId] }
       : g
     ))
+    // Atribuir um produto a um período próprio já marca ele em "Produtos incluídos" —
+    // sem isso, o produto ficava com período customizado mas de fora do fechamento.
+    if (estaAtribuindo) {
+      setSelectedProducts(prev => prev.includes(produtoId) ? prev : [...prev, produtoId])
+    }
   }
   // Cada produto só pode estar atribuído a um período por vez — o mais recente que o incluir vence.
   const produtoParaGrupo = useMemo(() => {
@@ -667,11 +679,19 @@ function FechamentosContent() {
                   )}
                 </div>
 
-                {byProduct.length > 0 && (
-                  <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
-                    <div className="p-4 border-b border-white/10">
-                      <h3 className="text-sm font-semibold text-white">Detalhamento de Faturamento</h3>
-                    </div>
+                <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
+                  <div className="p-4 border-b border-white/10">
+                    <h3 className="text-sm font-semibold text-white">Detalhamento de Faturamento</h3>
+                  </div>
+                  {byProduct.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-gray-600 text-xs">
+                      {selectedProducts.length === 0
+                        ? 'Nenhum produto selecionado — marque ao menos um produto acima em "Produtos incluídos".'
+                        : !periodo.inicio || !periodo.fim
+                        ? 'Defina o Período do Fechamento acima para ver o detalhamento.'
+                        : 'Nenhuma venda encontrada para os produtos e período selecionados.'}
+                    </p>
+                  ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead>
@@ -718,8 +738,8 @@ function FechamentosContent() {
                         </tfoot>
                       </table>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => setActiveStep(1)}
