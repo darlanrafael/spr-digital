@@ -552,18 +552,25 @@ function FechamentosContent() {
 
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-3">Produtos incluídos</h3>
-                  <p className="text-xs text-gray-500 mb-3">Deixe vazio para incluir todos</p>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Deixe vazio para incluir todos. Produtos marcados com <Clock className="w-3 h-3 inline -mt-0.5" /> usam um período próprio (definido abaixo em &quot;Períodos adicionais&quot;), não o período principal.
+                  </p>
                   <div className="flex flex-wrap gap-2">
-                    {availableProducts.map(p => (
-                      <button key={p.id} onClick={() => toggleProduct(p.id)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
-                          selectedProducts.includes(p.id) || selectedProducts.length === 0
-                            ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-300'
-                            : 'bg-gray-800 border-white/10 text-gray-500'
-                        }`}>
-                        {p.nome}
-                      </button>
-                    ))}
+                    {availableProducts.map(p => {
+                      const grupo = produtoParaGrupo[p.id]
+                      return (
+                        <button key={p.id} onClick={() => toggleProduct(p.id)}
+                          title={grupo ? `Período próprio: ${formatDate(grupo.inicio)} a ${formatDate(grupo.fim)}` : undefined}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
+                            selectedProducts.includes(p.id) || selectedProducts.length === 0
+                              ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-300'
+                              : 'bg-gray-800 border-white/10 text-gray-500'
+                          }`}>
+                          {grupo && <Clock className="w-3 h-3 text-amber-400 shrink-0" />}
+                          {p.nome}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
 
@@ -575,7 +582,7 @@ function FechamentosContent() {
                       + Adicionar período
                     </button>
                   </div>
-                  <p className="text-xs text-gray-500 mb-3">Útil pra funil perpétuo: crie quantos períodos quiser e atribua a cada um os produtos que devem usar aquele período em vez do período principal (ex: "Ingresso" fecha numa janela, "Produto Principal" fecha em outra, pra não puxar vendas de uma edição futura que já começou).</p>
+                  <p className="text-xs text-gray-500 mb-3">Útil pra funil perpétuo: crie quantos períodos quiser e atribua a cada um os produtos que devem usar aquele período em vez do período principal (ex: "Ingresso" fecha numa janela, "Produto Principal" fecha em outra, pra não puxar vendas de uma edição futura que já começou). <span className="text-gray-400">Clicar no produto já atribui na hora — não precisa de outro botão.</span></p>
 
                   {periodosGrupos.length === 0 ? (
                     <p className="text-xs text-gray-600">Nenhum período adicional — todos os produtos usam o Período do Fechamento acima</p>
