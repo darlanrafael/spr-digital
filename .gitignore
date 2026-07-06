@@ -45,3 +45,6 @@ next-env.d.ts
 
 # sensitive data
 data/users.json
+
+# supabase CLI local cache
+/supabase/.temp/

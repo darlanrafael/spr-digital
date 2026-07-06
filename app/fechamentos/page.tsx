@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { AlertCircle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Download } from 'lucide-react'
+import { AlertCircle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Download, Loader2, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -40,12 +40,60 @@ function FechamentosContent() {
   const [confirmedClosing, setConfirmedClosing] = useState<Closing | null>(null)
   const [successMsg, setSuccessMsg] = useState('')
 
+  const [trafego, setTrafego] = useState<{
+    periodo: { inicio: string; fim: string }
+    termos: string[]
+    termoInput: string
+    loading: boolean
+    erro: string | null
+    total: number
+    campanhas: { name: string; spend: number; accountId: string }[]
+  }>({
+    periodo: { inicio: '', fim: '' },
+    termos: [],
+    termoInput: '',
+    loading: false,
+    erro: null,
+    total: 0,
+    campanhas: [],
+  })
+
+  function addTermoTrafego() {
+    const termo = trafego.termoInput.trim()
+    if (!termo || trafego.termos.includes(termo)) return
+    setTrafego(t => ({ ...t, termos: [...t.termos, termo], termoInput: '' }))
+  }
+
+  function removeTermoTrafego(termo: string) {
+    setTrafego(t => ({ ...t, termos: t.termos.filter(x => x !== termo) }))
+  }
+
+  async function buscarTrafego() {
+    if (!trafego.periodo.inicio || !trafego.periodo.fim || trafego.termos.length === 0) return
+    setTrafego(t => ({ ...t, loading: true, erro: null }))
+    try {
+      const params = new URLSearchParams({ dateStart: trafego.periodo.inicio, dateEnd: trafego.periodo.fim })
+      trafego.termos.forEach(termo => params.append('termos', termo))
+      const res = await fetch(`/api/meta/custo-trafego?${params.toString()}`, { cache: 'no-store' })
+      const data = await res.json() as { total?: number; campanhas?: { name: string; spend: number; accountId: string }[]; erro?: string }
+      setTrafego(t => ({
+        ...t,
+        loading: false,
+        total: typeof data.total === 'number' ? data.total : 0,
+        campanhas: data.campanhas ?? [],
+        erro: data.erro ?? null,
+      }))
+    } catch {
+      setTrafego(t => ({ ...t, loading: false, erro: 'Falha ao buscar custo de tráfego' }))
+    }
+  }
+
   const canEdit = user?.role === 'admin'
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
 
   const fixedTotal = useMemo(() => costs.fixos.filter(c => c.ativo).reduce((a, c) => a + c.valor, 0), [costs.fixos])
   const varTotal = useMemo(() => costs.variaveis.reduce((a, v) => a + v.valor, 0), [costs.variaveis])
-  const totalCosts = fixedTotal + varTotal
+  const totalCosts = fixedTotal + varTotal + trafego.total
 
   const periodSales = useMemo(() => {
     if (!periodo.inicio || !periodo.fim) return []
@@ -160,6 +208,10 @@ function FechamentosContent() {
       custosTotais: totalCosts,
       custos_fixos_total: fixedTotal,
       custos_variaveis_total: varTotal,
+      custos_trafego_total: trafego.total,
+      custos_trafego_periodo: trafego.total > 0 ? trafego.periodo : undefined,
+      custos_trafego_termos: trafego.total > 0 ? trafego.termos : undefined,
+      custos_trafego_campanhas: trafego.total > 0 ? trafego.campanhas : undefined,
       lucroBruto,
       reservaCaixa,
       lucroReal,
@@ -290,6 +342,80 @@ function FechamentosContent() {
                         <span className="text-red-400">{formatCurrency(varTotal)}</span>
                       </div>
                     )}
+                  </div>
+                </div>
+
+                <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
+                  <h3 className="text-sm font-semibold text-white mb-4">Custo de Tráfego</h3>
+                  <div className="flex flex-wrap gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Data início</label>
+                      <input type="date" value={trafego.periodo.inicio}
+                        onChange={e => setTrafego(t => ({ ...t, periodo: { ...t.periodo, inicio: e.target.value } }))}
+                        className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Data fim</label>
+                      <input type="date" value={trafego.periodo.fim}
+                        onChange={e => setTrafego(t => ({ ...t, periodo: { ...t.periodo, fim: e.target.value } }))}
+                        className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
+                    </div>
+                  </div>
+
+                  <label className="block text-xs text-gray-400 mb-1">Termos de filtro (nome da campanha contém)</label>
+                  <div className="flex gap-2 mb-2">
+                    <input type="text" value={trafego.termoInput}
+                      onChange={e => setTrafego(t => ({ ...t, termoInput: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTermoTrafego() } }}
+                      placeholder="ex: funil1"
+                      className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500" />
+                    <button onClick={addTermoTrafego}
+                      className="px-3 py-2 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors">
+                      Adicionar
+                    </button>
+                  </div>
+
+                  {trafego.termos.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {trafego.termos.map(termo => (
+                        <span key={termo} className="flex items-center gap-1 bg-indigo-600/20 text-indigo-300 text-xs px-2 py-1 rounded-full">
+                          {termo}
+                          <button onClick={() => removeTermoTrafego(termo)} aria-label={`Remover ${termo}`}>
+                            <X className="w-3 h-3 hover:text-white" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <button onClick={buscarTrafego}
+                    disabled={trafego.loading || !trafego.periodo.inicio || !trafego.periodo.fim || trafego.termos.length === 0}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded-lg transition-colors mb-3">
+                    {trafego.loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    Buscar tráfego
+                  </button>
+
+                  {trafego.erro && (
+                    <p className="text-xs text-red-400 mb-3">{trafego.erro}</p>
+                  )}
+
+                  {trafego.campanhas.length > 0 && (
+                    <details className="mb-3">
+                      <summary className="text-xs text-gray-500 cursor-pointer">Ver campanhas ({trafego.campanhas.length})</summary>
+                      <div className="mt-2 space-y-1">
+                        {trafego.campanhas.map((c, i) => (
+                          <div key={`${c.name}-${i}`} className="flex justify-between text-xs">
+                            <span className="text-gray-400">{c.name}</span>
+                            <span className="text-gray-200">{formatCurrency(c.spend)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+
+                  <div className="border-t border-white/10 pt-2 flex justify-between text-xs font-semibold">
+                    <span className="text-gray-300">Subtotal Tráfego</span>
+                    <span className="text-red-400">{formatCurrency(trafego.total)}</span>
                   </div>
                 </div>
 
@@ -867,6 +993,9 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 { label: 'Faturamento líquido', value: closing.faturamentoLiquido, color: 'text-emerald-400', neg: false },
                 { label: 'Custos fixos', value: closing.custos_fixos_total ?? 0, color: 'text-red-400', neg: true },
                 { label: 'Custos variáveis', value: closing.custos_variaveis_total ?? 0, color: 'text-red-400', neg: true },
+                ...(closing.custos_trafego_total
+                  ? [{ label: 'Custo de tráfego', value: closing.custos_trafego_total, color: 'text-red-400', neg: true }]
+                  : []),
                 { label: 'Lucro bruto', value: closing.lucroBruto, color: closing.lucroBruto >= 0 ? 'text-emerald-400' : 'text-red-400', neg: false },
                 { label: 'Reserva de caixa (30%)', value: closing.reservaCaixa, color: 'text-amber-400', neg: true },
                 { label: 'Lucro real', value: closing.lucroReal, color: 'text-emerald-400', neg: false },
@@ -879,6 +1008,14 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 </div>
               ))}
             </div>
+            {!!closing.custos_trafego_total && closing.custos_trafego_periodo && (
+              <p className="text-[11px] text-gray-600 mt-2">
+                Tráfego: {formatDate(closing.custos_trafego_periodo.inicio)} a {formatDate(closing.custos_trafego_periodo.fim)}
+                {closing.custos_trafego_termos && closing.custos_trafego_termos.length > 0 && (
+                  <> · {closing.custos_trafego_termos.join(', ')}</>
+                )}
+              </p>
+            )}
           </div>
 
           {/* Seção 2 — Detalhamento por produto */}

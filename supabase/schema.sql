@@ -128,6 +128,11 @@ create table closings (
   compradores             jsonb       not null default '[]',
   alertas                 jsonb       not null default '[]',
   by_product              jsonb       not null default '[]',
+  custos_trafego_total          numeric     not null default 0,
+  custos_trafego_periodo_inicio date,
+  custos_trafego_periodo_fim    date,
+  custos_trafego_termos         text[]      not null default '{}',
+  custos_trafego_campanhas      jsonb       not null default '[]',
   created_at              timestamptz not null default now()
 );
 

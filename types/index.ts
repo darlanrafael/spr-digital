@@ -145,6 +145,10 @@ export interface Closing {
   compradores: ClosingBuyer[]
   alertas: ClosingAlert[]
   byProduct?: ClosingProductRow[]
+  custos_trafego_total?: number
+  custos_trafego_periodo?: { inicio: string; fim: string }
+  custos_trafego_termos?: string[]
+  custos_trafego_campanhas?: { name: string; spend: number; accountId: string }[]
 }
 
 export type CashflowType = 'entrada_manual' | 'entrada_automatica' | 'saida_reembolso' | 'saida_manual'

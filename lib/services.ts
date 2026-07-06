@@ -449,6 +449,12 @@ export async function getClosings(projectId: string): Promise<Closing[]> {
     compradores: r.compradores ?? [],
     alertas: r.alertas ?? [],
     byProduct: r.by_product ?? [],
+    custos_trafego_total: Number(r.custos_trafego_total ?? 0),
+    custos_trafego_periodo: r.custos_trafego_periodo_inicio && r.custos_trafego_periodo_fim
+      ? { inicio: r.custos_trafego_periodo_inicio, fim: r.custos_trafego_periodo_fim }
+      : undefined,
+    custos_trafego_termos: r.custos_trafego_termos ?? [],
+    custos_trafego_campanhas: r.custos_trafego_campanhas ?? [],
   }))
 }
 
@@ -477,6 +483,11 @@ export async function addClosing(closing: Closing, projectId: string): Promise<v
     compradores: closing.compradores,
     alertas: closing.alertas,
     by_product: closing.byProduct ?? [],
+    custos_trafego_total: closing.custos_trafego_total ?? 0,
+    custos_trafego_periodo_inicio: closing.custos_trafego_periodo?.inicio ?? null,
+    custos_trafego_periodo_fim: closing.custos_trafego_periodo?.fim ?? null,
+    custos_trafego_termos: closing.custos_trafego_termos ?? [],
+    custos_trafego_campanhas: closing.custos_trafego_campanhas ?? [],
   })
   if (error) throw error
 }
