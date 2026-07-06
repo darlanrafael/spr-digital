@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X,
-  Users, Clock, TrendingUp, Award, Calendar,
+  Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -77,6 +77,26 @@ type Remarcacao = {
   data_anterior: string
   data_nova: string
   created_at: string
+}
+
+type FechamentoSessao = {
+  id: string
+  sale_id: string
+  numero_sessao: number
+  total_sessoes: number
+  comissao_valor: number
+  data_entrega: string | null
+  paciente_nome: string
+}
+
+type FechamentoHistorico = {
+  id: string
+  terapeuta_id: string
+  terapeuta_nome: string
+  data_confirmacao: string
+  valor_total: number
+  quantidade_sessoes: number
+  sessoes: FechamentoSessao[]
 }
 
 type PacienteAgrupado = {
@@ -206,7 +226,12 @@ export default function PainelTerapeuta() {
   const [remarcarLoading, setRemarcarLoading] = useState(false)
 
   // Visão terapeuta — tabs de página
-  const [terapeutaTab, setTerapeutaTab] = useState<'overview' | 'vendas'>('overview')
+  const [terapeutaTab, setTerapeutaTab] = useState<'overview' | 'vendas' | 'fechamentos'>('overview')
+
+  // Fechamentos de comissão (histórico, somente leitura)
+  const [fechamentos, setFechamentos] = useState<FechamentoHistorico[]>([])
+  const [fechamentosLoading, setFechamentosLoading] = useState(false)
+  const [fechamentoExpandido, setFechamentoExpandido] = useState<string | null>(null)
 
   // Overview
   const [ovPreset, setOvPreset] = useState<Preset>('this_month')
@@ -352,6 +377,20 @@ export default function PainelTerapeuta() {
     setNotaFormOpen(false)
     setNotaTitulo(''); setNotaDesc(''); setNotaErro('')
   }, [prontuarioEmail])
+
+  // Histórico de fechamentos de comissão (somente leitura)
+  useEffect(() => {
+    if (!isTerapeutaSession || !id || terapeutaTab !== 'fechamentos') return
+    const client = getSupabaseClient()
+    if (!client) return
+    async function loadFechamentos() {
+      setFechamentosLoading(true)
+      const { data } = await client!.from('fechamentos_terapeutas').select('*').eq('terapeuta_id', id).order('data_confirmacao', { ascending: false })
+      setFechamentos((data ?? []) as FechamentoHistorico[])
+      setFechamentosLoading(false)
+    }
+    loadFechamentos()
+  }, [isTerapeutaSession, id, terapeutaTab])
 
   const entregues = sessoes.filter(s => s.status === 'entregue')
   const pendentes = sessoes.filter(s => s.status === 'pendente' || s.status === 'agendada')
@@ -564,6 +603,7 @@ export default function PainelTerapeuta() {
               {([
                 { key: 'overview', label: 'Overview' },
                 { key: 'vendas', label: 'Vendas' },
+                { key: 'fechamentos', label: 'Fechamentos' },
               ] as const).map(tab => (
                 <button
                   key={tab.key}
@@ -801,6 +841,67 @@ export default function PainelTerapeuta() {
                   </div>
                 )}
               </>
+            )}
+
+            {/* ══════════════ FECHAMENTOS ══════════════ */}
+            {terapeutaTab === 'fechamentos' && (
+              fechamentosLoading ? (
+                <div className="flex items-center justify-center h-40">
+                  <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : (
+                <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/10">
+                    <h2 className="text-sm font-semibold text-white">Histórico de fechamentos ({fechamentos.length})</h2>
+                  </div>
+                  {fechamentos.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-gray-600 text-xs">Nenhum fechamento de comissão realizado ainda</p>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {fechamentos.map(f => (
+                        <div key={f.id}>
+                          <button onClick={() => setFechamentoExpandido(e => e === f.id ? null : f.id)}
+                            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/2 transition-colors">
+                            <div className="text-left">
+                              <p className="text-sm text-white">{fmtDt(f.data_confirmacao)}</p>
+                              <p className="text-xs text-gray-500">{f.quantidade_sessoes} sessão(ões)</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-semibold text-green-500">{fmtBRL(f.valor_total)}</span>
+                              {fechamentoExpandido === f.id ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+                            </div>
+                          </button>
+                          {fechamentoExpandido === f.id && (
+                            <div className="px-4 pb-4">
+                              <div className="overflow-x-auto bg-gray-800/40 rounded-lg">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-white/5">
+                                      {['Paciente', 'Sessão', 'Data entrega', 'Comissão'].map(h => (
+                                        <th key={h} className="px-3 py-2 text-left text-gray-500 font-medium">{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {f.sessoes.map(s => (
+                                      <tr key={s.id} className="border-b border-white/5">
+                                        <td className="px-3 py-2 text-white">{s.paciente_nome}</td>
+                                        <td className="px-3 py-2 text-gray-300">{s.numero_sessao} de {s.total_sessoes}</td>
+                                        <td className="px-3 py-2 text-gray-400 whitespace-nowrap">{fmtDt(s.data_entrega)}</td>
+                                        <td className="px-3 py-2 text-green-500 whitespace-nowrap">{fmtBRL(s.comissao_valor)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
             )}
           </>
         ) : (

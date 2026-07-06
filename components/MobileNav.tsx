@@ -29,7 +29,10 @@ export default function MobileNav() {
   const navItems = isTerapeutas
     ? [
         ...TERAPEUTAS_NAV,
-        ...(user?.role === 'admin' ? [{ href: '/terapeutas/admin', label: 'Admin', icon: Heart }] : []),
+        ...(user?.role === 'admin' ? [
+          { href: '/terapeutas/fechamentos', label: 'Fechamentos', icon: FileText },
+          { href: '/terapeutas/admin', label: 'Admin', icon: Heart },
+        ] : []),
       ]
     : NAV
 

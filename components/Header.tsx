@@ -123,6 +123,7 @@ export default function Header() {
             {(isTerapeutas ? [
               ...TERAPEUTAS_NAV,
               ...(user?.role === 'admin' ? [
+                { href: '/terapeutas/fechamentos', label: 'Fechamentos' },
                 { href: '/terapeutas/admin', label: 'Admin' },
                 { href: '/terapeutas/aprovacoes', label: 'Aprovações', badge: aprovacoesPendentes },
               ] : []),
