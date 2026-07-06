@@ -204,11 +204,14 @@ create table sales (
 );
 
 -- Tabela 4: fixed_costs (globais, sem projeto)
+-- 06/07/2026: coluna `ativo` removida, coluna `data` adicionada (mês de
+-- referência, dia sempre 01) — cada custo fixo agora é um lançamento por
+-- mês, igual variable_costs, em vez de um molde sempre ativo.
 create table fixed_costs (
   id          text        primary key,
   descricao   text        not null,
   valor       numeric     not null default 0,
-  ativo       boolean     not null default true,
+  data        date        not null,
   created_at  timestamptz not null default now()
 );
 
@@ -766,6 +769,7 @@ O `AppContext` é o coração do app. Provê estado global para todos os compone
 - **Detalhamento do faturamento:** por produto ou por plataforma (tabela com impostos e taxas)
 - **Custos Fixos:** listagem inline com CRUD (apenas admins podem editar)
 - **Custos Variáveis:** lançamento via modal com data
+- **Mês de referência dos custos (06/07/2026):** os dois quadrantes (Fixos e Variáveis) compartilham um seletor de mês/ano (`<input type="month">`) que controla o que aparece E pra qual mês um lançamento novo é gravado — pensado pra quando os custos são lançados com atraso (a cada 45-60 dias, por exemplo), permitindo atribuir cada lançamento ao mês certo em vez de tudo cair no "hoje". Custos Fixos deixou de ser um "molde sempre ativo" (coluna `ativo`, sem data) e virou um lançamento por mês, igual Custos Variáveis já era (coluna `data`, dia sempre `01`). Ver seção 4 (schema) e nota técnica abaixo sobre o bug real que isso corrigiu no DRE.
 - **Balanço Financeiro:** resultado = Bruto - Impostos - Meta Ads - Fixos - Variáveis (toggle "Sem custos fixos")
 - **Aba "Melhores dias e horários":** análise de horários de pico de vendas com comparação entre dois períodos
 
@@ -784,6 +788,7 @@ O `AppContext` é o coração do app. Provê estado global para todos os compone
 - **Aba DRE:** Receita bruta → Impostos → Taxas plataforma → Receita líquida → Meta Ads → Custos fixos → Outros → Resultado
 - **Aba Fluxo de Caixa:** Entradas - Impostos - Meta Ads - Fixos - Variáveis = Saldo final
 - Campo "Outros" editável inline por mês (para despesas fora do padrão)
+- **Bug corrigido em 06/07/2026:** a linha de Custos Fixos usava sempre o total dos custos fixos "ativos" no momento, igual em TODOS os 6 meses da tabela (não olhava pra data nenhuma, porque Custos Fixos não tinha data até essa correção). Agora filtra por mês (`c.data.startsWith(month)`), igual Custos Variáveis já fazia. Meses anteriores a 07/2026 mostram R$0 em Custos Fixos até que sejam lançados manualmente pra reconstruir o histórico (a migração não pôde inventar valores de meses passados).
 
 ### `/fechamentos` — Fechamentos Financeiros
 - **Wizard em 4 passos:**
@@ -798,6 +803,7 @@ O `AppContext` é o coração do app. Provê estado global para todos os compone
 - Sócios fixos: `SPR DIGITAL LTDA` e `Pedro Roncada`
 - **02/07/2026:** histórico de fechamentos e caixa zerados no Supabase (9 fechamentos + 13 entradas de caixa apagados — eram 1 registro de seed/mock e o resto testes duplicados por clique duplo no botão confirmar). Projeto começou o uso "de verdade" a partir dessa data.
 - **Custo de Tráfego (Step 1 — Custos, adicionado em 05/07/2026):** terceiro quadrante ao lado de Custos Fixos e Custos Variáveis. Tem período próprio (início/fim, independente do período de vendas escolhido no Step 2) e um ou mais "termos de filtro" adicionados como chips — o sistema busca o gasto do Meta Ads de toda campanha cujo nome contenha (case-insensitive) qualquer um dos termos digitados, somando ao Total de Custos. Reaproveita `getProjectInvestment()` de `lib/meta.ts` (a mesma função usada no Dashboard), só que aqui os termos vêm do usuário em vez da nomenclatura fixa por projeto. Endpoint novo: `GET /api/meta/custo-trafego?dateStart=...&dateEnd=...&termos=...&termos=...`. O valor é persistido no fechamento (`custos_trafego_total`, `custos_trafego_periodo_inicio/fim`, `custos_trafego_termos`, `custos_trafego_campanhas` — colunas novas em `closings`, migration `20260705_add_custo_trafego_closings.sql`) e aparece no Histórico de Fechamento como uma linha "Custo de tráfego" com o período e os termos usados.
+- **Mês de referência dos custos (Step 1, adicionado em 06/07/2026):** novo seletor "De / Até" em mês/ano no topo do Step 1, antes dos quadrantes de Custos Fixos e Variáveis. Filtra quais lançamentos entram no fechamento (`c.data.slice(0,7)` dentro do intervalo De-Até) — o preview dos dois quadrantes já reflete o período escolhido, antes de avançar pra próxima etapa. **Corrige um bug real:** antes disso, `varTotal` somava TODOS os custos variáveis já lançados no banco, de qualquer mês, sempre — sem filtro nenhum. Agora só entram os lançamentos cujo mês de referência cai no intervalo selecionado (default: mês atual em ambos).
 
 ### `/caixa` — Fluxo de Caixa
 - Extrato cronológico com saldo acumulado
