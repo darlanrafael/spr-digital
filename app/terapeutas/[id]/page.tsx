@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X,
-  Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp,
+  Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -187,6 +187,9 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 
 const STATUS_REEMBOLSO = ['reembolsada', 'chargeback', 'cancelada', 'em_protesto']
 
+const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+const MESES_NOME = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+
 type TerapeutaSession = {
   id: string
   nome: string
@@ -226,7 +229,13 @@ export default function PainelTerapeuta() {
   const [remarcarLoading, setRemarcarLoading] = useState(false)
 
   // Visão terapeuta — tabs de página
-  const [terapeutaTab, setTerapeutaTab] = useState<'overview' | 'vendas' | 'fechamentos'>('overview')
+  const [terapeutaTab, setTerapeutaTab] = useState<'overview' | 'vendas' | 'agenda' | 'fechamentos'>('overview')
+
+  // Agenda — calendário do mês
+  const hoje = new Date()
+  const [agendaMes, setAgendaMes] = useState(hoje.getMonth())
+  const [agendaAno, setAgendaAno] = useState(hoje.getFullYear())
+  const [agendaDetalhe, setAgendaDetalhe] = useState<Sessao | null>(null)
 
   // Fechamentos de comissão (histórico, somente leitura)
   const [fechamentos, setFechamentos] = useState<FechamentoHistorico[]>([])
@@ -396,6 +405,31 @@ export default function PainelTerapeuta() {
   const pendentes = sessoes.filter(s => s.status === 'pendente' || s.status === 'agendada')
   const receitaGerada = entregues.filter(s => !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
   const receitaFutura = pendentes.filter(s => !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
+
+  // ── Agenda: grid do mês ──
+  function navMesAgenda(dir: -1 | 1) {
+    const d = new Date(agendaAno, agendaMes + dir, 1)
+    setAgendaAno(d.getFullYear())
+    setAgendaMes(d.getMonth())
+  }
+  const agendaCells = useMemo(() => {
+    const primeiroDia = new Date(agendaAno, agendaMes, 1).getDay()
+    const diasNoMes = new Date(agendaAno, agendaMes + 1, 0).getDate()
+    const cells: (number | null)[] = [
+      ...Array(primeiroDia).fill(null),
+      ...Array.from({ length: diasNoMes }, (_, i) => i + 1),
+    ]
+    while (cells.length % 7 !== 0) cells.push(null)
+    return cells
+  }, [agendaAno, agendaMes])
+  function sessoesNoDiaAgenda(dia: number): Sessao[] {
+    return sessoes.filter(s => {
+      if (!s.data_agendada) return false
+      const d = new Date(s.data_agendada)
+      return d.getFullYear() === agendaAno && d.getMonth() === agendaMes && d.getDate() === dia
+    }).sort((a, b) => (a.data_agendada ?? '') < (b.data_agendada ?? '') ? -1 : 1)
+  }
+  const agendaHojeCell = hoje.getFullYear() === agendaAno && hoje.getMonth() === agendaMes ? hoje.getDate() : null
 
   // ── Agrupamento por paciente (visão terapeuta) ──
   const pacientes = useMemo(() => {
@@ -603,6 +637,7 @@ export default function PainelTerapeuta() {
               {([
                 { key: 'overview', label: 'Overview' },
                 { key: 'vendas', label: 'Vendas' },
+                { key: 'agenda', label: 'Agenda' },
                 { key: 'fechamentos', label: 'Fechamentos' },
               ] as const).map(tab => (
                 <button
@@ -840,6 +875,59 @@ export default function PainelTerapeuta() {
                     </div>
                   </div>
                 )}
+              </>
+            )}
+
+            {/* ══════════════ AGENDA ══════════════ */}
+            {terapeutaTab === 'agenda' && (
+              <>
+                <div className="mb-4 flex items-center justify-between">
+                  <p className="text-sm font-medium text-white">{MESES_NOME[agendaMes]} {agendaAno}</p>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => navMesAgenda(-1)} aria-label="Mês anterior" className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => navMesAgenda(1)} aria-label="Próximo mês" className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
+                  <div className="grid grid-cols-7 border-b border-white/10">
+                    {DIAS_SEMANA.map(d => (
+                      <div key={d} className="px-2 py-3 text-center text-xs text-gray-500 font-medium">{d}</div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7">
+                    {agendaCells.map((dia, idx) => {
+                      const ss = dia ? sessoesNoDiaAgenda(dia) : []
+                      const isHoje = dia === agendaHojeCell
+                      return (
+                        <div key={idx} className={`min-h-[90px] p-1.5 border-b border-r border-white/5 ${!dia ? 'bg-gray-900/50' : ''}`}>
+                          {dia && (
+                            <>
+                              <span className={`text-xs font-medium inline-flex w-6 h-6 items-center justify-center rounded-full mb-1 ${
+                                isHoje ? 'bg-indigo-600 text-white' : 'text-gray-400'
+                              }`}>{dia}</span>
+                              <div className="space-y-0.5">
+                                {ss.slice(0, 3).map(s => (
+                                  <button key={s.id} onClick={() => setAgendaDetalhe(s)}
+                                    className="w-full text-left text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 truncate transition-colors">
+                                    {s.data_agendada ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''} {s.paciente_nome.split(' ')[0]}
+                                  </button>
+                                ))}
+                                {ss.length > 3 && (
+                                  <span className="text-[10px] text-gray-500">+{ss.length - 3} mais</span>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               </>
             )}
 
@@ -1295,6 +1383,50 @@ export default function PainelTerapeuta() {
         loading={notaLoading}
         erro={notaErro}
       />
+
+      {/* Modal detalhe da sessão — Agenda */}
+      {agendaDetalhe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAgendaDetalhe(null)}>
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white">Detalhes da consulta</h3>
+              <button onClick={() => setAgendaDetalhe(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between items-start gap-4">
+                <span className="text-gray-500 shrink-0">Paciente</span>
+                <span className="text-white text-right">{agendaDetalhe.paciente_nome}</span>
+              </div>
+              <div className="flex justify-between items-start gap-4">
+                <span className="text-gray-500 shrink-0">E-mail</span>
+                <span className="text-white text-right">{agendaDetalhe.paciente_email}</span>
+              </div>
+              <div className="flex justify-between items-start gap-4">
+                <span className="text-gray-500 shrink-0">Sessão</span>
+                <span className="text-white text-right">{agendaDetalhe.numero_sessao} de {agendaDetalhe.total_sessoes}</span>
+              </div>
+              <div className="flex justify-between items-start gap-4">
+                <span className="text-gray-500 shrink-0">Status</span>
+                <span className="text-white text-right">{STATUS_LABEL[agendaDetalhe.status]?.label ?? agendaDetalhe.status}</span>
+              </div>
+              <div className="flex justify-between items-start gap-4">
+                <span className="text-gray-500 shrink-0">Data/hora</span>
+                <span className="text-white text-right">{fmtDt(agendaDetalhe.data_agendada)}</span>
+              </div>
+              <div className="flex justify-between items-start gap-4">
+                <span className="text-gray-500 shrink-0">Comissão</span>
+                <span className="text-white text-right">{fmtBRL(agendaDetalhe.comissao_valor)}</span>
+              </div>
+              {agendaDetalhe.link_meet && (
+                <div className="flex justify-between items-center gap-4">
+                  <span className="text-gray-500 shrink-0">Link Meet</span>
+                  <a href={agendaDetalhe.link_meet} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline text-xs truncate max-w-[180px]">Abrir</a>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <MobileNav />
     </div>
