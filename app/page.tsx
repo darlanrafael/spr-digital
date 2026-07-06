@@ -206,7 +206,7 @@ function DashboardContent() {
 
   // Custos fixos inline editing
   const [editingFixedId, setEditingFixedId] = useState<string | null>(null)
-  const [editFixedForm, setEditFixedForm] = useState({ descricao: '', valor: '' })
+  const [editFixedForm, setEditFixedForm] = useState({ descricao: '', valor: '', data: '' })
   const [addingFixed, setAddingFixed] = useState(false)
   const [newFixedForm, setNewFixedForm] = useState({ descricao: '', valor: '' })
 
@@ -215,6 +215,12 @@ function DashboardContent() {
   const [varForm, setVarForm] = useState({ descricao: '', valor: '', data: '' })
   const [editingVarId, setEditingVarId] = useState<string | null>(null)
   const [editVarForm, setEditVarForm] = useState({ descricao: '', valor: '', data: '' })
+
+  // Mês de referência dos custos fixos e variáveis — independente do período de faturamento
+  const [custosMesRef, setCustosMesRef] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
 
   const [periodSales, setPeriodSales] = useState<Sale[]>([])
   const [salesLoading, setSalesLoading] = useState(false)
@@ -286,15 +292,16 @@ function DashboardContent() {
 
   const roas = metaAdsTotal > 0 ? faturamentoLiquido / metaAdsTotal : null
 
-  const fixedCostsTotal = useMemo(
-    () => costs.fixos.filter(c => c.ativo).reduce((a, c) => a + c.valor, 0),
-    [costs.fixos]
+  const fixedCostsFiltered = useMemo(
+    () => costs.fixos.filter(c => c.data.startsWith(custosMesRef)),
+    [costs.fixos, custosMesRef]
   )
+  const fixedCostsTotal = fixedCostsFiltered.reduce((a, c) => a + c.valor, 0)
 
-  const varCostsFiltered = useMemo(() => {
-    if (!periodBounds) return costs.variaveis
-    return costs.variaveis.filter(v => v.data >= periodBounds.start && v.data <= periodBounds.end)
-  }, [costs.variaveis, periodBounds])
+  const varCostsFiltered = useMemo(
+    () => costs.variaveis.filter(v => v.data.startsWith(custosMesRef)),
+    [costs.variaveis, custosMesRef]
+  )
 
   const varCostsTotal = varCostsFiltered.reduce((a, c) => a + c.valor, 0)
 
@@ -340,11 +347,11 @@ function DashboardContent() {
   // Fixed costs CRUD
   function startEditFixed(c: FixedCost) {
     setEditingFixedId(c.id)
-    setEditFixedForm({ descricao: c.descricao, valor: String(c.valor) })
+    setEditFixedForm({ descricao: c.descricao, valor: String(c.valor), data: c.data.slice(0, 7) })
   }
 
   async function saveEditFixed(id: string) {
-    const patch = { descricao: editFixedForm.descricao, valor: parseFloat(editFixedForm.valor) || 0 }
+    const patch = { descricao: editFixedForm.descricao, valor: parseFloat(editFixedForm.valor) || 0, data: `${editFixedForm.data}-01` }
     try { await svcUpdateFixed(id, patch) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, fixos: prev.fixos.map(c => c.id === id ? { ...c, ...patch } : c) }))
     setEditingFixedId(null)
@@ -361,7 +368,7 @@ function DashboardContent() {
       id: `cf_${Date.now()}`,
       descricao: newFixedForm.descricao,
       valor: parseFloat(newFixedForm.valor) || 0,
-      ativo: true,
+      data: `${custosMesRef}-01`,
     }
     try { await svcAddFixed(newFixed) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, fixos: [...prev.fixos, newFixed] }))
@@ -372,11 +379,11 @@ function DashboardContent() {
   // Variable costs CRUD
   function startEditVar(c: VariableCost) {
     setEditingVarId(c.id)
-    setEditVarForm({ descricao: c.descricao, valor: String(c.valor), data: c.data })
+    setEditVarForm({ descricao: c.descricao, valor: String(c.valor), data: c.data.slice(0, 7) })
   }
 
   async function saveEditVar(id: string) {
-    const patch = { descricao: editVarForm.descricao, valor: parseFloat(editVarForm.valor) || 0, data: editVarForm.data }
+    const patch = { descricao: editVarForm.descricao, valor: parseFloat(editVarForm.valor) || 0, data: `${editVarForm.data}-01` }
     try { await svcUpdateVar(id, patch) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, variaveis: prev.variaveis.map(c => c.id === id ? { ...c, ...patch } : c) }))
     setEditingVarId(null)
@@ -393,7 +400,7 @@ function DashboardContent() {
       id: `cv_${Date.now()}`,
       descricao: varForm.descricao,
       valor: parseFloat(varForm.valor),
-      data: varForm.data,
+      data: `${varForm.data}-01`,
       projetoId: selectedProject === 'all' ? null : selectedProject,
     }
     try { await svcAddVar(newVar) } catch (e) { console.error(e) }
@@ -621,6 +628,13 @@ function DashboardContent() {
           </div>
         </div>
 
+        {/* Custos — mês de referência (compartilhado entre Fixos e Variáveis) */}
+        <div className="flex items-center gap-2 mb-3">
+          <label className="text-xs text-gray-400">Mês de referência dos custos:</label>
+          <input type="month" value={custosMesRef} onChange={e => setCustosMesRef(e.target.value)}
+            className="bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50" />
+        </div>
+
         {/* Costs */}
         <div className="grid md:grid-cols-2 gap-4 mb-6">
           {/* Fixed costs */}
@@ -635,7 +649,10 @@ function DashboardContent() {
               )}
             </div>
             <div className="space-y-2">
-              {costs.fixos.filter(c => c.ativo).map(c => (
+              {fixedCostsFiltered.length === 0 && !addingFixed && (
+                <p className="text-xs text-gray-600">Nenhum custo fixo lançado neste mês</p>
+              )}
+              {fixedCostsFiltered.map(c => (
                 <div key={c.id} className="group">
                   {editingFixedId === c.id ? (
                     <div className="flex items-center gap-2">
@@ -646,6 +663,10 @@ function DashboardContent() {
                       <input type="number" step="0.01" value={editFixedForm.valor}
                         onChange={e => setEditFixedForm(p => ({ ...p, valor: e.target.value }))}
                         className="w-24 bg-gray-800 border border-indigo-500 rounded px-2 py-1 text-xs text-white text-right focus:outline-none"
+                      />
+                      <input type="month" value={editFixedForm.data}
+                        onChange={e => setEditFixedForm(p => ({ ...p, data: e.target.value }))}
+                        className="bg-gray-800 border border-indigo-500 rounded px-2 py-1 text-xs text-white focus:outline-none"
                       />
                       <button onClick={() => saveEditFixed(c.id)} className="text-emerald-400 hover:text-emerald-300">
                         <Check className="w-3.5 h-3.5" />
@@ -706,7 +727,7 @@ function DashboardContent() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-white">Custos Variáveis</h3>
               {canEdit && (
-                <button onClick={() => setShowVarModal(true)}
+                <button onClick={() => { setVarForm({ descricao: '', valor: '', data: custosMesRef }); setShowVarModal(true) }}
                   className="flex items-center gap-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded-lg transition-colors">
                   <Plus className="w-3 h-3" /> Lançar
                 </button>
@@ -714,7 +735,7 @@ function DashboardContent() {
             </div>
             <div className="space-y-2">
               {varCostsFiltered.length === 0 ? (
-                <p className="text-xs text-gray-600">Nenhum custo variável no período</p>
+                <p className="text-xs text-gray-600">Nenhum custo variável lançado neste mês</p>
               ) : varCostsFiltered.map(c => (
                 <div key={c.id} className="group">
                   {editingVarId === c.id ? (
@@ -730,7 +751,7 @@ function DashboardContent() {
                         />
                       </div>
                       <div className="flex items-center gap-2">
-                        <input type="date" value={editVarForm.data}
+                        <input type="month" value={editVarForm.data}
                           onChange={e => setEditVarForm(p => ({ ...p, data: e.target.value }))}
                           className="bg-gray-800 border border-indigo-500 rounded px-2 py-1 text-xs text-white focus:outline-none"
                         />
@@ -827,8 +848,8 @@ function DashboardContent() {
               className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Data</label>
-            <input required type="date" value={varForm.data}
+            <label className="block text-xs text-gray-400 mb-1">Mês de referência</label>
+            <input required type="month" value={varForm.data}
               onChange={e => setVarForm(p => ({ ...p, data: e.target.value }))}
               className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
           </div>

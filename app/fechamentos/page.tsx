@@ -91,8 +91,28 @@ function FechamentosContent() {
   const canEdit = user?.role === 'admin'
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
 
-  const fixedTotal = useMemo(() => costs.fixos.filter(c => c.ativo).reduce((a, c) => a + c.valor, 0), [costs.fixos])
-  const varTotal = useMemo(() => costs.variaveis.reduce((a, v) => a + v.valor, 0), [costs.variaveis])
+  const [custosPeriodo, setCustosPeriodo] = useState(() => {
+    const d = new Date()
+    const mes = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    return { inicio: mes, fim: mes }
+  })
+
+  const fixedCostsIncluidos = useMemo(
+    () => costs.fixos.filter(c => {
+      const mes = c.data.slice(0, 7)
+      return mes >= custosPeriodo.inicio && mes <= custosPeriodo.fim
+    }),
+    [costs.fixos, custosPeriodo]
+  )
+  const variableCostsIncluidos = useMemo(
+    () => costs.variaveis.filter(v => {
+      const mes = v.data.slice(0, 7)
+      return mes >= custosPeriodo.inicio && mes <= custosPeriodo.fim
+    }),
+    [costs.variaveis, custosPeriodo]
+  )
+  const fixedTotal = fixedCostsIncluidos.reduce((a, c) => a + c.valor, 0)
+  const varTotal = variableCostsIncluidos.reduce((a, v) => a + v.valor, 0)
   const totalCosts = fixedTotal + varTotal + trafego.total
 
   const periodSales = useMemo(() => {
@@ -310,11 +330,32 @@ function FechamentosContent() {
             {activeStep === 1 && (
               <div className="space-y-4">
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
+                  <h3 className="text-sm font-semibold text-white mb-3">Mês de referência dos custos</h3>
+                  <p className="text-xs text-gray-500 mb-3">Define quais lançamentos de Custos Fixos e Variáveis entram neste fechamento (o preview abaixo já reflete o período escolhido).</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">De</label>
+                      <input type="month" value={custosPeriodo.inicio}
+                        onChange={e => setCustosPeriodo(p => ({ ...p, inicio: e.target.value }))}
+                        className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Até</label>
+                      <input type="month" value={custosPeriodo.fim}
+                        onChange={e => setCustosPeriodo(p => ({ ...p, fim: e.target.value }))}
+                        className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-4">Custos Fixos</h3>
                   <div className="space-y-2">
-                    {costs.fixos.filter(c => c.ativo).map(c => (
+                    {fixedCostsIncluidos.length === 0 ? (
+                      <p className="text-xs text-gray-600">Nenhum custo fixo lançado neste período</p>
+                    ) : fixedCostsIncluidos.map(c => (
                       <div key={c.id} className="flex justify-between text-xs">
-                        <span className="text-gray-400">{c.descricao}</span>
+                        <span className="text-gray-400">{c.descricao} <span className="text-gray-600">({c.data.slice(0, 7)})</span></span>
                         <span className="text-gray-200">{formatCurrency(c.valor)}</span>
                       </div>
                     ))}
@@ -328,15 +369,15 @@ function FechamentosContent() {
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-4">Custos Variáveis</h3>
                   <div className="space-y-2">
-                    {costs.variaveis.length === 0 ? (
-                      <p className="text-xs text-gray-600">Nenhum custo variável</p>
-                    ) : costs.variaveis.map(c => (
+                    {variableCostsIncluidos.length === 0 ? (
+                      <p className="text-xs text-gray-600">Nenhum custo variável lançado neste período</p>
+                    ) : variableCostsIncluidos.map(c => (
                       <div key={c.id} className="flex justify-between text-xs">
                         <span className="text-gray-400">{c.descricao} <span className="text-gray-600">({formatDate(c.data)})</span></span>
                         <span className="text-gray-200">{formatCurrency(c.valor)}</span>
                       </div>
                     ))}
-                    {costs.variaveis.length > 0 && (
+                    {variableCostsIncluidos.length > 0 && (
                       <div className="border-t border-white/10 pt-2 flex justify-between text-xs font-semibold">
                         <span className="text-gray-300">Subtotal Variáveis</span>
                         <span className="text-red-400">{formatCurrency(varTotal)}</span>

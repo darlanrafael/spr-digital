@@ -63,7 +63,7 @@ function DREContent() {
     const metaAds = costs.metaAds
       .filter(m => m.mes === month && (selectedProject === 'all' || m.projetoId === selectedProject))
       .reduce((a, m) => a + m.valor, 0)
-    const fixedCosts = costs.fixos.filter(c => c.ativo).reduce((a, c) => a + c.valor, 0)
+    const fixedCosts = costs.fixos.filter(c => c.data.startsWith(month)).reduce((a, c) => a + c.valor, 0)
     const outros = otherValues[month] ?? 0
     const resultado = receitaLiquida - metaAds - fixedCosts - outros
 

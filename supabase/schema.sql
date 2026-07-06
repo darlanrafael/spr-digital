@@ -75,7 +75,7 @@ create table fixed_costs (
   id          text        primary key,
   descricao   text        not null,
   valor       numeric     not null default 0,
-  ativo       boolean     not null default true,
+  data        date        not null, -- mês de referência (dia sempre 01)
   created_at  timestamptz not null default now()
 );
 

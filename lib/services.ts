@@ -282,13 +282,13 @@ export async function getFixedCosts(): Promise<FixedCost[]> {
   const { data, error } = await client
     .from('fixed_costs')
     .select('*')
-    .eq('ativo', true)
+    .order('data', { ascending: false })
   if (error) throw error
   return (data ?? []).map(r => ({
     id: r.id,
     descricao: r.descricao,
     valor: Number(r.valor),
-    ativo: r.ativo,
+    data: r.data,
   }))
 }
 
@@ -299,14 +299,14 @@ export async function addFixedCost(cost: FixedCost): Promise<void> {
     id: cost.id,
     descricao: cost.descricao,
     valor: cost.valor,
-    ativo: cost.ativo,
+    data: cost.data,
   })
   if (error) throw error
 }
 
 export async function updateFixedCost(
   id: string,
-  patch: Partial<Pick<FixedCost, 'descricao' | 'valor' | 'ativo'>>,
+  patch: Partial<Pick<FixedCost, 'descricao' | 'valor' | 'data'>>,
 ): Promise<void> {
   const client = getSupabaseClient()
   if (!client) return

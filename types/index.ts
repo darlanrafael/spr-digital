@@ -55,7 +55,7 @@ export interface FixedCost {
   id: string
   descricao: string
   valor: number
-  ativo: boolean
+  data: string
 }
 
 export interface VariableCost {

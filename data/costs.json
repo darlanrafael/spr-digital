@@ -4,19 +4,19 @@
       "id": "cf_1",
       "descricao": "Ferramentas SaaS",
       "valor": 890,
-      "ativo": true
+      "data": "2026-06-01"
     },
     {
       "id": "cf_2",
       "descricao": "Equipe",
       "valor": 4200,
-      "ativo": true
+      "data": "2026-06-01"
     },
     {
       "id": "cf_3",
       "descricao": "Escritório",
       "valor": 1200,
-      "ativo": true
+      "data": "2026-06-01"
     }
   ],
   "variaveis": [
