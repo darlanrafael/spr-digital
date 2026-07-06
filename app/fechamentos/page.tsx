@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import PlatformBadge from '@/components/PlatformBadge'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry } from '@/types'
 import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow } from '@/lib/services'
@@ -85,6 +86,15 @@ function FechamentosContent() {
     campanhas: [],
   })
 
+  const TRAFEGO_PAGE_SIZE = 8
+  const [trafegoPage, setTrafegoPage] = useState(1)
+  const trafegoTotalPages = Math.max(1, Math.ceil(trafego.campanhas.length / TRAFEGO_PAGE_SIZE))
+  const trafegoPageClamped = Math.min(trafegoPage, trafegoTotalPages)
+  const trafegoCampanhasPaginadas = trafego.campanhas.slice(
+    (trafegoPageClamped - 1) * TRAFEGO_PAGE_SIZE,
+    trafegoPageClamped * TRAFEGO_PAGE_SIZE
+  )
+
   function addTermoTrafego() {
     const termo = trafego.termoInput.trim()
     if (!termo || trafego.termos.includes(termo)) return
@@ -103,13 +113,15 @@ function FechamentosContent() {
       trafego.termos.forEach(termo => params.append('termos', termo))
       const res = await fetch(`/api/meta/custo-trafego?${params.toString()}`, { cache: 'no-store' })
       const data = await res.json() as { total?: number; campanhas?: { name: string; spend: number; accountId: string }[]; erro?: string }
+      const totalBruto = typeof data.total === 'number' ? data.total : 0
       setTrafego(t => ({
         ...t,
         loading: false,
-        total: typeof data.total === 'number' ? data.total : 0,
+        total: totalBruto * 1.1385, // acrescenta 13,85% sobre o gasto bruto de tráfego
         campanhas: data.campanhas ?? [],
         erro: data.erro ?? null,
       }))
+      setTrafegoPage(1)
     } catch {
       setTrafego(t => ({ ...t, loading: false, erro: 'Falha ao buscar custo de tráfego' }))
     }
@@ -481,18 +493,26 @@ function FechamentosContent() {
                     <details className="mb-3">
                       <summary className="text-xs text-gray-500 cursor-pointer">Ver campanhas ({trafego.campanhas.length})</summary>
                       <div className="mt-2 space-y-1">
-                        {trafego.campanhas.map((c, i) => (
+                        {trafegoCampanhasPaginadas.map((c, i) => (
                           <div key={`${c.name}-${i}`} className="flex justify-between text-xs">
                             <span className="text-gray-400">{c.name}</span>
                             <span className="text-gray-200">{formatCurrency(c.spend)}</span>
                           </div>
                         ))}
                       </div>
+                      {trafegoTotalPages > 1 && (
+                        <Pagination
+                          currentPage={trafegoPageClamped}
+                          totalPages={trafegoTotalPages}
+                          onPrevious={() => setTrafegoPage(p => Math.max(1, p - 1))}
+                          onNext={() => setTrafegoPage(p => Math.min(trafegoTotalPages, p + 1))}
+                        />
+                      )}
                     </details>
                   )}
 
                   <div className="border-t border-white/10 pt-2 flex justify-between text-xs font-semibold">
-                    <span className="text-gray-300">Subtotal Tráfego</span>
+                    <span className="text-gray-300">Subtotal Tráfego <span className="text-gray-600 font-normal">(+13,85%)</span></span>
                     <span className="text-red-400">{formatCurrency(trafego.total)}</span>
                   </div>
                 </div>
