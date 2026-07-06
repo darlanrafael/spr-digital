@@ -35,6 +35,33 @@ function FechamentosContent() {
   const [activeStep, setActiveStep] = useState<Step>(1)
   const [periodo, setPeriodo] = useState({ inicio: '', fim: '' })
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
+
+  type PeriodoGrupo = { id: string; inicio: string; fim: string; produtos: string[] }
+  const [periodosGrupos, setPeriodosGrupos] = useState<PeriodoGrupo[]>([])
+
+  function addPeriodoGrupo() {
+    setPeriodosGrupos(prev => [...prev, { id: `pg_${Date.now()}`, inicio: '', fim: '', produtos: [] }])
+  }
+  function removePeriodoGrupo(id: string) {
+    setPeriodosGrupos(prev => prev.filter(g => g.id !== id))
+  }
+  function updatePeriodoGrupo(id: string, patch: Partial<Omit<PeriodoGrupo, 'id'>>) {
+    setPeriodosGrupos(prev => prev.map(g => g.id === id ? { ...g, ...patch } : g))
+  }
+  function toggleProdutoNoGrupo(grupoId: string, produtoId: string) {
+    setPeriodosGrupos(prev => prev.map(g => g.id === grupoId
+      ? { ...g, produtos: g.produtos.includes(produtoId) ? g.produtos.filter(p => p !== produtoId) : [...g.produtos, produtoId] }
+      : g
+    ))
+  }
+  // Cada produto só pode estar atribuído a um período por vez — o mais recente que o incluir vence.
+  const produtoParaGrupo = useMemo(() => {
+    const map: Record<string, PeriodoGrupo> = {}
+    for (const g of periodosGrupos) {
+      for (const produtoId of g.produtos) map[produtoId] = g
+    }
+    return map
+  }, [periodosGrupos])
   const [socioInputs, setSocioInputs] = useState(['50', '50'])
   const [confirmed, setConfirmed] = useState(false)
   const [confirmedClosing, setConfirmedClosing] = useState<Closing | null>(null)
@@ -120,11 +147,14 @@ function FechamentosContent() {
     return sales.filter(s => {
       const matchProject = selectedProject === 'all' || s.projetoId === selectedProject
       const d = s.data_hora.slice(0, 10)
-      const matchPeriod = d >= periodo.inicio && d <= periodo.fim
+      const grupo = produtoParaGrupo[s.produto]
+      const efetivoInicio = grupo?.inicio || periodo.inicio
+      const efetivoFim = grupo?.fim || periodo.fim
+      const matchPeriod = !!efetivoInicio && !!efetivoFim && d >= efetivoInicio && d <= efetivoFim
       const matchProduct = selectedProducts.length === 0 || selectedProducts.includes(s.produto)
       return s.status === 'aprovada' && matchProject && matchPeriod && matchProduct
     })
-  }, [sales, periodo, selectedProject, selectedProducts])
+  }, [sales, periodo, selectedProject, selectedProducts, produtoParaGrupo])
 
   const byProduct = useMemo(() => {
     const map: Record<string, {
@@ -232,6 +262,13 @@ function FechamentosContent() {
       custos_trafego_periodo: trafego.total > 0 ? trafego.periodo : undefined,
       custos_trafego_termos: trafego.total > 0 ? trafego.termos : undefined,
       custos_trafego_campanhas: trafego.total > 0 ? trafego.campanhas : undefined,
+      produtos_periodos: periodosGrupos.length > 0
+        ? periodosGrupos.map(g => ({
+            inicio: g.inicio,
+            fim: g.fim,
+            produtos: g.produtos.map(id => productMap[id]?.nome ?? id),
+          }))
+        : undefined,
       lucroBruto,
       reservaCaixa,
       lucroReal,
@@ -508,6 +545,69 @@ function FechamentosContent() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-sm font-semibold text-white">Períodos adicionais por produto (opcional)</h3>
+                    <button onClick={addPeriodoGrupo}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors whitespace-nowrap">
+                      + Adicionar período
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">Útil pra funil perpétuo: crie quantos períodos quiser e atribua a cada um os produtos que devem usar aquele período em vez do período principal (ex: "Ingresso" fecha numa janela, "Produto Principal" fecha em outra, pra não puxar vendas de uma edição futura que já começou).</p>
+
+                  {periodosGrupos.length === 0 ? (
+                    <p className="text-xs text-gray-600">Nenhum período adicional — todos os produtos usam o Período do Fechamento acima</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {periodosGrupos.map((g, idx) => (
+                        <div key={g.id} className="bg-gray-800/40 border border-white/5 rounded-xl p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-gray-300">Período {idx + 1}</span>
+                            <button onClick={() => removePeriodoGrupo(g.id)} className="text-gray-500 hover:text-red-400">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-3 mb-3">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Data início</label>
+                              <input type="date" value={g.inicio}
+                                onChange={e => updatePeriodoGrupo(g.id, { inicio: e.target.value })}
+                                className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Data fim</label>
+                              <input type="date" value={g.fim}
+                                onChange={e => updatePeriodoGrupo(g.id, { fim: e.target.value })}
+                                className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
+                            </div>
+                          </div>
+                          <label className="block text-xs text-gray-400 mb-1.5">Produtos deste período</label>
+                          <div className="flex flex-wrap gap-2">
+                            {availableProducts.map(p => {
+                              const atribuidoAqui = g.produtos.includes(p.id)
+                              const atribuidoEmOutro = !atribuidoAqui && produtoParaGrupo[p.id] && produtoParaGrupo[p.id].id !== g.id
+                              return (
+                                <button key={p.id} onClick={() => toggleProdutoNoGrupo(g.id, p.id)}
+                                  disabled={!!atribuidoEmOutro}
+                                  title={atribuidoEmOutro ? 'Já atribuído a outro período' : undefined}
+                                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
+                                    atribuidoAqui
+                                      ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-300'
+                                      : atribuidoEmOutro
+                                      ? 'bg-gray-800 border-white/5 text-gray-700 cursor-not-allowed'
+                                      : 'bg-gray-800 border-white/10 text-gray-500'
+                                  }`}>
+                                  {p.nome}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {byProduct.length > 0 && (
@@ -1056,6 +1156,15 @@ function ClosingCard({ closing }: { closing: Closing }) {
                   <> · {closing.custos_trafego_termos.join(', ')}</>
                 )}
               </p>
+            )}
+            {closing.produtos_periodos && closing.produtos_periodos.length > 0 && (
+              <div className="mt-2 space-y-0.5">
+                {closing.produtos_periodos.map((g, i) => (
+                  <p key={i} className="text-[11px] text-gray-600">
+                    Período próprio ({formatDate(g.inicio)} a {formatDate(g.fim)}): {g.produtos.join(', ')}
+                  </p>
+                ))}
+              </div>
             )}
           </div>
 
