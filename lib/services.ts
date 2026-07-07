@@ -457,6 +457,8 @@ export async function getClosings(projectId: string): Promise<Closing[]> {
     custos_trafego_termos: r.custos_trafego_termos ?? [],
     custos_trafego_campanhas: r.custos_trafego_campanhas ?? [],
     produtos_periodos: r.produtos_periodos ?? [],
+    custos_funil_total: Number(r.custos_funil_total ?? 0),
+    custos_funil_itens: r.custos_funil_itens ?? [],
   }))
 }
 
@@ -491,6 +493,8 @@ export async function addClosing(closing: Closing, projectId: string): Promise<v
     custos_trafego_termos: closing.custos_trafego_termos ?? [],
     custos_trafego_campanhas: closing.custos_trafego_campanhas ?? [],
     produtos_periodos: closing.produtos_periodos ?? [],
+    custos_funil_total: closing.custos_funil_total ?? 0,
+    custos_funil_itens: closing.custos_funil_itens ?? [],
   })
   if (error) throw error
 }

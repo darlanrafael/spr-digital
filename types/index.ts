@@ -150,6 +150,8 @@ export interface Closing {
   custos_trafego_termos?: string[]
   custos_trafego_campanhas?: { name: string; spend: number; accountId: string }[]
   produtos_periodos?: { inicio: string; fim: string; produtos: string[] }[]
+  custos_funil_total?: number
+  custos_funil_itens?: { descricao: string; valor: number }[]
 }
 
 export type CashflowType = 'entrada_manual' | 'entrada_automatica' | 'saida_reembolso' | 'saida_manual'

@@ -107,6 +107,19 @@ function FechamentosContent() {
     trafegoPageClamped * TRAFEGO_PAGE_SIZE
   )
 
+  const [custosFunil, setCustosFunil] = useState<{ id: string; descricao: string; valor: string }[]>([])
+
+  function addCustoFunil() {
+    setCustosFunil(prev => [...prev, { id: crypto.randomUUID(), descricao: '', valor: '' }])
+  }
+  function updateCustoFunil(id: string, field: 'descricao' | 'valor', value: string) {
+    setCustosFunil(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c))
+  }
+  function removeCustoFunil(id: string) {
+    setCustosFunil(prev => prev.filter(c => c.id !== id))
+  }
+  const custosFunilTotal = custosFunil.reduce((a, c) => a + (parseFloat(c.valor.replace(',', '.')) || 0), 0)
+
   function addTermoTrafego() {
     const termo = trafego.termoInput.trim()
     if (!termo || trafego.termos.includes(termo)) return
@@ -164,7 +177,7 @@ function FechamentosContent() {
   )
   const fixedTotal = fixedCostsIncluidos.reduce((a, c) => a + c.valor, 0)
   const varTotal = variableCostsIncluidos.reduce((a, v) => a + v.valor, 0)
-  const totalCosts = fixedTotal + varTotal + trafego.total
+  const totalCosts = fixedTotal + varTotal + trafego.total + custosFunilTotal
 
   const periodSales = useMemo(() => {
     return sales.filter(s => {
@@ -309,6 +322,12 @@ function FechamentosContent() {
       custos_trafego_periodo: trafego.total > 0 ? trafego.periodo : undefined,
       custos_trafego_termos: trafego.total > 0 ? trafego.termos : undefined,
       custos_trafego_campanhas: trafego.total > 0 ? trafego.campanhas : undefined,
+      custos_funil_total: custosFunilTotal,
+      custos_funil_itens: custosFunilTotal > 0
+        ? custosFunil
+            .filter(c => c.descricao.trim() && (parseFloat(c.valor.replace(',', '.')) || 0) > 0)
+            .map(c => ({ descricao: c.descricao.trim(), valor: parseFloat(c.valor.replace(',', '.')) || 0 }))
+        : undefined,
       produtos_periodos: periodosGrupos.length > 0
         ? periodosGrupos.map(g => ({
             inicio: g.inicio,
@@ -550,6 +569,43 @@ function FechamentosContent() {
                     <span className="text-gray-300">Subtotal Tráfego <span className="text-gray-600 font-normal">(+13,85%)</span></span>
                     <span className="text-red-400">{formatCurrency(trafego.total)}</span>
                   </div>
+                </div>
+
+                <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-sm font-semibold text-white">Custos do Funil</h3>
+                    <button onClick={addCustoFunil}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                      + Adicionar custo
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Custos específicos deste fechamento (ex: funil perpétuo) — não entram nos Custos Fixos/Variáveis gerais, só neste fechamento.
+                  </p>
+                  {custosFunil.length === 0 ? (
+                    <p className="text-xs text-gray-600">Nenhum custo do funil lançado</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {custosFunil.map(c => (
+                        <div key={c.id} className="flex items-center gap-2">
+                          <input type="text" value={c.descricao} placeholder="Descrição (ex: Editor de vídeo)"
+                            onChange={e => updateCustoFunil(c.id, 'descricao', e.target.value)}
+                            className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-indigo-500" />
+                          <input type="text" value={c.valor} placeholder="0,00"
+                            onChange={e => updateCustoFunil(c.id, 'valor', e.target.value)}
+                            className="w-28 bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-200 text-right focus:outline-none focus:border-indigo-500" />
+                          <button onClick={() => removeCustoFunil(c.id)}
+                            className="text-gray-500 hover:text-red-400 transition-colors">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="border-t border-white/10 pt-2 flex justify-between text-xs font-semibold">
+                        <span className="text-gray-300">Subtotal Custos do Funil</span>
+                        <span className="text-red-400">{formatCurrency(custosFunilTotal)}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-gray-800 rounded-xl p-4 flex justify-between items-center">
@@ -1250,6 +1306,9 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 ...(closing.custos_trafego_total
                   ? [{ label: 'Custo de tráfego', value: closing.custos_trafego_total, color: 'text-red-400', neg: true }]
                   : []),
+                ...(closing.custos_funil_total
+                  ? [{ label: 'Custos do funil', value: closing.custos_funil_total, color: 'text-red-400', neg: true }]
+                  : []),
                 { label: 'Lucro bruto', value: closing.lucroBruto, color: closing.lucroBruto >= 0 ? 'text-emerald-400' : 'text-red-400', neg: false },
                 { label: 'Reserva de caixa (30%)', value: closing.reservaCaixa, color: 'text-amber-400', neg: true },
                 { label: 'Lucro real', value: closing.lucroReal, color: 'text-emerald-400', neg: false },
@@ -1268,6 +1327,11 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 {closing.custos_trafego_termos && closing.custos_trafego_termos.length > 0 && (
                   <> · {closing.custos_trafego_termos.join(', ')}</>
                 )}
+              </p>
+            )}
+            {!!closing.custos_funil_total && closing.custos_funil_itens && closing.custos_funil_itens.length > 0 && (
+              <p className="text-[11px] text-gray-600 mt-2">
+                Custos do funil: {closing.custos_funil_itens.map(i => `${i.descricao} (${formatCurrency(i.valor)})`).join(', ')}
               </p>
             )}
             {closing.produtos_periodos && closing.produtos_periodos.length > 0 && (
