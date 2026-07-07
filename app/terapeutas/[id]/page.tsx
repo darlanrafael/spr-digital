@@ -267,7 +267,7 @@ export default function PainelTerapeuta() {
   const [notaLoading, setNotaLoading] = useState(false)
   const [notaSenhaOpen, setNotaSenhaOpen] = useState(false)
 
-  async function loadData(isTerapeuta: boolean) {
+  async function loadData() {
     const client = getSupabaseClient()
     if (!client) return
     setLoading(true)
@@ -280,35 +280,33 @@ export default function PainelTerapeuta() {
     const sessoesData = (sResp.data ?? []) as Sessao[]
     setSessoes(sessoesData)
 
-    if (isTerapeuta) {
-      const saleIds = [...new Set(sessoesData.map(s => s.sale_id))]
-      const sessaoIds = sessoesData.map(s => s.id)
-      if (saleIds.length > 0) {
-        const [vendasResp, ocResp, remResp] = await Promise.all([
-          client.from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status').in('id', saleIds),
-          client.from('ocorrencias_prontuario').select('id,sale_id,tipo,titulo,descricao,criado_por_nome,criado_por_tipo,created_at').in('sale_id', saleIds).order('created_at', { ascending: false }),
-          sessaoIds.length > 0
-            ? client.from('remarcacoes_historico').select('*').in('sessao_id', sessaoIds).order('created_at', { ascending: true })
-            : Promise.resolve({ data: [] as Remarcacao[] }),
-        ])
-        const vendasMap: Record<string, SaleInfo> = {}
-        for (const v of (vendasResp.data ?? []) as SaleInfo[]) vendasMap[v.id] = v
-        setVendas(vendasMap)
+    const saleIds = [...new Set(sessoesData.map(s => s.sale_id))]
+    const sessaoIds = sessoesData.map(s => s.id)
+    if (saleIds.length > 0) {
+      const [vendasResp, ocResp, remResp] = await Promise.all([
+        client.from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status').in('id', saleIds),
+        client.from('ocorrencias_prontuario').select('id,sale_id,tipo,titulo,descricao,criado_por_nome,criado_por_tipo,created_at').in('sale_id', saleIds).order('created_at', { ascending: false }),
+        sessaoIds.length > 0
+          ? client.from('remarcacoes_historico').select('*').in('sessao_id', sessaoIds).order('created_at', { ascending: true })
+          : Promise.resolve({ data: [] as Remarcacao[] }),
+      ])
+      const vendasMap: Record<string, SaleInfo> = {}
+      for (const v of (vendasResp.data ?? []) as SaleInfo[]) vendasMap[v.id] = v
+      setVendas(vendasMap)
 
-        const ocMap: Record<string, Ocorrencia[]> = {}
-        for (const o of (ocResp.data ?? []) as Ocorrencia[]) {
-          if (!ocMap[o.sale_id]) ocMap[o.sale_id] = []
-          ocMap[o.sale_id].push(o)
-        }
-        setOcorrencias(ocMap)
-
-        const remMap: Record<string, Remarcacao[]> = {}
-        for (const r of (remResp.data ?? []) as Remarcacao[]) {
-          if (!remMap[r.sessao_id]) remMap[r.sessao_id] = []
-          remMap[r.sessao_id].push(r)
-        }
-        setRemarcacoes(remMap)
+      const ocMap: Record<string, Ocorrencia[]> = {}
+      for (const o of (ocResp.data ?? []) as Ocorrencia[]) {
+        if (!ocMap[o.sale_id]) ocMap[o.sale_id] = []
+        ocMap[o.sale_id].push(o)
       }
+      setOcorrencias(ocMap)
+
+      const remMap: Record<string, Remarcacao[]> = {}
+      for (const r of (remResp.data ?? []) as Remarcacao[]) {
+        if (!remMap[r.sessao_id]) remMap[r.sessao_id] = []
+        remMap[r.sessao_id].push(r)
+      }
+      setRemarcacoes(remMap)
     }
     setLoading(false)
   }
@@ -320,7 +318,7 @@ export default function PainelTerapeuta() {
       setAdminEmail(adminSession.email)
       setSessionNome(adminSession.name)
       // isTerapeutaSession stays false — admin sees full view
-      if (id) loadData(false)
+      if (id) loadData()
       return
     }
 
@@ -336,12 +334,12 @@ export default function PainelTerapeuta() {
             router.replace(`/terapeutas/${session.terapeuta_id}`)
             return
           }
-          if (id) loadData(true)
+          if (id) loadData()
           return
         }
       } catch { /* ignore */ }
     }
-    if (id) loadData(false)
+    if (id) loadData()
   }, [id])
 
   // ── Overview: cards + consultas de hoje via /api/terapeutas/dashboard ──
@@ -352,7 +350,13 @@ export default function PainelTerapeuta() {
       const params = new URLSearchParams({ datePreset: ovPreset, terapeutaId: id })
       if (ovPreset === 'custom') {
         if (ovDateStart) params.set('dateStart', ovDateStart + 'T03:00:00.000Z')
-        if (ovDateEnd) params.set('dateEnd', ovDateEnd + 'T26:59:59.000Z')
+        if (ovDateEnd) {
+          // Fim do dia em Brasília (23:59:59 BRT) convertido pra UTC = 02:59:59 do dia seguinte
+          const fimBrt = new Date(ovDateEnd + 'T00:00:00Z')
+          fimBrt.setUTCDate(fimBrt.getUTCDate() + 1)
+          fimBrt.setUTCHours(2, 59, 59, 999)
+          params.set('dateEnd', fimBrt.toISOString())
+        }
       }
       const res = await fetch('/api/terapeutas/dashboard?' + params.toString())
       const json = await res.json()
@@ -364,14 +368,14 @@ export default function PainelTerapeuta() {
   }
 
   useEffect(() => {
-    if (!isTerapeutaSession || !id) return
+    if (!id) return
     loadOverview()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTerapeutaSession, id, ovPreset, ovDateStart, ovDateEnd])
+  }, [id, ovPreset, ovDateStart, ovDateEnd])
 
   // Auto-refresh consultas de hoje a cada 60s
   useEffect(() => {
-    if (!isTerapeutaSession || !id) return
+    if (!id) return
     const interval = setInterval(() => {
       fetch(`/api/terapeutas/dashboard?datePreset=${ovPreset}&terapeutaId=${id}`)
         .then(r => r.ok ? r.json() : null)
@@ -379,7 +383,7 @@ export default function PainelTerapeuta() {
         .catch(() => {})
     }, 60000)
     return () => clearInterval(interval)
-  }, [isTerapeutaSession, id, ovPreset])
+  }, [id, ovPreset])
 
   // Reset formulário de nota quando o prontuário abre/fecha
   useEffect(() => {
@@ -389,7 +393,7 @@ export default function PainelTerapeuta() {
 
   // Histórico de fechamentos de comissão (somente leitura)
   useEffect(() => {
-    if (!isTerapeutaSession || !id || terapeutaTab !== 'fechamentos') return
+    if (!id || terapeutaTab !== 'fechamentos') return
     const client = getSupabaseClient()
     if (!client) return
     async function loadFechamentos() {
@@ -399,12 +403,7 @@ export default function PainelTerapeuta() {
       setFechamentosLoading(false)
     }
     loadFechamentos()
-  }, [isTerapeutaSession, id, terapeutaTab])
-
-  const entregues = sessoes.filter(s => s.status === 'entregue')
-  const pendentes = sessoes.filter(s => s.status === 'pendente' || s.status === 'agendada')
-  const receitaGerada = entregues.filter(s => !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
-  const receitaFutura = pendentes.filter(s => !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
+  }, [id, terapeutaTab])
 
   // ── Agenda: grid do mês ──
   function navMesAgenda(dir: -1 | 1) {
@@ -532,8 +531,8 @@ export default function PainelTerapeuta() {
     setStatusLoading(false)
     if (!res.ok) { setStatusErro(json.error ?? 'Erro'); return }
     setStatusSessaoId(null); setAnularMotivo('')
-    loadData(isTerapeutaSession)
-    if (isTerapeutaSession) loadOverview()
+    loadData()
+    loadOverview()
   }
 
   async function handleRemarcar(senha: string) {
@@ -550,7 +549,7 @@ export default function PainelTerapeuta() {
     if (!res.ok) { setRemarcarErro(json.error ?? 'Erro'); return }
     setRemarcarSenhaModal(false)
     setRemarcarSessaoId(null)
-    loadData(isTerapeutaSession)
+    loadData()
   }
 
   async function handleNota(senha: string) {
@@ -567,7 +566,7 @@ export default function PainelTerapeuta() {
         descricao: notaDesc,
         senha,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
-        usuario_tipo: 'terapeuta',
+        usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
       }),
     })
@@ -576,13 +575,10 @@ export default function PainelTerapeuta() {
     if (!res.ok) { setNotaErro(json.error ?? 'Erro'); return }
     setNotaSenhaOpen(false); setNotaFormOpen(false)
     setNotaTitulo(''); setNotaDesc('')
-    loadData(true)
+    loadData()
   }
 
   const notaValida = notaTitulo.trim().length > 0 && notaDesc.trim().length >= 10
-
-  // Agrupar sessões por sale_id para mostrar "faltam X" — visão admin
-  const saleIds = [...new Set(sessoes.map(s => s.sale_id))]
 
   function renderPresetFiltro(preset: Preset, setPreset: (p: Preset) => void, dateStart: string, setDateStart: (v: string) => void, dateEnd: string, setDateEnd: (v: string) => void) {
     return (
@@ -611,7 +607,7 @@ export default function PainelTerapeuta() {
   return (
     <div className="min-h-screen bg-gray-950 pb-24 md:pb-8">
       <Header />
-      <main className={isTerapeutaSession ? 'max-w-7xl mx-auto px-4 py-6' : 'max-w-5xl mx-auto px-4 py-6'}>
+      <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="mb-6">
           {!isTerapeutaSession && (
             <Link href="/terapeutas/lista" className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 mb-4 transition-colors">
@@ -630,7 +626,7 @@ export default function PainelTerapeuta() {
           <div className="flex items-center justify-center h-40">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : isTerapeutaSession ? (
+        ) : (
           <>
             {/* Tabs de página */}
             <div className="flex items-center gap-1 bg-gray-900 border border-white/10 rounded-xl p-1 mb-6 w-fit">
@@ -992,136 +988,6 @@ export default function PainelTerapeuta() {
               )
             )}
           </>
-        ) : (
-          <>
-            {/* Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              {[
-                {
-                  label: 'Sessões entregues',
-                  sub: 'Confirmadas',
-                  value: entregues.length,
-                  color: 'text-green-500',
-                },
-                {
-                  label: 'Sessões futuras',
-                  sub: 'Agendadas e pendentes',
-                  value: pendentes.length,
-                  color: 'text-yellow-400',
-                },
-                {
-                  label: 'Comissão gerada',
-                  sub: 'Sessões entregues — aguardando pagamento',
-                  value: fmtBRL(receitaGerada),
-                  color: 'text-green-500',
-                },
-                {
-                  label: 'Comissão futura',
-                  sub: 'Sessões agendadas e pendentes não pagas',
-                  value: fmtBRL(receitaFutura),
-                  color: 'text-gray-400',
-                },
-              ].map(({ label, sub, value, color }) => (
-                <div key={label} className="bg-gray-900 border border-white/10 rounded-xl p-4">
-                  <p className="text-xs text-gray-400 mb-1">{label}</p>
-                  <p className={`text-lg font-bold ${color}`}>{value}</p>
-                  <p className="text-[10px] text-gray-600 mt-0.5 leading-tight">{sub}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Email do usuário */}
-            <div className="mb-4 flex items-center gap-3">
-              <label className="text-xs text-gray-500 whitespace-nowrap">Seu e-mail (para autenticação):</label>
-              <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)}
-                className="bg-gray-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50 w-56" />
-            </div>
-
-            {/* Tabela de sessões */}
-            <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/10">
-                <h2 className="text-sm font-semibold text-white">Sessões ({sessoes.length})</h2>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-white/5">
-                      {['#', 'Paciente', 'Data agendada', 'Status', 'Comissão', 'Faltam', 'Ações'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {saleIds.map(saleId => {
-                      const grupo = sessoes.filter(s => s.sale_id === saleId)
-                      return grupo.map((s, idx) => {
-                        const st = STATUS_LABEL[s.status] ?? { label: s.status, color: 'text-gray-400' }
-                        const faltam = s.total_sessoes - s.numero_sessao
-                        const isUltima = s.numero_sessao === s.total_sessoes
-                        return (
-                          <tr key={s.id} className={`border-b border-white/5 hover:bg-white/2 transition-colors ${idx === 0 && grupo.length > 1 ? 'border-t border-indigo-500/20' : ''}`}>
-                            <td className="px-4 py-3 text-gray-500">{s.numero_sessao}</td>
-                            <td className="px-4 py-3">
-                              {idx === 0 && (
-                                <>
-                                  <p className="text-white font-medium">{s.paciente_nome}</p>
-                                  <p className="text-xs text-gray-500">{s.paciente_email}</p>
-                                </>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-gray-300 whitespace-nowrap">{fmtDt(s.data_agendada)}</td>
-                            <td className="px-4 py-3">
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${st.color}`}>{st.label}</span>
-                            </td>
-                            <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(s.comissao_valor)}</td>
-                            <td className="px-4 py-3">
-                              {isUltima ? (
-                                <span className="text-[10px] text-red-400 border border-red-400/30 px-1.5 py-0.5 rounded">Última sessão</span>
-                              ) : (
-                                <span className="text-xs text-gray-500">Faltam {faltam}</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {(s.status === 'agendada' || s.status === 'pendente') && (s.status_consulta ?? 'aguardando') === 'aguardando' && (
-                                  <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('iniciar'); setStatusErro('') }}
-                                    className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap">
-                                    ▶ Iniciar
-                                  </button>
-                                )}
-                                {s.status_consulta === 'em_atendimento' && (
-                                  <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setStatusErro('') }}
-                                    className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors whitespace-nowrap">
-                                    <CheckCircle className="w-3 h-3" /> Concluir
-                                  </button>
-                                )}
-                                {s.status === 'entregue' && (
-                                  <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }}
-                                    className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors whitespace-nowrap">
-                                    Anular
-                                  </button>
-                                )}
-                                {(s.status === 'agendada' || s.status === 'pendente') && (
-                                  <button onClick={() => { setRemarcarSessaoId(s.id); setRemarcarData(s.data_agendada?.slice(0, 16) ?? ''); setRemarcarMotivo('') }}
-                                    className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors whitespace-nowrap">
-                                    <RefreshCw className="w-3 h-3" /> Remarcar
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })
-                    })}
-                    {sessoes.length === 0 && (
-                      <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-600 text-xs">Nenhuma sessão cadastrada</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-          </>
         )}
       </main>
 
@@ -1422,6 +1288,32 @@ export default function PainelTerapeuta() {
                   <span className="text-gray-500 shrink-0">Link Meet</span>
                   <a href={agendaDetalhe.link_meet} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline text-xs truncate max-w-[180px]">Abrir</a>
                 </div>
+              )}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap mt-5 pt-4 border-t border-white/10">
+              {(agendaDetalhe.status === 'agendada' || agendaDetalhe.status === 'pendente') && (agendaDetalhe.status_consulta ?? 'aguardando') === 'aguardando' && (
+                <button onClick={() => { setStatusSessaoId(agendaDetalhe.id); setStatusAcao('iniciar'); setStatusErro(''); setAgendaDetalhe(null) }}
+                  className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors">
+                  ▶ Iniciar
+                </button>
+              )}
+              {agendaDetalhe.status_consulta === 'em_atendimento' && (
+                <button onClick={() => { setStatusSessaoId(agendaDetalhe.id); setStatusAcao('concluir'); setStatusErro(''); setAgendaDetalhe(null) }}
+                  className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors">
+                  <CheckCircle className="w-3.5 h-3.5" /> Concluir
+                </button>
+              )}
+              {agendaDetalhe.status === 'entregue' && (
+                <button onClick={() => { setStatusSessaoId(agendaDetalhe.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro(''); setAgendaDetalhe(null) }}
+                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors">
+                  Anular
+                </button>
+              )}
+              {(agendaDetalhe.status === 'agendada' || agendaDetalhe.status === 'pendente') && (
+                <button onClick={() => { setRemarcarSessaoId(agendaDetalhe.id); setRemarcarData(agendaDetalhe.data_agendada?.slice(0, 16) ?? ''); setRemarcarMotivo(''); setAgendaDetalhe(null) }}
+                  className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors">
+                  <RefreshCw className="w-3.5 h-3.5" /> Remarcar
+                </button>
               )}
             </div>
           </div>
