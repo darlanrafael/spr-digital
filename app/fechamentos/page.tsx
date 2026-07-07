@@ -796,7 +796,7 @@ function FechamentosContent() {
                               {efectivaAliquota ? `(${efectivaAliquota}%*)` : ''}
                             </td>
                             <td className="px-4 py-3 text-right text-red-400 font-semibold">-{formatCurrency(impostoTotal)}</td>
-                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(faturamentoLiquido)}</td>
+                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(byProduct.reduce((a, r) => a + r.liquido, 0))}</td>
                             <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(byProduct.reduce((a, r) => a + r.liquido_pos_impostos, 0))}</td>
                           </tr>
                         </tfoot>
