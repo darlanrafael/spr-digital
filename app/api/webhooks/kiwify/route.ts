@@ -104,6 +104,21 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Kiwify permite checkout em outras moedas (ex: USD) para clientes
+      // internacionais, mas o campo `charge_amount`/`my_commission` vem no
+      // valor original cobrado — sem indicar a moeda. Já identificamos 27
+      // vendas históricas (mai-jun/2026) com valor_pago_cliente em USD
+      // gravado como se fosse BRL. product_base_price é sempre o preço de
+      // catálogo em BRL, então uma razão pago/base muito baixa é o sinal
+      // de alerta.
+      if (sale.preco_base > 0 && sale.valor_pago_cliente / sale.preco_base < 0.4) {
+        console.warn(
+          '[Kiwify Webhook] ALERTA moeda suspeita — valor_pago_cliente muito abaixo do preco_base ' +
+          '(possível venda em moeda estrangeira não convertida):',
+          JSON.stringify({ produto: sale.produto, email: sale.email, preco_base: sale.preco_base, valor_pago_cliente: sale.valor_pago_cliente, valor_liquido: sale.valor_liquido, data_hora: sale.data_hora, order_id: orderId })
+        )
+      }
+
       console.log('[Kiwify Webhook] inserindo venda:', JSON.stringify(sale, null, 2))
 
       const { error } = await client.from('sales').insert(sale)
