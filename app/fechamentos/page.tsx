@@ -229,8 +229,12 @@ function FechamentosContent() {
 
   const lucroBruto = faturamentoLiquido - totalCosts
   const lucroBrutoOutros = lucroBruto - faturamentoLiquidoMentoria
-  const reservaCaixa = Math.max(0, lucroBrutoOutros * 0.3)
-  const lucroReal = Math.max(0, lucroBrutoOutros * 0.7) + Math.max(0, faturamentoLiquidoMentoria)
+  // Sem reserva de caixa quando dá prejuízo — não tem como reservar 30% de um
+  // valor negativo. Nesse caso o prejuízo inteiro (100%) vira Lucro Real
+  // negativo, pra ser distribuído (rateado) entre os sócios normalmente.
+  const reservaCaixa = lucroBrutoOutros > 0 ? lucroBrutoOutros * 0.3 : 0
+  const lucroRealOutros = lucroBrutoOutros > 0 ? lucroBrutoOutros * 0.7 : lucroBrutoOutros
+  const lucroReal = lucroRealOutros + faturamentoLiquidoMentoria
 
   const socioPercents = socioInputs.map(parsePercent)
   const socioTotal = socioPercents[0] + socioPercents[1]
@@ -839,9 +843,9 @@ function FechamentosContent() {
                       </p>
                     )}
                   </div>
-                  <div className="bg-gray-900 rounded-xl border border-emerald-500/30 p-4 text-center">
-                    <p className="text-xs text-gray-500 mb-2">Lucro Real (70%)</p>
-                    <p className="text-2xl font-bold text-emerald-400">{formatCurrency(lucroReal)}</p>
+                  <div className={`bg-gray-900 rounded-xl border p-4 text-center ${lucroReal >= 0 ? 'border-emerald-500/30' : 'border-red-500/30'}`}>
+                    <p className="text-xs text-gray-500 mb-2">{lucroReal >= 0 ? 'Lucro Real (70%)' : 'Prejuízo a ratear'}</p>
+                    <p className={`text-2xl font-bold ${lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal)}</p>
                     <p className="text-xs text-gray-600 mt-1">Para divisão entre sócios</p>
                   </div>
                 </div>
@@ -856,7 +860,7 @@ function FechamentosContent() {
                         </div>
                         <div className="flex-1">
                           <p className="text-sm text-white font-medium">{nome}</p>
-                          <p className="text-xs text-emerald-400">{formatCurrency(socioValues[i])}</p>
+                          <p className={`text-xs ${socioValues[i] >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(socioValues[i])}</p>
                         </div>
                         <div className="flex items-center gap-1">
                           <input
@@ -899,7 +903,7 @@ function FechamentosContent() {
                     className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-4 py-2 rounded-lg transition-colors">
                     Voltar
                   </button>
-                  <button onClick={() => setActiveStep(4)} disabled={!isDistributionValid || lucroBruto <= 0}
+                  <button onClick={() => setActiveStep(4)} disabled={!isDistributionValid}
                     className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition-colors">
                     Revisar <ChevronRight className="w-4 h-4" />
                   </button>
@@ -977,8 +981,8 @@ function FechamentosContent() {
                             <span className="text-amber-400">-{formatCurrency(reservaCaixa)}</span>
                           </div>
                           <div className="flex justify-between border-t border-white/5 pt-2">
-                            <span className="text-white font-semibold">Lucro real disponível para repasse</span>
-                            <span className="text-emerald-400 font-bold text-base">{formatCurrency(lucroReal)}</span>
+                            <span className="text-white font-semibold">{lucroReal >= 0 ? 'Lucro real disponível para repasse' : 'Prejuízo a ratear entre sócios'}</span>
+                            <span className={`font-bold text-base ${lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal)}</span>
                           </div>
                         </div>
                       </div>
@@ -1003,7 +1007,7 @@ function FechamentosContent() {
                               <tr key={nome} className="border-b border-white/5">
                                 <td className="px-4 py-3 text-gray-200 font-medium">{nome}</td>
                                 <td className="px-4 py-3 text-center text-amber-400">{socioPercents[i].toFixed(2)}%</td>
-                                <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(socioValues[i])}</td>
+                                <td className={`px-4 py-3 text-right font-semibold ${socioValues[i] >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(socioValues[i])}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1011,7 +1015,7 @@ function FechamentosContent() {
                             <tr className="border-t border-white/10 bg-gray-800/20">
                               <td className="px-4 py-3 text-gray-200 font-semibold">Total</td>
                               <td className="px-4 py-3 text-center text-gray-400 font-semibold">100%</td>
-                              <td className="px-4 py-3 text-right text-emerald-400 font-bold">{formatCurrency(lucroReal)}</td>
+                              <td className={`px-4 py-3 text-right font-bold ${lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -1262,7 +1266,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
               </div>
               <div>
                 <p className="text-gray-600">Lucro real</p>
-                <p className="text-emerald-400 font-medium">{formatCurrency(closing.lucroReal)}</p>
+                <p className={`font-medium ${closing.lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(closing.lucroReal)}</p>
               </div>
               {spr && (
                 <div>
@@ -1311,7 +1315,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
                   : []),
                 { label: 'Lucro bruto', value: closing.lucroBruto, color: closing.lucroBruto >= 0 ? 'text-emerald-400' : 'text-red-400', neg: false },
                 { label: 'Reserva de caixa (30%)', value: closing.reservaCaixa, color: 'text-amber-400', neg: true },
-                { label: 'Lucro real', value: closing.lucroReal, color: 'text-emerald-400', neg: false },
+                { label: 'Lucro real', value: closing.lucroReal, color: closing.lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400', neg: false },
               ].map(row => (
                 <div key={row.label} className="flex justify-between">
                   <span className="text-gray-500">{row.label}</span>
