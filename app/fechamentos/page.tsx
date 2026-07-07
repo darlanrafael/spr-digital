@@ -207,9 +207,17 @@ function FechamentosContent() {
   const taxasPlat = byProduct.reduce((a, p) => a + p.taxas, 0)
   const faturamentoLiquido = faturamentoBruto - taxasPlat - impostoTotal
 
+  // Produtos de mentoria não entram na reserva de caixa (30%) — o lucro deles
+  // vai 100% para o Lucro Real, já que a comissão do terapeuta é tratada
+  // separadamente pelo módulo de Fechamentos de Terapeutas.
+  const faturamentoLiquidoMentoria = byProduct
+    .filter(p => p.nome.toLowerCase().includes('mentoria'))
+    .reduce((a, p) => a + (p.bruto - p.taxas - p.imposto), 0)
+
   const lucroBruto = faturamentoLiquido - totalCosts
-  const reservaCaixa = Math.max(0, lucroBruto * 0.3)
-  const lucroReal = Math.max(0, lucroBruto * 0.7)
+  const lucroBrutoOutros = lucroBruto - faturamentoLiquidoMentoria
+  const reservaCaixa = Math.max(0, lucroBrutoOutros * 0.3)
+  const lucroReal = Math.max(0, lucroBrutoOutros * 0.7) + Math.max(0, faturamentoLiquidoMentoria)
 
   const socioPercents = socioInputs.map(parsePercent)
   const socioTotal = socioPercents[0] + socioPercents[1]
@@ -769,6 +777,11 @@ function FechamentosContent() {
                     <p className="text-xs text-gray-500 mb-2">Reserva de Caixa (30%)</p>
                     <p className="text-2xl font-bold text-purple-400">{formatCurrency(reservaCaixa)}</p>
                     <p className="text-xs text-gray-600 mt-1">Lançada automaticamente ao confirmar</p>
+                    {faturamentoLiquidoMentoria > 0 && (
+                      <p className="text-[10px] text-gray-600 mt-1">
+                        Não incide sobre {formatCurrency(faturamentoLiquidoMentoria)} de produtos de mentoria
+                      </p>
+                    )}
                   </div>
                   <div className="bg-gray-900 rounded-xl border border-emerald-500/30 p-4 text-center">
                     <p className="text-xs text-gray-500 mb-2">Lucro Real (70%)</p>
