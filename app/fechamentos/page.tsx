@@ -1116,8 +1116,17 @@ function HistoricoTab({ closings }: { closings: Closing[] }) {
   )
 }
 
+const COMPRADORES_PAGE_SIZE = 12
+
 function ClosingCard({ closing }: { closing: Closing }) {
   const [expanded, setExpanded] = useState(false)
+  const [compradoresPage, setCompradoresPage] = useState(1)
+
+  const compradoresTotalPages = Math.max(1, Math.ceil(closing.compradores.length / COMPRADORES_PAGE_SIZE))
+  const compradoresPaginados = closing.compradores.slice(
+    (compradoresPage - 1) * COMPRADORES_PAGE_SIZE,
+    compradoresPage * COMPRADORES_PAGE_SIZE
+  )
 
   const confirmedAt = closing.data_confirmacao
     ? formatDateTime(closing.data_confirmacao.replace('T', ' ').slice(0, 16).replace(' ', 'T'))
@@ -1369,6 +1378,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Lista completa de compradores</h4>
                 <p className="text-[10px] text-gray-600 mt-0.5">
                   {closing.compradores.length} compradores · snapshot imutável registrado na data do fechamento
+                  {compradoresTotalPages > 1 && ` · página ${compradoresPage} de ${compradoresTotalPages}`}
                 </p>
               </div>
               <button
@@ -1395,7 +1405,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {closing.compradores.map((b, i) => (
+                  {compradoresPaginados.map((b, i) => (
                     <tr key={i} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                       <td className="px-4 py-2.5 text-gray-300">{b.nome}</td>
                       <td className="px-4 py-2.5 text-gray-500 hidden md:table-cell">{b.email}</td>
@@ -1426,6 +1436,14 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 </tbody>
               </table>
             </div>
+            {compradoresTotalPages > 1 && (
+              <Pagination
+                currentPage={compradoresPage}
+                totalPages={compradoresTotalPages}
+                onPrevious={() => setCompradoresPage(p => Math.max(1, p - 1))}
+                onNext={() => setCompradoresPage(p => Math.min(compradoresTotalPages, p + 1))}
+              />
+            )}
           </div>
         </div>
       )}
