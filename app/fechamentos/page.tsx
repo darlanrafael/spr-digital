@@ -1121,6 +1121,20 @@ const COMPRADORES_PAGE_SIZE = 12
 function ClosingCard({ closing }: { closing: Closing }) {
   const [expanded, setExpanded] = useState(false)
   const [compradoresPage, setCompradoresPage] = useState(1)
+  const [produtosFiltro, setProdutosFiltro] = useState<string[]>(() => (closing.byProduct ?? []).map(p => p.nome))
+
+  const byProductFiltrado = (closing.byProduct ?? []).filter(row => produtosFiltro.includes(row.nome))
+  const filtroTotais = {
+    qtd: byProductFiltrado.reduce((a, r) => a + r.qtd, 0),
+    bruto: byProductFiltrado.reduce((a, r) => a + r.bruto, 0),
+    taxas: byProductFiltrado.reduce((a, r) => a + r.taxas, 0),
+    imposto: byProductFiltrado.reduce((a, r) => a + r.imposto, 0),
+    liquido: byProductFiltrado.reduce((a, r) => a + r.liquido, 0),
+  }
+
+  function toggleProdutoFiltro(nome: string) {
+    setProdutosFiltro(prev => prev.includes(nome) ? prev.filter(p => p !== nome) : [...prev, nome])
+  }
 
   const compradoresTotalPages = Math.max(1, Math.ceil(closing.compradores.length / COMPRADORES_PAGE_SIZE))
   const compradoresPaginados = closing.compradores.slice(
@@ -1257,9 +1271,45 @@ function ClosingCard({ closing }: { closing: Closing }) {
           {/* Seção 2 — Detalhamento por produto */}
           {closing.byProduct && closing.byProduct.length > 0 && (
             <div className="border-b border-white/5">
-              <div className="px-4 pt-4 pb-2">
+              <div className="px-4 pt-4 pb-2 flex items-center justify-between flex-wrap gap-2">
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Detalhamento por produto</h4>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <button
+                    onClick={() => setProdutosFiltro(closing.byProduct!.map(p => p.nome))}
+                    className="text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                    Selecionar todos
+                  </button>
+                  <span className="text-gray-700">·</span>
+                  <button
+                    onClick={() => setProdutosFiltro([])}
+                    className="text-gray-500 hover:text-gray-400 transition-colors"
+                  >
+                    Desmarcar todos
+                  </button>
+                </div>
               </div>
+              <div className="px-4 pb-3 flex flex-wrap gap-1.5">
+                {closing.byProduct.map(p => {
+                  const ativo = produtosFiltro.includes(p.nome)
+                  return (
+                    <button
+                      key={p.nome}
+                      onClick={() => toggleProdutoFiltro(p.nome)}
+                      className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${
+                        ativo
+                          ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                          : 'bg-gray-800/50 text-gray-500 border-white/10'
+                      }`}
+                    >
+                      {ativo ? '✓' : '○'} {p.nome}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="px-4 pb-2 text-[10px] text-gray-600">
+                {produtosFiltro.length} de {closing.byProduct.length} produtos selecionados · {filtroTotais.qtd} vendas no filtro
+              </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -1274,7 +1324,13 @@ function ClosingCard({ closing }: { closing: Closing }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {closing.byProduct.map((row, i) => (
+                    {byProductFiltrado.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-6 text-center text-gray-600 text-xs">
+                          Nenhum produto selecionado no filtro acima.
+                        </td>
+                      </tr>
+                    ) : byProductFiltrado.map((row, i) => (
                       <tr key={i} className="border-b border-white/5">
                         <td className="px-4 py-2.5 text-gray-200">{row.nome}</td>
                         <td className="px-4 py-2.5 text-center text-gray-400">{row.qtd}</td>
@@ -1286,6 +1342,19 @@ function ClosingCard({ closing }: { closing: Closing }) {
                       </tr>
                     ))}
                   </tbody>
+                  {byProductFiltrado.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t border-white/10 bg-gray-800/30">
+                        <td className="px-4 py-2.5 text-gray-200 font-semibold">Total</td>
+                        <td className="px-4 py-2.5 text-center text-gray-200 font-semibold">{filtroTotais.qtd}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-200 font-semibold">{formatCurrency(filtroTotais.bruto)}</td>
+                        <td className="px-4 py-2.5 text-right text-red-400 font-semibold">-{formatCurrency(filtroTotais.taxas)}</td>
+                        <td className="px-4 py-2.5 text-center"></td>
+                        <td className="px-4 py-2.5 text-right text-red-400 font-semibold">-{formatCurrency(filtroTotais.imposto)}</td>
+                        <td className="px-4 py-2.5 text-right text-emerald-400 font-semibold">{formatCurrency(filtroTotais.liquido)}</td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </div>
