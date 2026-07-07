@@ -8,10 +8,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sale_id, terapeuta_id, data_primeira_sessao, usuario_email, senha } = body as {
+  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, usuario_email, senha } = body as {
     sale_id: string
     terapeuta_id: string
     data_primeira_sessao: string
+    numero_sessoes?: number
     usuario_email: string
     senha: string
   }
@@ -33,7 +34,12 @@ export async function POST(req: NextRequest) {
     .from('terapeutas').select('id,percentual_comissao').eq('id', terapeuta_id).single()
   if (terapErr || !terapeuta) return NextResponse.json({ error: 'Terapeuta não encontrado' }, { status: 404 })
 
-  const numSessoes = inferirNumeroSessoes(sale.produto as string)
+  // O nome do produto nem sempre indica o pacote real (ex: "Mentoria Particular -
+  // Pedro | Denise" é usado pra pacotes de 1/2/4/8 sessões sem diferenciação no
+  // nome), então a tela de agendamento permite sobrescrever o valor inferido.
+  const numSessoes = numero_sessoes && numero_sessoes > 0
+    ? Math.floor(numero_sessoes)
+    : inferirNumeroSessoes(sale.produto as string)
   const { comissao_por_sessao } = calcularComissao({
     valor_liquido: sale.valor_liquido as number,
     percentual: terapeuta.percentual_comissao as number,

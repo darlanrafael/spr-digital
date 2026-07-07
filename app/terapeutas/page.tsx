@@ -116,7 +116,13 @@ export default function TerapeutasDashboard() {
       const params = new URLSearchParams({ datePreset: preset, terapeutaId })
       if (preset === 'custom') {
         if (dateStart) params.set('dateStart', dateStart + 'T03:00:00.000Z')
-        if (dateEnd) params.set('dateEnd', dateEnd + 'T26:59:59.000Z') // fim do dia Brasília
+        if (dateEnd) {
+          // Fim do dia em Brasília (23:59:59 BRT) convertido pra UTC = 02:59:59 do dia seguinte
+          const fimBrt = new Date(dateEnd + 'T00:00:00Z')
+          fimBrt.setUTCDate(fimBrt.getUTCDate() + 1)
+          fimBrt.setUTCHours(2, 59, 59, 999)
+          params.set('dateEnd', fimBrt.toISOString())
+        }
       }
       const res = await fetch('/api/terapeutas/dashboard?' + params.toString())
       if (!res.ok) throw new Error(await res.text())

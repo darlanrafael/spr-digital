@@ -210,6 +210,7 @@ export default function TerapeutasVendas() {
   const [agendarVendaId, setAgendarVendaId] = useState<string | null>(null)
   const [agendarTerapeutaId, setAgendarTerapeutaId] = useState('')
   const [agendarDataPrimeira, setAgendarDataPrimeira] = useState('')
+  const [agendarNumSessoesInput, setAgendarNumSessoesInput] = useState('')
   const [agendarSenhaOpen, setAgendarSenhaOpen] = useState(false)
   const [agendarLoading, setAgendarLoading] = useState(false)
   const [agendarErro, setAgendarErro] = useState('')
@@ -257,7 +258,11 @@ export default function TerapeutasVendas() {
       const params = new URLSearchParams({ datePreset: preset })
       if (preset === 'custom') {
         params.set('dateStart', dateStart + 'T03:00:00.000Z')
-        params.set('dateEnd', dateEnd + 'T26:59:59.000Z')
+        // Fim do dia em Brasília (23:59:59 BRT) convertido pra UTC = 02:59:59 do dia seguinte
+        const fimBrt = new Date(dateEnd + 'T00:00:00Z')
+        fimBrt.setUTCDate(fimBrt.getUTCDate() + 1)
+        fimBrt.setUTCHours(2, 59, 59, 999)
+        params.set('dateEnd', fimBrt.toISOString())
       }
       const res = await fetch('/api/terapeutas/vendas?' + params.toString())
       if (!res.ok) throw new Error(await res.text())
@@ -304,7 +309,7 @@ export default function TerapeutasVendas() {
   const agendarVenda = agendarVendaId
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId)
     : null
-  const agendarNumSessoes = agendarVenda ? inferirNumeroSessoes(agendarVenda.produto) : 1
+  const agendarNumSessoes = parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoes(agendarVenda.produto) : 1)
   const agendarPreviewDatas = agendarDataPrimeira && agendarVenda
     ? Array.from({ length: agendarNumSessoes }, (_, i) => {
         const d = new Date(agendarDataPrimeira)
@@ -357,6 +362,7 @@ export default function TerapeutasVendas() {
       body: JSON.stringify({
         sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaId,
         data_primeira_sessao: agendarDataPrimeira,
+        numero_sessoes: agendarNumSessoes,
         usuario_email: adminEmail, senha,
       }),
     })
@@ -630,6 +636,7 @@ export default function TerapeutasVendas() {
                                   setAgendarVendaId(sale.id)
                                   setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
                                   setAgendarDataPrimeira(''); setAgendarErro('')
+                                  setAgendarNumSessoesInput(String(inferirNumeroSessoes(sale.produto)))
                                 }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                   <Calendar className="w-3 h-3" /> Agendar
                                 </button>
@@ -773,6 +780,14 @@ export default function TerapeutasVendas() {
                 <label className="text-xs text-gray-400 block mb-1">Data e horário da 1ª sessão <span className="text-red-400">*</span></label>
                 <input type="datetime-local" value={agendarDataPrimeira} onChange={e => setAgendarDataPrimeira(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões <span className="text-red-400">*</span></label>
+                <input type="number" min={1} value={agendarNumSessoesInput} onChange={e => setAgendarNumSessoesInput(e.target.value)}
+                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                <p className="text-[10px] text-gray-600 mt-1">
+                  Sugerido a partir do nome do produto — confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
+                </p>
               </div>
               {agendarPreviewDatas.length > 0 && (
                 <div className="bg-gray-800/60 rounded-lg p-3">
