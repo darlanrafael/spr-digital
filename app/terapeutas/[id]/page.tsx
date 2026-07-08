@@ -159,6 +159,11 @@ function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
+function nowForDatetimeLocal(): string {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 16)
+}
 
 function noPeriodo(dataIso: string, preset: Preset, dateStart: string, dateEnd: string): boolean {
   if (preset === 'custom') {
@@ -219,6 +224,7 @@ export default function PainelTerapeuta() {
   const [statusErro, setStatusErro] = useState('')
   const [statusLoading, setStatusLoading] = useState(false)
   const [anularMotivo, setAnularMotivo] = useState('')
+  const [concluirData, setConcluirData] = useState('')
 
   // Modal remarcar — visão admin
   const [remarcarSessaoId, setRemarcarSessaoId] = useState<string | null>(null)
@@ -534,6 +540,9 @@ export default function PainelTerapeuta() {
     if (statusAcao === 'anular' && anularMotivo.trim().length < 10) {
       setStatusErro('Informe o motivo (mínimo 10 caracteres)'); setStatusLoading(false); return
     }
+    if (statusAcao === 'concluir' && !concluirData) {
+      setStatusErro('Informe a data de entrega'); setStatusLoading(false); return
+    }
     const res = await fetch('/api/terapeutas/sessoes', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -541,6 +550,7 @@ export default function PainelTerapeuta() {
         sessao_id: statusSessaoId,
         acao: statusAcao,
         motivo: statusAcao === 'anular' ? anularMotivo : undefined,
+        data_entrega: statusAcao === 'concluir' ? new Date(concluirData).toISOString() : undefined,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
@@ -550,7 +560,7 @@ export default function PainelTerapeuta() {
     const json = await res.json()
     setStatusLoading(false)
     if (!res.ok) { setStatusErro(json.error ?? 'Erro'); return }
-    setStatusSessaoId(null); setAnularMotivo('')
+    setStatusSessaoId(null); setAnularMotivo(''); setConcluirData('')
     loadData()
     loadOverview()
   }
@@ -740,8 +750,8 @@ export default function PainelTerapeuta() {
                                             ▶ Iniciar
                                           </button>
                                         )}
-                                        {s.status_consulta === 'em_atendimento' && (
-                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setStatusErro('') }}
+                                        {(s.status === 'agendada' || s.status === 'pendente') && (
+                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setConcluirData(nowForDatetimeLocal()); setStatusErro('') }}
                                             className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors whitespace-nowrap">
                                             <CheckCircle className="w-3 h-3" /> Concluir
                                           </button>
@@ -1074,9 +1084,33 @@ export default function PainelTerapeuta() {
         </div>
       )}
 
+      {/* Modal concluir — precisa da data de entrega antes da senha */}
+      {statusSessaoId && statusAcao === 'concluir' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Concluir sessão</h3>
+            <p className="text-xs text-gray-400 mb-4">Data e horário em que a sessão foi de fato entregue (pode ser uma data passada, no caso de lançamento manual).</p>
+            <input type="datetime-local" value={concluirData} onChange={e => setConcluirData(e.target.value)}
+              className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-green-500/50 mb-3" />
+            {statusErro && <p className="text-xs text-red-400 mb-3">{statusErro}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setStatusSessaoId(null); setConcluirData('') }}
+                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => {
+                if (!concluirData) { setStatusErro('Informe a data de entrega'); return }
+                setStatusErro('')
+              }}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg transition-colors">
+                Próximo →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SenhaModal
-        isOpen={!!statusSessaoId && (statusAcao !== 'anular' || anularMotivo.trim().length >= 10)}
-        onClose={() => { setStatusSessaoId(null); setStatusErro(''); setAnularMotivo('') }}
+        isOpen={!!statusSessaoId && (statusAcao !== 'anular' || anularMotivo.trim().length >= 10) && (statusAcao !== 'concluir' || !!concluirData)}
+        onClose={() => { setStatusSessaoId(null); setStatusErro(''); setAnularMotivo(''); setConcluirData('') }}
         onConfirm={handleStatusAcao}
         titulo={statusAcao === 'iniciar' ? 'Iniciar consulta' : statusAcao === 'concluir' ? 'Concluir consulta' : 'Anular sessão'}
         descricao="Digite sua senha para confirmar"
@@ -1355,8 +1389,8 @@ export default function PainelTerapeuta() {
                   ▶ Iniciar
                 </button>
               )}
-              {agendaDetalhe.status_consulta === 'em_atendimento' && (
-                <button onClick={() => { setStatusSessaoId(agendaDetalhe.id); setStatusAcao('concluir'); setStatusErro(''); setAgendaDetalhe(null) }}
+              {(agendaDetalhe.status === 'agendada' || agendaDetalhe.status === 'pendente') && (
+                <button onClick={() => { setStatusSessaoId(agendaDetalhe.id); setStatusAcao('concluir'); setConcluirData(nowForDatetimeLocal()); setStatusErro(''); setAgendaDetalhe(null) }}
                   className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors">
                   <CheckCircle className="w-3.5 h-3.5" /> Concluir
                 </button>

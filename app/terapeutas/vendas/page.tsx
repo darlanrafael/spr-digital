@@ -101,6 +101,11 @@ function fmtDt(iso: string | null) {
     hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
   })
 }
+function nowForDatetimeLocal(): string {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 16)
+}
 
 function inferirNumeroSessoes(produto: string): number {
   const p = produto.toLowerCase()
@@ -225,6 +230,7 @@ export default function TerapeutasVendas() {
   const [scLoading, setScLoading] = useState(false)
   const [scErro, setScErro] = useState('')
   const [anularMotivo, setAnularMotivo] = useState('')
+  const [scConcluirData, setScConcluirData] = useState('')
 
   // ── Ocorrências inline no prontuário ──
   const [ocorrenciaTipo, setOcorrenciaTipo] = useState<OcorrenciaTipo>(null)
@@ -385,6 +391,7 @@ export default function TerapeutasVendas() {
         sessao_id: scSessaoId,
         acao: scAcao,
         motivo: scAcao === 'anular' ? anularMotivo : undefined,
+        data_entrega: scAcao === 'concluir' ? new Date(scConcluirData).toISOString() : undefined,
         usuario_nome: nomeFromEmail(adminEmail),
         usuario_tipo: 'admin',
         usuario_email: adminEmail,
@@ -394,7 +401,7 @@ export default function TerapeutasVendas() {
     const json = await res.json()
     setScLoading(false)
     if (!res.ok) { setScErro(json.error ?? 'Erro'); return }
-    setScSessaoId(null); setScSenhaOpen(false); setAnularMotivo('')
+    setScSessaoId(null); setScSenhaOpen(false); setAnularMotivo(''); setScConcluirData('')
     const msgs: Record<string, string> = { iniciar: '▶ Consulta iniciada!', concluir: '✓ Consulta concluída!', anular: '✓ Sessão anulada.' }
     showToast(msgs[scAcao] ?? '✓ Feito!')
     loadData()
@@ -940,8 +947,8 @@ export default function TerapeutasVendas() {
                               ▶ Iniciar consulta
                             </button>
                           )}
-                          {s.status_consulta === 'em_atendimento' && (
-                            <button onClick={() => { setScSessaoId(s.id); setScAcao('concluir'); setScErro(''); setScSenhaOpen(true) }}
+                          {(s.status === 'agendada' || s.status === 'pendente') && (
+                            <button onClick={() => { setScSessaoId(s.id); setScAcao('concluir'); setScConcluirData(nowForDatetimeLocal()); setScErro('') }}
                               className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors">
                               <CheckCircle className="w-3 h-3" /> Concluir consulta
                             </button>
@@ -1267,6 +1274,29 @@ export default function TerapeutasVendas() {
                 if (anularMotivo.trim().length < 10) { setScErro('Mínimo 10 caracteres'); return }
                 setScErro(''); setScSenhaOpen(true)
               }} className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg transition-colors">
+                Próximo →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Concluir sessão — precisa da data de entrega antes da senha */}
+      {scSessaoId && scAcao === 'concluir' && !scSenhaOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Concluir sessão</h3>
+            <p className="text-xs text-gray-400 mb-4">Data e horário em que a sessão foi de fato entregue (pode ser uma data passada, no caso de lançamento manual).</p>
+            <input type="datetime-local" value={scConcluirData} onChange={e => setScConcluirData(e.target.value)}
+              className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-green-500/50 mb-3" />
+            {scErro && <p className="text-xs text-red-400 mb-3">{scErro}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setScSessaoId(null); setScConcluirData('') }}
+                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => {
+                if (!scConcluirData) { setScErro('Informe a data de entrega'); return }
+                setScErro(''); setScSenhaOpen(true)
+              }} className="flex-1 px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg transition-colors">
                 Próximo →
               </button>
             </div>

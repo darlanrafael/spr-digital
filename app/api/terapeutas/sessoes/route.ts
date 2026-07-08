@@ -8,12 +8,13 @@ export async function PATCH(req: NextRequest) {
       sessao_id: string
       acao: 'iniciar' | 'concluir' | 'anular'
       motivo?: string
+      data_entrega?: string
       senha: string
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
     }
-    const { sessao_id, acao, motivo, senha, usuario_nome, usuario_tipo, usuario_email } = body
+    const { sessao_id, acao, motivo, data_entrega, senha, usuario_nome, usuario_tipo, usuario_email } = body
 
     if (!sessao_id || !acao || !senha || !usuario_email) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
@@ -44,16 +45,19 @@ export async function PATCH(req: NextRequest) {
       ocorrenciaTitulo = `Consulta Iniciada — Sessão ${sessao.numero_sessao}`
       ocorrenciaDesc = `Consulta iniciada por ${usuario_nome} às ${horaLocal}`
     } else if (acao === 'concluir') {
+      const dataEntregaFinal = data_entrega ? new Date(data_entrega).toISOString() : now
       updateData = {
         status_consulta: 'concluida',
         status: 'entregue',
-        data_entrega: now,
+        data_entrega: dataEntregaFinal,
         concluido_em: now,
         entregue_confirmado_por: usuario_nome,
       }
       ocorrenciaTipo = 'confirmacao_entrega'
       ocorrenciaTitulo = `Consulta Concluída — Sessão ${sessao.numero_sessao}`
-      ocorrenciaDesc = `Consulta concluída por ${usuario_nome} às ${horaLocal}`
+      ocorrenciaDesc = data_entrega
+        ? `Consulta concluída por ${usuario_nome} (data de entrega informada manualmente: ${new Date(dataEntregaFinal).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`
+        : `Consulta concluída por ${usuario_nome} às ${horaLocal}`
       logAcao = 'confirmacao_entrega'
     } else if (acao === 'anular') {
       if (!motivo || motivo.trim().length < 10) {
