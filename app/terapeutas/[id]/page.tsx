@@ -251,12 +251,13 @@ export default function PainelTerapeuta() {
   const [ovLoading, setOvLoading] = useState(false)
 
   // Vendas
-  const [vendasSubTab, setVendasSubTab] = useState<'ativos' | 'concluidos' | 'reembolsados'>('ativos')
+  const [vendasSubTab, setVendasSubTab] = useState<'pendentes' | 'ativos' | 'concluidos' | 'reembolsados'>('pendentes')
   const [vBusca, setVBusca] = useState('')
   const [vFormato, setVFormato] = useState('all')
   const [vPreset, setVPreset] = useState<Preset>('this_month')
   const [vDateStart, setVDateStart] = useState('')
   const [vDateEnd, setVDateEnd] = useState('')
+  const [vendasPendentes, setVendasPendentes] = useState<SaleInfo[]>([])
 
   // Pacientes e prontuário
   const [prontuarioEmail, setProntuarioEmail] = useState<string | null>(null)
@@ -308,6 +309,22 @@ export default function PainelTerapeuta() {
       }
       setRemarcacoes(remMap)
     }
+
+    // Vendas aprovadas do terapeuta que AINDA não têm sessão nenhuma criada —
+    // sem isso ficam invisíveis pro terapeuta e pro admin, mesmo já tendo
+    // sido corretamente atribuídas a ele/ela pelo nome do produto.
+    const nomeTerapeuta = (tResp.data as unknown as Terapeuta | null)?.nome
+    if (nomeTerapeuta) {
+      const primeiroNome = nomeTerapeuta.split(' ')[0]
+      const { data: candidatas } = await client
+        .from('sales')
+        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status')
+        .ilike('produto', `%${primeiroNome}%`)
+        .eq('status', 'aprovada')
+      const pendentes = ((candidatas ?? []) as SaleInfo[]).filter(v => !saleIds.includes(v.id))
+      setVendasPendentes(pendentes)
+    }
+
     setLoading(false)
   }
 
@@ -461,17 +478,20 @@ export default function PainelTerapeuta() {
     return Array.from(new Set(Object.values(vendas).map(v => v.produto))).sort()
   }, [vendas])
 
-  function filtraPacientes(lista: PacienteAgrupado[]): PacienteAgrupado[] {
+  function filtraPacientes(lista: PacienteAgrupado[], aplicarPeriodo = true): PacienteAgrupado[] {
     const buscaLower = vBusca.toLowerCase()
     return lista.filter(p => {
       const matchBusca = !vBusca || p.nome.toLowerCase().includes(buscaLower) || p.email.toLowerCase().includes(buscaLower)
       const matchFormato = vFormato === 'all' || p.saleIds.some(sid => vendas[sid]?.produto === vFormato)
-      const matchPeriodo = !p.dataCompraMaisRecente || noPeriodo(p.dataCompraMaisRecente, vPreset, vDateStart, vDateEnd)
+      const matchPeriodo = !aplicarPeriodo || !p.dataCompraMaisRecente || noPeriodo(p.dataCompraMaisRecente, vPreset, vDateStart, vDateEnd)
       return matchBusca && matchFormato && matchPeriodo
     })
   }
 
-  const pacientesAtivos = useMemo(() => filtraPacientes(pacientes.filter(p => p.ativo)), [pacientes, vBusca, vFormato, vPreset, vDateStart, vDateEnd])
+  // Pacientes ativos (tratamento em andamento) sempre aparecem, independente
+  // do período selecionado — senão o filtro de data esconde gente que ainda
+  // não terminou as sessões, e a pessoa fica "perdida" sem ninguém ver.
+  const pacientesAtivos = useMemo(() => filtraPacientes(pacientes.filter(p => p.ativo), false), [pacientes, vBusca, vFormato])
   const pacientesConcluidos = useMemo(() => filtraPacientes(pacientes.filter(p => !p.ativo)), [pacientes, vBusca, vFormato, vPreset, vDateStart, vDateEnd])
 
   const vendasReembolsadas = useMemo(() => {
@@ -768,6 +788,7 @@ export default function PainelTerapeuta() {
 
                 <div className="flex items-center gap-2 mb-4">
                   {[
+                    { key: 'pendentes', label: `Pendentes de Agendamento [${vendasPendentes.length}]`, cls: 'bg-amber-600/80' },
                     { key: 'ativos', label: `Pacientes Ativos [${pacientesAtivos.length}]`, cls: 'bg-blue-600/80' },
                     { key: 'concluidos', label: `Concluídos [${pacientesConcluidos.length}]`, cls: 'bg-green-600/80' },
                     { key: 'reembolsados', label: `Reembolsados [${vendasReembolsadas.length}]`, cls: 'bg-gray-600' },
@@ -780,6 +801,43 @@ export default function PainelTerapeuta() {
                     </button>
                   ))}
                 </div>
+
+                {vendasSubTab === 'pendentes' && (
+                  <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-white/10 bg-amber-500/5">
+                      <p className="text-xs text-amber-400">
+                        Vendas aprovadas que ainda não têm nenhuma sessão agendada. Pra agendar, use Admin → Vendas → aba &quot;Atendimentos - Terapeutas&quot; → &quot;Agendamentos Pendentes&quot;.
+                      </p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10">
+                            {['Data da compra', 'Paciente', 'Produto', 'Fat. Bruto', 'Líquido'].map(h => (
+                              <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vendasPendentes.length === 0 ? (
+                            <tr><td colSpan={5} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhuma venda pendente de agendamento</td></tr>
+                          ) : vendasPendentes.map(v => (
+                            <tr key={v.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(v.data_hora)}</td>
+                              <td className="px-4 py-3">
+                                <p className="text-white font-medium">{v.nome}</p>
+                                <p className="text-xs text-gray-500">{v.email}</p>
+                              </td>
+                              <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{v.produto}</td>
+                              <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(v.valor_pago_cliente)}</td>
+                              <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(v.valor_liquido)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {(vendasSubTab === 'ativos' || vendasSubTab === 'concluidos') && (
                   <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
