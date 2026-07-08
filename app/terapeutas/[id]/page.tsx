@@ -498,7 +498,10 @@ export default function PainelTerapeuta() {
   // do período selecionado — senão o filtro de data esconde gente que ainda
   // não terminou as sessões, e a pessoa fica "perdida" sem ninguém ver.
   const pacientesAtivos = useMemo(() => filtraPacientes(pacientes.filter(p => p.ativo), false), [pacientes, vBusca, vFormato])
-  const pacientesConcluidos = useMemo(() => filtraPacientes(pacientes.filter(p => !p.ativo)), [pacientes, vBusca, vFormato, vPreset, vDateStart, vDateEnd])
+  // Concluídos também ignora o período pelo mesmo motivo dos Ativos — só
+  // Reembolsados continua filtrado por período (faz sentido como relatório
+  // histórico: "quem reembolsou nesse mês").
+  const pacientesConcluidos = useMemo(() => filtraPacientes(pacientes.filter(p => !p.ativo), false), [pacientes, vBusca, vFormato])
 
   const vendasReembolsadas = useMemo(() => {
     const buscaLower = vBusca.toLowerCase()
