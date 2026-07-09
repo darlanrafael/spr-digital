@@ -592,7 +592,7 @@ export default function PainelTerapeuta() {
         sessao_id: statusSessaoId,
         acao: statusAcao,
         motivo: statusAcao === 'anular' ? anularMotivo : undefined,
-        data_entrega: statusAcao === 'concluir' ? new Date(concluirData).toISOString() : undefined,
+        data_entrega: statusAcao === 'concluir' ? concluirData : undefined,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,

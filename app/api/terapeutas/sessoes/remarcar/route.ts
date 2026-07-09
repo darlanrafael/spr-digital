@@ -8,10 +8,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sessao_id, nova_data, motivo, usuario_email, senha } = body as {
+  const { sessao_id, nova_data, motivo, solicitado_por, usuario_email, senha } = body as {
     sessao_id: string
     nova_data: string
     motivo?: string
+    solicitado_por?: string
     usuario_email: string
     senha: string
   }
@@ -50,10 +51,26 @@ export async function POST(req: NextRequest) {
     ? new Date(sessao.data_agendada as string).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
     : 'sem data'
   const novaDataFmt = new Date(novaDataISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+  const usuarioTipo = (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial'
+  const descricaoCompleta = `${solicitado_por ? `Solicitado por: ${solicitado_por}. ` : ''}Remarcada de ${dataAnteriorFmt} para ${novaDataFmt}${motivo ? `. Motivo: ${motivo}` : ''}`
+
+  // Insere no histórico visível do prontuário (aba "Ocorrências") — antes só
+  // o front-end fingia isso via um POST solto que nunca chamava esse
+  // endpoint, então a sessão nunca era realmente atualizada.
+  await client.from('ocorrencias_prontuario').insert({
+    sale_id: sessao.sale_id,
+    tipo: 'remarcacao',
+    titulo: `Remarcação — Sessão ${sessao.numero_sessao}`,
+    descricao: descricaoCompleta,
+    dados_extras: { sessao_id, motivo: motivo ?? null, solicitado_por: solicitado_por ?? null, data_anterior: sessao.data_agendada, nova_data: novaDataISO },
+    criado_por_nome: usuarioNome,
+    criado_por_tipo: usuarioTipo,
+    criado_por_email: usuario_email,
+  })
 
   await registrarAtividade({
     usuario_nome: usuarioNome,
-    usuario_tipo: (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial',
+    usuario_tipo: usuarioTipo,
     tipo_acao: 'remarcacao',
     sessao_id,
     sale_id: sessao.sale_id as string,

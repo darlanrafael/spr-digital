@@ -448,7 +448,7 @@ export default function TerapeutasVendas() {
         sessao_id: scSessaoId,
         acao: scAcao,
         motivo: scAcao === 'anular' ? anularMotivo : undefined,
-        data_entrega: scAcao === 'concluir' ? new Date(scConcluirData).toISOString() : undefined,
+        data_entrega: scAcao === 'concluir' ? scConcluirData : undefined,
         usuario_nome: nomeFromEmail(adminEmail),
         usuario_tipo: 'admin',
         usuario_email: adminEmail,
@@ -503,28 +503,30 @@ export default function TerapeutasVendas() {
   }
 
   async function handleRemarcar(senha: string) {
-    const sessao = prontuarioSessoes.find(s => s.id === remSessaoId)
-    await postOcorrencia(
-      senha,
-      {
-        tipo: 'remarcacao',
-        titulo: `Remarcação — Sessão ${sessao?.numero_sessao ?? ''}`,
-        descricao: `Solicitado por: ${remSolicitadoPor}. Motivo: ${remMotivo}`,
-        dados_extras: {
-          sessao_id: remSessaoId,
-          nova_data: remNovaData,
-          data_anterior: sessao?.data_agendada ?? '',
-          solicitado_por: remSolicitadoPor,
-          motivo: remMotivo,
-        },
-      },
-      () => {
-        setRemSenhaOpen(false); setOcorrenciaTipo(null)
-        setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
-        showToast('✓ Sessão remarcada com sucesso!')
-      },
-      setRemLoading, setRemErro
-    )
+    if (!remSessaoId || !remNovaData) return
+    setRemLoading(true); setRemErro('')
+    // Chama o endpoint que de fato atualiza data_agendada — antes esse form
+    // só criava uma ocorrência de histórico via postOcorrencia() e nunca
+    // remarcava a sessão de verdade (por isso "remarco e não muda nada").
+    const res = await fetch('/api/terapeutas/sessoes/remarcar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessao_id: remSessaoId,
+        nova_data: remNovaData,
+        motivo: remMotivo,
+        solicitado_por: remSolicitadoPor,
+        usuario_email: adminEmail,
+        senha,
+      }),
+    })
+    const json = await res.json()
+    setRemLoading(false)
+    if (!res.ok) { setRemErro(json.error ?? 'Erro'); return }
+    setRemSenhaOpen(false); setOcorrenciaTipo(null)
+    setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
+    showToast('✓ Sessão remarcada com sucesso!')
+    loadData()
   }
 
   async function handleReembolso(senha: string) {
