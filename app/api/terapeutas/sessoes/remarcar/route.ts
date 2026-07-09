@@ -38,10 +38,13 @@ export async function POST(req: NextRequest) {
 
   const novaDataISO = brasiliaLocalToISO(nova_data)
 
+  // A tabela sessoes não tem coluna "observacoes" — motivo/histórico fica
+  // só em ocorrencias_prontuario (inserido abaixo). Referenciar uma coluna
+  // inexistente aqui fazia esse update falhar com 500 sempre, silenciosamente
+  // deixado passar pelo front-end (por isso "remarco e não muda nada").
   const { error: updateErr } = await client.from('sessoes').update({
     data_agendada: novaDataISO,
     status: 'agendada',
-    observacoes: motivo ? `Remarcado: ${motivo}` : sessao.observacoes,
     updated_at: new Date().toISOString(),
   }).eq('id', sessao_id)
 
