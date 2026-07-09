@@ -123,6 +123,8 @@ export interface ClosingProductRow {
   aliquota: number
   imposto: number
   liquido: number
+  terapeuta_nome?: string
+  repasse_terapeuta?: number
 }
 
 export interface Closing {
@@ -152,6 +154,7 @@ export interface Closing {
   produtos_periodos?: { inicio: string; fim: string; produtos: string[] }[]
   custos_funil_total?: number
   custos_funil_itens?: { descricao: string; valor: number }[]
+  repasseTerapeutasTotal?: number
 }
 
 export type CashflowType = 'entrada_manual' | 'entrada_automatica' | 'saida_reembolso' | 'saida_manual'

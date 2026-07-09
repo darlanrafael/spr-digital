@@ -873,6 +873,8 @@ export default function PainelTerapeuta() {
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{p.produtos.join(' + ')}</td>
                               <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.qtdVendas > 1 ? `${p.qtdVendas} vendas` : '1 venda'}</td>
+                              <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(p.bruto)}</td>
+                              <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(p.liquido)}</td>
                               {!isTerapeutaSession && (
                                 <td className="px-4 py-3">
                                   <div className="flex flex-wrap gap-1.5">
@@ -885,8 +887,6 @@ export default function PainelTerapeuta() {
                                   </div>
                                 </td>
                               )}
-                              <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(p.bruto)}</td>
-                              <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(p.liquido)}</td>
                             </tr>
                           ))}
                         </tbody>

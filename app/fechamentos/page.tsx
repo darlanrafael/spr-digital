@@ -11,6 +11,7 @@ import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry } from '@/types'
 import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow } from '@/lib/services'
+import { getSupabaseClient } from '@/lib/supabase'
 
 type Step = 1 | 2 | 3 | 4
 type PageTab = 'novo' | 'historico'
@@ -120,6 +121,22 @@ function FechamentosContent() {
   }
   const custosFunilTotal = custosFunil.reduce((a, c) => a + (parseFloat(c.valor.replace(',', '.')) || 0), 0)
 
+  // Terapeutas cadastradas com comissão — usado pra identificar o repasse
+  // devido em produtos que levam o nome delas (ex.: "Mentoria Particular -
+  // Pedro | Denise"). Produtos só com "Pedro Roncada" são dele mesmo (sócio),
+  // sem repasse.
+  const [terapeutasComissao, setTerapeutasComissao] = useState<{ nome: string; percentual_comissao: number }[]>([])
+  useEffect(() => {
+    const client = getSupabaseClient()
+    if (!client) return
+    client.from('terapeutas').select('nome,percentual_comissao').eq('ativo', true)
+      .then(({ data }) => setTerapeutasComissao((data ?? []) as { nome: string; percentual_comissao: number }[]))
+  }, [])
+  function matchTerapeutaComissao(produtoNome: string): { nome: string; percentual_comissao: number } | null {
+    const lower = produtoNome.toLowerCase()
+    return terapeutasComissao.find(t => lower.includes(t.nome.trim().split(' ')[0].toLowerCase())) ?? null
+  }
+
   function addTermoTrafego() {
     const termo = trafego.termoInput.trim()
     if (!termo || trafego.termos.includes(termo)) return
@@ -196,12 +213,13 @@ function FechamentosContent() {
     const map: Record<string, {
       id: string; nome: string; plataforma: string; qtd: number
       bruto: number; taxas: number; aliquota: number; imposto: number; liquido: number; liquido_pos_impostos: number
+      terapeuta_nome: string | null; repasse_terapeuta: number
     }> = {}
     for (const s of periodSales) {
       const prod = productMap[s.produto]
       const aliquota = getAliquotaByPreco(s.preco_base)
       if (!map[s.produto]) {
-        map[s.produto] = { id: s.produto, nome: prod?.nome ?? s.produto, plataforma: s.plataforma, qtd: 0, bruto: 0, taxas: 0, aliquota, imposto: 0, liquido: 0, liquido_pos_impostos: 0 }
+        map[s.produto] = { id: s.produto, nome: prod?.nome ?? s.produto, plataforma: s.plataforma, qtd: 0, bruto: 0, taxas: 0, aliquota, imposto: 0, liquido: 0, liquido_pos_impostos: 0, terapeuta_nome: null, repasse_terapeuta: 0 }
       }
       const bruto = getSaleBruto(s)
       const impostoVenda = getImpostoBase(s) * (aliquota / 100)
@@ -212,8 +230,18 @@ function FechamentosContent() {
       map[s.produto].liquido += s.valor_liquido
       map[s.produto].liquido_pos_impostos += s.valor_liquido - impostoVenda
     }
+    // Repasse à terapeuta: % dela sobre o líquido pós-impostos do produto que
+    // leva o nome dela. "Mentoria Particular - Pedro Roncada" sozinho é dele
+    // mesmo (sócio) — sem repasse.
+    for (const row of Object.values(map)) {
+      const terapeuta = matchTerapeutaComissao(row.nome)
+      if (terapeuta) {
+        row.terapeuta_nome = terapeuta.nome
+        row.repasse_terapeuta = row.liquido_pos_impostos * (terapeuta.percentual_comissao / 100)
+      }
+    }
     return Object.values(map)
-  }, [periodSales, productMap])
+  }, [periodSales, productMap, terapeutasComissao])
 
   const faturamentoBruto = byProduct.reduce((a, p) => a + p.bruto, 0)
   const impostoTotal = byProduct.reduce((a, p) => a + p.imposto, 0)
@@ -221,11 +249,13 @@ function FechamentosContent() {
   const faturamentoLiquido = faturamentoBruto - taxasPlat - impostoTotal
 
   // Produtos de mentoria não entram na reserva de caixa (30%) — o lucro deles
-  // vai 100% para o Lucro Real, já que a comissão do terapeuta é tratada
-  // separadamente pelo módulo de Fechamentos de Terapeutas.
+  // vai para o Lucro Real líquido do repasse devido à terapeuta que atende
+  // (ex.: 30% da Denise), já que quem entrega a sessão precisa ser pago antes
+  // dos sócios receberem sua parte.
   const faturamentoLiquidoMentoria = byProduct
     .filter(p => p.nome.toLowerCase().includes('mentoria'))
     .reduce((a, p) => a + (p.bruto - p.taxas - p.imposto), 0)
+  const repasseTerapeutasTotal = byProduct.reduce((a, p) => a + p.repasse_terapeuta, 0)
 
   const lucroBruto = faturamentoLiquido - totalCosts
   const lucroBrutoOutros = lucroBruto - faturamentoLiquidoMentoria
@@ -234,7 +264,7 @@ function FechamentosContent() {
   // negativo, pra ser distribuído (rateado) entre os sócios normalmente.
   const reservaCaixa = lucroBrutoOutros > 0 ? lucroBrutoOutros * 0.3 : 0
   const lucroRealOutros = lucroBrutoOutros > 0 ? lucroBrutoOutros * 0.7 : lucroBrutoOutros
-  const lucroReal = lucroRealOutros + faturamentoLiquidoMentoria
+  const lucroReal = lucroRealOutros + (faturamentoLiquidoMentoria - repasseTerapeutasTotal)
 
   const socioPercents = socioInputs.map(parsePercent)
   const socioTotal = socioPercents[0] + socioPercents[1]
@@ -342,6 +372,7 @@ function FechamentosContent() {
       lucroBruto,
       reservaCaixa,
       lucroReal,
+      repasseTerapeutasTotal,
       socios: sociosData,
       compradores: buyers,
       alertas: [],
@@ -354,6 +385,8 @@ function FechamentosContent() {
         aliquota: p.aliquota,
         imposto: p.imposto,
         liquido: p.liquido,
+        terapeuta_nome: p.terapeuta_nome ?? undefined,
+        repasse_terapeuta: p.repasse_terapeuta || undefined,
       })),
     }
     try { await svcAddClosing(newClosing, selectedProject) } catch (e) { console.error(e) }
@@ -772,6 +805,7 @@ function FechamentosContent() {
                             <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Imposto</th>
                             <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Faturamento líquido</th>
                             <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Líquido Pós-Impostos</th>
+                            <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Repasse Terapeuta</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -785,6 +819,9 @@ function FechamentosContent() {
                               <td className="px-4 py-3 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                               <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(row.liquido)}</td>
                               <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(row.liquido_pos_impostos)}</td>
+                              <td className="px-4 py-3 text-right text-orange-400">
+                                {row.terapeuta_nome ? `-${formatCurrency(row.repasse_terapeuta)} (${row.terapeuta_nome})` : '—'}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -802,6 +839,7 @@ function FechamentosContent() {
                             <td className="px-4 py-3 text-right text-red-400 font-semibold">-{formatCurrency(impostoTotal)}</td>
                             <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(byProduct.reduce((a, r) => a + r.liquido, 0))}</td>
                             <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(byProduct.reduce((a, r) => a + r.liquido_pos_impostos, 0))}</td>
+                            <td className="px-4 py-3 text-right text-orange-400 font-semibold">-{formatCurrency(repasseTerapeutasTotal)}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -825,7 +863,7 @@ function FechamentosContent() {
             {/* ── STEP 3 — Repasse ── */}
             {activeStep === 3 && (
               <div className="space-y-4">
-                <div className="grid md:grid-cols-3 gap-4">
+                <div className="grid md:grid-cols-4 gap-4">
                   <div className="bg-gray-900 rounded-xl border border-white/10 p-4 text-center">
                     <p className="text-xs text-gray-500 mb-2">Lucro Bruto</p>
                     <p className={`text-2xl font-bold ${lucroBruto >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -833,6 +871,13 @@ function FechamentosContent() {
                     </p>
                     <p className="text-xs text-gray-600 mt-1">Faturamento líquido - Custos</p>
                   </div>
+                  {repasseTerapeutasTotal > 0 && (
+                    <div className="bg-gray-900 rounded-xl border border-orange-500/30 p-4 text-center">
+                      <p className="text-xs text-gray-500 mb-2">Repasse a Terapeutas</p>
+                      <p className="text-2xl font-bold text-orange-400">{formatCurrency(repasseTerapeutasTotal)}</p>
+                      <p className="text-xs text-gray-600 mt-1">% de comissão sobre as sessões vendidas</p>
+                    </div>
+                  )}
                   <div className="bg-gray-900 rounded-xl border border-purple-500/30 p-4 text-center">
                     <p className="text-xs text-gray-500 mb-2">Reserva de Caixa (30%)</p>
                     <p className="text-2xl font-bold text-purple-400">{formatCurrency(reservaCaixa)}</p>
@@ -844,7 +889,7 @@ function FechamentosContent() {
                     )}
                   </div>
                   <div className={`bg-gray-900 rounded-xl border p-4 text-center ${lucroReal >= 0 ? 'border-emerald-500/30' : 'border-red-500/30'}`}>
-                    <p className="text-xs text-gray-500 mb-2">{lucroReal >= 0 ? 'Lucro Real (70%)' : 'Prejuízo a ratear'}</p>
+                    <p className="text-xs text-gray-500 mb-2">{lucroReal >= 0 ? 'Lucro Real' : 'Prejuízo a ratear'}</p>
                     <p className={`text-2xl font-bold ${lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal)}</p>
                     <p className="text-xs text-gray-600 mt-1">Para divisão entre sócios</p>
                   </div>
@@ -976,6 +1021,12 @@ function FechamentosContent() {
                             <span className="text-gray-400 font-medium">Lucro bruto</span>
                             <span className={lucroBruto >= 0 ? 'text-emerald-400 font-medium' : 'text-red-400 font-medium'}>{formatCurrency(lucroBruto)}</span>
                           </div>
+                          {repasseTerapeutasTotal > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Repasse a terapeutas</span>
+                              <span className="text-orange-400">-{formatCurrency(repasseTerapeutasTotal)}</span>
+                            </div>
+                          )}
                           <div className="flex justify-between">
                             <span className="text-gray-500">Reserva de caixa (30%)</span>
                             <span className="text-amber-400">-{formatCurrency(reservaCaixa)}</span>
@@ -1203,6 +1254,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
     taxas: byProductFiltrado.reduce((a, r) => a + r.taxas, 0),
     imposto: byProductFiltrado.reduce((a, r) => a + r.imposto, 0),
     liquido: byProductFiltrado.reduce((a, r) => a + r.liquido, 0),
+    repasse: byProductFiltrado.reduce((a, r) => a + (r.repasse_terapeuta ?? 0), 0),
   }
 
   function toggleProdutoFiltro(nome: string) {
@@ -1314,6 +1366,9 @@ function ClosingCard({ closing }: { closing: Closing }) {
                   ? [{ label: 'Custos do funil', value: closing.custos_funil_total, color: 'text-red-400', neg: true }]
                   : []),
                 { label: 'Lucro bruto', value: closing.lucroBruto, color: closing.lucroBruto >= 0 ? 'text-emerald-400' : 'text-red-400', neg: false },
+                ...(closing.repasseTerapeutasTotal
+                  ? [{ label: 'Repasse a terapeutas', value: closing.repasseTerapeutasTotal, color: 'text-orange-400', neg: true }]
+                  : []),
                 { label: 'Reserva de caixa (30%)', value: closing.reservaCaixa, color: 'text-amber-400', neg: true },
                 { label: 'Lucro real', value: closing.lucroReal, color: closing.lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400', neg: false },
               ].map(row => (
@@ -1402,12 +1457,13 @@ function ClosingCard({ closing }: { closing: Closing }) {
                       <th className="text-center px-4 py-2 text-gray-500">Alíq.</th>
                       <th className="text-right px-4 py-2 text-gray-500">Imposto</th>
                       <th className="text-right px-4 py-2 text-gray-500">Líquido</th>
+                      <th className="text-right px-4 py-2 text-gray-500">Repasse Terapeuta</th>
                     </tr>
                   </thead>
                   <tbody>
                     {byProductFiltrado.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-6 text-center text-gray-600 text-xs">
+                        <td colSpan={8} className="px-4 py-6 text-center text-gray-600 text-xs">
                           Nenhum produto selecionado no filtro acima.
                         </td>
                       </tr>
@@ -1420,6 +1476,9 @@ function ClosingCard({ closing }: { closing: Closing }) {
                         <td className="px-4 py-2.5 text-center text-amber-400">{row.aliquota}%</td>
                         <td className="px-4 py-2.5 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                         <td className="px-4 py-2.5 text-right text-emerald-400 font-medium">{formatCurrency(row.liquido)}</td>
+                        <td className="px-4 py-2.5 text-right text-orange-400">
+                          {row.terapeuta_nome ? `-${formatCurrency(row.repasse_terapeuta ?? 0)} (${row.terapeuta_nome})` : '—'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1433,6 +1492,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
                         <td className="px-4 py-2.5 text-center"></td>
                         <td className="px-4 py-2.5 text-right text-red-400 font-semibold">-{formatCurrency(filtroTotais.imposto)}</td>
                         <td className="px-4 py-2.5 text-right text-emerald-400 font-semibold">{formatCurrency(filtroTotais.liquido)}</td>
+                        <td className="px-4 py-2.5 text-right text-orange-400 font-semibold">-{formatCurrency(filtroTotais.repasse)}</td>
                       </tr>
                     </tfoot>
                   )}

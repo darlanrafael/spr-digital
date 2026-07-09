@@ -459,6 +459,7 @@ export async function getClosings(projectId: string): Promise<Closing[]> {
     produtos_periodos: r.produtos_periodos ?? [],
     custos_funil_total: Number(r.custos_funil_total ?? 0),
     custos_funil_itens: r.custos_funil_itens ?? [],
+    repasseTerapeutasTotal: Number(r.repasse_terapeutas_total ?? 0),
   }))
 }
 
@@ -495,6 +496,7 @@ export async function addClosing(closing: Closing, projectId: string): Promise<v
     produtos_periodos: closing.produtos_periodos ?? [],
     custos_funil_total: closing.custos_funil_total ?? 0,
     custos_funil_itens: closing.custos_funil_itens ?? [],
+    repasse_terapeutas_total: closing.repasseTerapeutasTotal ?? 0,
   })
   if (error) throw error
 }

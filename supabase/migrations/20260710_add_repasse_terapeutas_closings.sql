@@ -1,0 +1,1 @@
+ALTER TABLE closings ADD COLUMN IF NOT EXISTS repasse_terapeutas_total NUMERIC NOT NULL DEFAULT 0;
