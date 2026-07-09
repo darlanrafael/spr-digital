@@ -7,6 +7,13 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 
+// Página inteiramente dinâmica (dados carregados client-side em tempo real —
+// agendamentos, remarcações, comissões). Sem isso o Next.js prerenderiza como
+// estática e a Vercel serve o HTML/bundle do CDN com cache antigo por muito
+// tempo, mesmo depois de um deploy novo — foi a causa do "remarco e não muda
+// nada": o navegador estava carregando um bundle de antes da correção.
+export const dynamic = 'force-dynamic'
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Preset = 'all' | 'today' | 'last_7d' | 'custom'
 type AbaAtiva = 'aprovadas' | 'reembolsos'

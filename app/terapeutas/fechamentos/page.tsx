@@ -7,6 +7,10 @@ import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
 
+// Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
+// versões antigas do CDN mesmo depois de um deploy novo.
+export const dynamic = 'force-dynamic'
+
 type Terapeuta = { id: string; nome: string; ativo: boolean }
 
 type SessaoPendente = {

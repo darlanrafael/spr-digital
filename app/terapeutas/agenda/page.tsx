@@ -6,6 +6,10 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import { getSupabaseClient } from '@/lib/supabase'
 
+// Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
+// versões antigas do CDN mesmo depois de um deploy novo.
+export const dynamic = 'force-dynamic'
+
 type Sessao = {
   id: string
   sale_id: string

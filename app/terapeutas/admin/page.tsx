@@ -6,6 +6,10 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import { useApp } from '@/contexts/AppContext'
 
+// Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
+// versões antigas do CDN mesmo depois de um deploy novo.
+export const dynamic = 'force-dynamic'
+
 type Terapeuta = {
   id: string
   nome: string

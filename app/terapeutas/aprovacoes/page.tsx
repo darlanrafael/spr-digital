@@ -6,6 +6,10 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 
+// Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
+// versões antigas do CDN mesmo depois de um deploy novo.
+export const dynamic = 'force-dynamic'
+
 type Solicitacao = {
   id: string
   sale_id: string
