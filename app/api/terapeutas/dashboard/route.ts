@@ -90,15 +90,12 @@ export async function GET(req: NextRequest) {
       .order('nome')
     const terapeutas = (terapeutasData ?? []) as { id: string; nome: string; percentual_comissao: number }[]
 
-    // 2. Se filtro de terapeuta: buscar sale_ids desse terapeuta
-    let saleIdsFiltrados: string[] | null = null
-    if (terapeutaId !== 'all') {
-      const { data: stData } = await supabase
-        .from('sessoes')
-        .select('sale_id')
-        .eq('terapeuta_id', terapeutaId)
-      saleIdsFiltrados = [...new Set(((stData ?? []) as { sale_id: string }[]).map(s => s.sale_id))]
-    }
+    // 2. Se filtro de terapeuta: restringir pelo nome dela no produto (não só
+    // pelas vendas que já têm sessão — senão as pendentes de agendamento
+    // somem do cálculo de "sessões vendidas"/faturamento, já que ainda não
+    // têm nenhuma linha em `sessoes`).
+    const terapeutaFiltro = terapeutaId !== 'all' ? terapeutas.find(t => t.id === terapeutaId) : undefined
+    const primeiroNomeFiltro = terapeutaFiltro?.nome.trim().split(' ')[0].toLowerCase()
 
     // 3. Buscar vendas paginadas
     const vendasRaw: SaleRow[] = []
@@ -109,14 +106,12 @@ export async function GET(req: NextRequest) {
         .from('sales')
         .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status')
         .ilike('produto', '%Pedro | Denise%')
+      if (primeiroNomeFiltro) q = q.ilike('produto', `%${primeiroNomeFiltro}%`)
       if (from) q = q.gte('data_hora', from)
       if (to) q = q.lte('data_hora', to)
       q = q
         .order('data_hora', { ascending: false })
         .range(offset, offset + PAGE - 1)
-      if (saleIdsFiltrados !== null) {
-        q = q.in('id', saleIdsFiltrados.length > 0 ? saleIdsFiltrados : ['__none__'])
-      }
       const { data, error } = await q
       if (error) throw new Error(error.message)
       if (!data || data.length === 0) break
