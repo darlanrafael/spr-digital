@@ -164,6 +164,15 @@ function nowForDatetimeLocal(): string {
   return d.toISOString().slice(0, 16)
 }
 
+// data_agendada vem do banco em UTC. Pra pré-preencher um <input
+// type="datetime-local"> mostrando o horário real de Brasília, precisa
+// converter (UTC-3, sem horário de verão) — só cortar a string UTC mostra a
+// hora errada no formulário de remarcar.
+function isoToDatetimeLocalBRT(iso: string): string {
+  const brt = new Date(new Date(iso).getTime() - 3 * 60 * 60 * 1000)
+  return brt.toISOString().slice(0, 16)
+}
+
 function noPeriodo(dataIso: string, preset: Preset, dateStart: string, dateEnd: string): boolean {
   if (preset === 'custom') {
     if (!dateStart || !dateEnd) return true
@@ -1446,7 +1455,7 @@ export default function PainelTerapeuta() {
                 </button>
               )}
               {(agendaDetalhe.status === 'agendada' || agendaDetalhe.status === 'pendente') && (
-                <button onClick={() => { setRemarcarSessaoId(agendaDetalhe.id); setRemarcarData(agendaDetalhe.data_agendada?.slice(0, 16) ?? ''); setRemarcarMotivo(''); setAgendaDetalhe(null) }}
+                <button onClick={() => { setRemarcarSessaoId(agendaDetalhe.id); setRemarcarData(agendaDetalhe.data_agendada ? isoToDatetimeLocalBRT(agendaDetalhe.data_agendada) : ''); setRemarcarMotivo(''); setAgendaDetalhe(null) }}
                   className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors">
                   <RefreshCw className="w-3.5 h-3.5" /> Remarcar
                 </button>

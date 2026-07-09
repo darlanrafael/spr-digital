@@ -109,6 +109,16 @@ function nowForDatetimeLocal(): string {
   return d.toISOString().slice(0, 16)
 }
 
+// data_agendada vem do banco em UTC (ex.: "2026-07-13T18:00:00+00:00"). Pra
+// pré-preencher um <input type="datetime-local"> mostrando o horário real de
+// Brasília, não dá pra só cortar a string UTC — precisa converter (UTC-3,
+// sem horário de verão). Sem isso o formulário de remarcar mostra a hora
+// errada e o usuário reenvia sem perceber (foi exatamente o bug do Fabio Nery).
+function isoToDatetimeLocalBRT(iso: string): string {
+  const brt = new Date(new Date(iso).getTime() - 3 * 60 * 60 * 1000)
+  return brt.toISOString().slice(0, 16)
+}
+
 function inferirNumeroSessoes(produto: string): number {
   const p = produto.toLowerCase()
   if (p.includes('8 sess') || p.includes('8sess')) return 8
@@ -1005,7 +1015,7 @@ export default function TerapeutasVendas() {
                             <button onClick={() => {
                               setOcorrenciaTipo('remarcacao')
                               setRemSessaoId(s.id)
-                              setRemNovaData(s.data_agendada?.slice(0, 16) ?? '')
+                              setRemNovaData(s.data_agendada ? isoToDatetimeLocalBRT(s.data_agendada) : '')
                               setRemSolicitadoPor(''); setRemMotivo(''); setRemErro('')
                             }} className="flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300 transition-colors">
                               <RefreshCw className="w-3 h-3" /> Remarcar
@@ -1121,7 +1131,7 @@ export default function TerapeutasVendas() {
                       <select value={remSessaoId} onChange={e => {
                         const s = prontuarioSessoes.find(x => x.id === e.target.value)
                         setRemSessaoId(e.target.value)
-                        setRemNovaData(s?.data_agendada?.slice(0, 16) ?? '')
+                        setRemNovaData(s?.data_agendada ? isoToDatetimeLocalBRT(s.data_agendada) : '')
                       }} className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
                         <option value="">Selecionar sessão...</option>
                         {sessoesPendentesProntuario.map(s => (
