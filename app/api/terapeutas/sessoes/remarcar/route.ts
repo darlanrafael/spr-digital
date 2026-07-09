@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
+import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -35,8 +35,10 @@ export async function POST(req: NextRequest) {
 
   const usuarioNome = (usuario as Record<string, unknown>)?.nome as string ?? usuario_email
 
+  const novaDataISO = brasiliaLocalToISO(nova_data)
+
   const { error: updateErr } = await client.from('sessoes').update({
-    data_agendada: new Date(nova_data).toISOString(),
+    data_agendada: novaDataISO,
     status: 'agendada',
     observacoes: motivo ? `Remarcado: ${motivo}` : sessao.observacoes,
     updated_at: new Date().toISOString(),
@@ -44,15 +46,20 @@ export async function POST(req: NextRequest) {
 
   if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
 
+  const dataAnteriorFmt = sessao.data_agendada
+    ? new Date(sessao.data_agendada as string).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    : 'sem data'
+  const novaDataFmt = new Date(novaDataISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+
   await registrarAtividade({
     usuario_nome: usuarioNome,
     usuario_tipo: (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial',
     tipo_acao: 'remarcacao',
     sessao_id,
     sale_id: sessao.sale_id as string,
-    descricao: `Sessão ${sessao.numero_sessao}/${sessao.total_sessoes} de ${sessao.paciente_nome} remarcada para ${new Date(nova_data).toLocaleDateString('pt-BR')}${motivo ? ` — motivo: ${motivo}` : ''}`,
+    descricao: `Sessão ${sessao.numero_sessao}/${sessao.total_sessoes} de ${sessao.paciente_nome} remarcada de ${dataAnteriorFmt} para ${novaDataFmt}${motivo ? ` — motivo: ${motivo}` : ''}`,
     dados_anteriores: { data_agendada: sessao.data_agendada, status: sessao.status },
-    dados_novos: { data_agendada: nova_data, status: 'agendada' },
+    dados_novos: { data_agendada: novaDataISO, status: 'agendada' },
   })
 
   return NextResponse.json({ success: true })

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, inferirNumeroSessoes, calcularComissao } from '@/lib/terapeutas-auth'
+import { verificarSenhaUsuario, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -51,10 +51,12 @@ export async function POST(req: NextRequest) {
     .eq('sale_id', sale_id)
     .in('status', ['pendente', 'agendada', 'remarcada'])
 
-  const primeiraData = new Date(data_primeira_sessao)
+  // brasiliaLocalToISO trata o input como horário de Brasília (UTC-3, sem
+  // horário de verão) — new Date(string sem timezone) direto é ambíguo e
+  // depende do TZ do runtime do servidor, causando horários errados.
+  const primeiraDataMs = new Date(brasiliaLocalToISO(data_primeira_sessao)).getTime()
+  const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
   const sessoes = Array.from({ length: numSessoes }, (_, i) => {
-    const data = new Date(primeiraData)
-    data.setDate(data.getDate() + i * 7)
     return {
       sale_id,
       terapeuta_id,
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
       total_sessoes: numSessoes,
       status: 'agendada',
       status_consulta: 'aguardando',
-      data_agendada: data.toISOString(),
+      data_agendada: new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString(),
       link_meet: null,
       comissao_valor: comissao_por_sessao,
       comissao_paga: false,
@@ -82,7 +84,7 @@ export async function POST(req: NextRequest) {
     usuario_tipo: (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial',
     tipo_acao: 'agendamento',
     sale_id,
-    descricao: `${numSessoes} sessões agendadas para ${sale.nome} — primeira em ${primeiraData.toLocaleDateString('pt-BR')}`,
+    descricao: `${numSessoes} sessões agendadas para ${sale.nome} — primeira em ${new Date(primeiraDataMs).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
     dados_novos: { numSessoes, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
   })
 

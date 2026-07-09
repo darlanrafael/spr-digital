@@ -5,6 +5,17 @@ export function hashSenha(senha: string): string {
   return crypto.createHash('sha256').update(senha + 'spr-terapeutas-salt-2026').digest('hex')
 }
 
+// Inputs <input type="datetime-local"> (ex.: agendar sessão, remarcar, concluir
+// com data manual) chegam como string sem timezone ("2026-07-13T15:00"). Fazer
+// `new Date(string)` direto no servidor é ambíguo — o resultado depende do TZ
+// do runtime (Vercel), não do horário real que o usuário digitou em Brasília.
+// Sempre usar isso pra converter, nunca `new Date()` puro nesses campos.
+// Brasil não tem mais horário de verão desde 2019, então UTC-3 é fixo.
+export function brasiliaLocalToISO(datetimeLocal: string): string {
+  // datetime-local sempre vem como "YYYY-MM-DDTHH:mm", sem segundos.
+  return new Date(`${datetimeLocal}:00-03:00`).toISOString()
+}
+
 export async function verificarSenhaUsuario(
   email: string,
   senha: string

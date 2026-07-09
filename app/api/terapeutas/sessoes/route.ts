@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
+import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
 
 export async function PATCH(req: NextRequest) {
   try {
@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest) {
       ocorrenciaTitulo = `Consulta Iniciada — Sessão ${sessao.numero_sessao}`
       ocorrenciaDesc = `Consulta iniciada por ${usuario_nome} às ${horaLocal}`
     } else if (acao === 'concluir') {
-      const dataEntregaFinal = data_entrega ? new Date(data_entrega).toISOString() : now
+      const dataEntregaFinal = data_entrega ? brasiliaLocalToISO(data_entrega) : now
       updateData = {
         status_consulta: 'concluida',
         status: 'entregue',
