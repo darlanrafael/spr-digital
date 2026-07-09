@@ -135,6 +135,7 @@ const METRICAS_VAZIA: Metricas = {
 type ConsultaHoje = {
   id: string
   horario: string
+  data?: string
   paciente_nome: string
   status: string
   status_consulta: string
@@ -265,6 +266,7 @@ export default function PainelTerapeuta() {
   const [ovDateEnd, setOvDateEnd] = useState('')
   const [ovMetricas, setOvMetricas] = useState<Metricas>(METRICAS_VAZIA)
   const [ovConsultasHoje, setOvConsultasHoje] = useState<ConsultaHoje[]>([])
+  const [ovProximasConsultas, setOvProximasConsultas] = useState<ConsultaHoje[]>([])
   const [ovLoading, setOvLoading] = useState(false)
 
   // Vendas
@@ -396,6 +398,7 @@ export default function PainelTerapeuta() {
       const json = await res.json()
       setOvMetricas(json.metricas ?? METRICAS_VAZIA)
       setOvConsultasHoje(json.consultas_hoje ?? [])
+      setOvProximasConsultas(json.proximas_consultas ?? [])
     } finally {
       setOvLoading(false)
     }
@@ -413,7 +416,10 @@ export default function PainelTerapeuta() {
     const interval = setInterval(() => {
       fetch(`/api/terapeutas/dashboard?datePreset=${ovPreset}&terapeutaId=${id}`)
         .then(r => r.ok ? r.json() : null)
-        .then(json => { if (json?.consultas_hoje) setOvConsultasHoje(json.consultas_hoje) })
+        .then(json => {
+          if (json?.consultas_hoje) setOvConsultasHoje(json.consultas_hoje)
+          if (json?.proximas_consultas) setOvProximasConsultas(json.proximas_consultas)
+        })
         .catch(() => {})
     }, 60000)
     return () => clearInterval(interval)
@@ -808,6 +814,46 @@ export default function PainelTerapeuta() {
                                           </button>
                                         )}
                                       </div>
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Próximas consultas */}
+                    <div className="bg-gray-900 border border-white/10 rounded-xl mt-4">
+                      <div className="p-4 border-b border-white/10 flex items-center justify-between">
+                        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-purple-400" />
+                          Próximas Consultas ({ovProximasConsultas.length})
+                        </h2>
+                      </div>
+                      {ovProximasConsultas.length === 0 ? (
+                        <p className="px-4 py-6 text-center text-gray-600 text-xs">Nenhuma consulta agendada depois de hoje</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-white/5">
+                                {['Data', 'Horário', 'Paciente', 'Status Consulta'].map(h => (
+                                  <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ovProximasConsultas.map(s => {
+                                const scBadge = STATUS_CONSULTA_BADGE[s.status_consulta] ?? STATUS_CONSULTA_BADGE.aguardando
+                                return (
+                                  <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
+                                    <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{s.data}</td>
+                                    <td className="px-4 py-3 text-purple-400 font-medium">{s.horario}</td>
+                                    <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                                    <td className="px-4 py-3">
+                                      <span className={`text-xs px-2 py-0.5 rounded-full ${scBadge.cls}`}>{scBadge.label}</span>
                                     </td>
                                   </tr>
                                 )

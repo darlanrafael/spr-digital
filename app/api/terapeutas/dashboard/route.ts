@@ -235,27 +235,55 @@ export async function GET(req: NextRequest) {
       .select('id,data_agendada,paciente_nome,link_meet,status,status_consulta,terapeuta_id,terapeutas(nome)')
       .gte('data_agendada', hojeStart)
       .lte('data_agendada', hojeEnd)
-      .in('status', ['agendada', 'pendente', 'entregue'])
+      // Já entregue não precisa mais de ação hoje — só polui a lista com
+      // linhas sem nada a fazer além de "Anular". Fica só o que ainda está
+      // aguardando ou em atendimento.
+      .in('status', ['agendada', 'pendente'])
       .order('data_agendada', { ascending: true })
 
     if (terapeutaId !== 'all') {
       hojeQ = hojeQ.eq('terapeuta_id', terapeutaId)
     }
 
-    const { data: hojeData } = await hojeQ
-    const consultas_hoje = ((hojeData ?? []) as unknown as SessaoHojeRow[]).map(s => ({
-      id: s.id,
-      horario: s.data_agendada
-        ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', {
-            hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
-          })
-        : '—',
-      paciente_nome: s.paciente_nome,
-      terapeuta_nome: (s.terapeutas as { nome: string } | null)?.nome ?? '—',
-      link_meet: s.link_meet,
-      status: s.status,
-      status_consulta: s.status_consulta ?? 'aguardando',
-    }))
+    // Próximas consultas — depois de hoje, ainda não entregues. Um segundo
+    // quadrante pra olhar o que vem pela frente, não só o dia de hoje.
+    let proximasQ = supabase
+      .from('sessoes')
+      .select('id,data_agendada,paciente_nome,link_meet,status,status_consulta,terapeuta_id,terapeutas(nome)')
+      .gt('data_agendada', hojeEnd)
+      .in('status', ['agendada', 'pendente'])
+      .order('data_agendada', { ascending: true })
+      .limit(20)
+
+    if (terapeutaId !== 'all') {
+      proximasQ = proximasQ.eq('terapeuta_id', terapeutaId)
+    }
+
+    const [{ data: hojeData }, { data: proximasData }] = await Promise.all([hojeQ, proximasQ])
+
+    function mapSessaoHoje(s: SessaoHojeRow) {
+      return {
+        id: s.id,
+        horario: s.data_agendada
+          ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', {
+              hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
+            })
+          : '—',
+        data: s.data_agendada
+          ? new Date(s.data_agendada).toLocaleDateString('pt-BR', {
+              day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo',
+            })
+          : '—',
+        paciente_nome: s.paciente_nome,
+        terapeuta_nome: (s.terapeutas as { nome: string } | null)?.nome ?? '—',
+        link_meet: s.link_meet,
+        status: s.status,
+        status_consulta: s.status_consulta ?? 'aguardando',
+      }
+    }
+
+    const consultas_hoje = ((hojeData ?? []) as unknown as SessaoHojeRow[]).map(mapSessaoHoje)
+    const proximas_consultas = ((proximasData ?? []) as unknown as SessaoHojeRow[]).map(mapSessaoHoje)
 
     return NextResponse.json({
       metricas: {
@@ -273,6 +301,7 @@ export async function GET(req: NextRequest) {
       },
       por_terapeuta,
       consultas_hoje,
+      proximas_consultas,
     })
   } catch (err) {
     console.error('[terapeutas/dashboard]', err)
