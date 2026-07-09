@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -184,6 +185,9 @@ const EMPTY_DATA: PageData = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function TerapeutasVendas() {
+  const searchParams = useSearchParams()
+  const autoAgendarRef = useRef(false)
+
   // Filtros
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('aprovadas')
   const [subAba, setSubAba] = useState<SubAba>('pendentes')
@@ -285,6 +289,24 @@ export default function TerapeutasVendas() {
   }, [preset, dateStart, dateEnd])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Veio de um link "Agendar" na tela de um terapeuta (ex.: /terapeutas/[id] →
+  // aba Pendentes de Agendamento) — abre o modal direto na venda já filtrada.
+  useEffect(() => {
+    if (autoAgendarRef.current || loading) return
+    const saleId = searchParams.get('agendar')
+    if (!saleId) return
+    const venda = pageData.vendas_pendentes.find(v => v.id === saleId)
+    if (!venda) return
+    autoAgendarRef.current = true
+    setAbaAtiva('aprovadas')
+    setSubAba('pendentes')
+    setAgendarVendaId(saleId)
+    const terapeutaParam = searchParams.get('terapeuta')
+    if (terapeutaParam && pageData.terapeutas.some(t => t.id === terapeutaParam)) {
+      setAgendarTerapeutaId(terapeutaParam)
+    }
+  }, [searchParams, pageData, loading])
 
   // Reset ocorrência state quando prontuário abre/fecha
   useEffect(() => {

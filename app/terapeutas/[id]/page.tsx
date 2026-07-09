@@ -847,21 +847,23 @@ export default function PainelTerapeuta() {
                   <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
                     <div className="px-4 py-3 border-b border-white/10 bg-amber-500/5">
                       <p className="text-xs text-amber-400">
-                        Vendas aprovadas que ainda não têm nenhuma sessão agendada. Pra agendar, use Admin → Vendas → aba &quot;Atendimentos - Terapeutas&quot; → &quot;Agendamentos Pendentes&quot;.
+                        {isTerapeutaSession
+                          ? 'Vendas aprovadas que ainda não têm nenhuma sessão agendada. O agendamento é feito pelo comercial/CEO — assim que agendarem, a sessão aparece na sua Agenda.'
+                          : 'Vendas aprovadas que ainda não têm nenhuma sessão agendada. Clique em "Agendar" pra abrir a venda direto na tela de Agendamentos Pendentes.'}
                       </p>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-white/10">
-                            {['Data da compra', 'Paciente', 'Produto', 'Vendas', 'Fat. Bruto', 'Líquido'].map(h => (
+                            {['Data da compra', 'Paciente', 'Produto', 'Vendas', 'Fat. Bruto', 'Líquido', ...(isTerapeutaSession ? [] : ['Ações'])].map(h => (
                               <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {pacientesPendentesAgrupados.length === 0 ? (
-                            <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhuma venda pendente de agendamento</td></tr>
+                            <tr><td colSpan={isTerapeutaSession ? 6 : 7} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhuma venda pendente de agendamento</td></tr>
                           ) : pacientesPendentesAgrupados.map(p => (
                             <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                               <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
@@ -871,6 +873,18 @@ export default function PainelTerapeuta() {
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{p.produtos.join(' + ')}</td>
                               <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.qtdVendas > 1 ? `${p.qtdVendas} vendas` : '1 venda'}</td>
+                              {!isTerapeutaSession && (
+                                <td className="px-4 py-3">
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {p.saleIds.map((sid, i) => (
+                                      <Link key={sid} href={`/terapeutas/vendas?agendar=${sid}&terapeuta=${id}`}
+                                        className="px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-600/80 text-white hover:bg-amber-600 transition-colors whitespace-nowrap">
+                                        {p.saleIds.length > 1 ? `Agendar venda ${i + 1}` : 'Agendar'}
+                                      </Link>
+                                    ))}
+                                  </div>
+                                </td>
+                              )}
                               <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(p.bruto)}</td>
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(p.liquido)}</td>
                             </tr>
