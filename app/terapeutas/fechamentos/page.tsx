@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronUp, Download } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
@@ -44,6 +44,20 @@ function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
+function exportFechamentoCSV(f: FechamentoHistorico) {
+  const header = 'Paciente,Sessão,Total sessões,Data entrega,Comissão'
+  const rows = f.sessoes.map(s =>
+    `"${s.paciente_nome}",${s.numero_sessao},${s.total_sessoes},"${s.data_entrega ?? ''}",${s.comissao_valor}`
+  )
+  const csv = '﻿' + [header, ...rows].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `fechamento-${f.data_confirmacao.slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 export default function FechamentosTerapeutasPage() {
   const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])
@@ -58,6 +72,7 @@ export default function FechamentosTerapeutasPage() {
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState('')
   const [expandido, setExpandido] = useState<string | null>(null)
+  const [historicoSessoesPage, setHistoricoSessoesPage] = useState(1)
 
   const [previewPage, setPreviewPage] = useState(1)
   const [futurasPage, setFuturasPage] = useState(1)
@@ -331,7 +346,7 @@ export default function FechamentosTerapeutasPage() {
                 <div className="divide-y divide-white/5">
                   {historico.map(f => (
                     <div key={f.id}>
-                      <button onClick={() => setExpandido(e => e === f.id ? null : f.id)}
+                      <button onClick={() => { setExpandido(e => e === f.id ? null : f.id); setHistoricoSessoesPage(1) }}
                         className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/2 transition-colors">
                         <div className="text-left">
                           <p className="text-sm text-white">{fmtDt(f.data_confirmacao)}</p>
@@ -344,6 +359,12 @@ export default function FechamentosTerapeutasPage() {
                       </button>
                       {expandido === f.id && (
                         <div className="px-4 pb-4">
+                          <div className="flex justify-end mb-2">
+                            <button onClick={() => exportFechamentoCSV(f)}
+                              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg transition-colors">
+                              <Download className="w-3.5 h-3.5" /> Baixar CSV
+                            </button>
+                          </div>
                           <div className="overflow-x-auto bg-gray-800/40 rounded-lg">
                             <table className="w-full text-xs">
                               <thead>
@@ -354,7 +375,9 @@ export default function FechamentosTerapeutasPage() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {f.sessoes.map(s => (
+                                {f.sessoes
+                                  .slice((historicoSessoesPage - 1) * SESSOES_PAGE_SIZE, historicoSessoesPage * SESSOES_PAGE_SIZE)
+                                  .map(s => (
                                   <tr key={s.id} className="border-b border-white/5">
                                     <td className="px-3 py-2 text-white">{s.paciente_nome}</td>
                                     <td className="px-3 py-2 text-gray-300">{s.numero_sessao} de {s.total_sessoes}</td>
@@ -365,6 +388,14 @@ export default function FechamentosTerapeutasPage() {
                               </tbody>
                             </table>
                           </div>
+                          {f.sessoes.length > SESSOES_PAGE_SIZE && (
+                            <Pagination
+                              currentPage={historicoSessoesPage}
+                              totalPages={Math.ceil(f.sessoes.length / SESSOES_PAGE_SIZE)}
+                              onPrevious={() => setHistoricoSessoesPage(p => Math.max(1, p - 1))}
+                              onNext={() => setHistoricoSessoesPage(p => Math.min(Math.ceil(f.sessoes.length / SESSOES_PAGE_SIZE), p + 1))}
+                            />
+                          )}
                         </div>
                       )}
                     </div>

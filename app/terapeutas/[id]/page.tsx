@@ -4,12 +4,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X,
-  Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
+  Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
+import Pagination from '@/components/Pagination'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 
@@ -163,6 +164,21 @@ function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
+const FECHAMENTO_SESSOES_PAGE_SIZE = 12
+function exportFechamentoCSV(f: FechamentoHistorico) {
+  const header = 'Paciente,Sessão,Total sessões,Data entrega,Comissão'
+  const rows = f.sessoes.map(s =>
+    `"${s.paciente_nome}",${s.numero_sessao},${s.total_sessoes},"${s.data_entrega ?? ''}",${s.comissao_valor}`
+  )
+  const csv = '﻿' + [header, ...rows].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `fechamento-${f.data_confirmacao.slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 function nowForDatetimeLocal(): string {
   const d = new Date()
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
@@ -259,6 +275,7 @@ export default function PainelTerapeuta() {
   const [fechamentos, setFechamentos] = useState<FechamentoHistorico[]>([])
   const [fechamentosLoading, setFechamentosLoading] = useState(false)
   const [fechamentoExpandido, setFechamentoExpandido] = useState<string | null>(null)
+  const [fechamentoSessoesPage, setFechamentoSessoesPage] = useState(1)
 
   // Overview
   const [ovPreset, setOvPreset] = useState<Preset>('all')
@@ -1118,7 +1135,7 @@ export default function PainelTerapeuta() {
                     <div className="divide-y divide-white/5">
                       {fechamentos.map(f => (
                         <div key={f.id}>
-                          <button onClick={() => setFechamentoExpandido(e => e === f.id ? null : f.id)}
+                          <button onClick={() => { setFechamentoExpandido(e => e === f.id ? null : f.id); setFechamentoSessoesPage(1) }}
                             className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/2 transition-colors">
                             <div className="text-left">
                               <p className="text-sm text-white">{fmtDt(f.data_confirmacao)}</p>
@@ -1131,6 +1148,12 @@ export default function PainelTerapeuta() {
                           </button>
                           {fechamentoExpandido === f.id && (
                             <div className="px-4 pb-4">
+                              <div className="flex justify-end mb-2">
+                                <button onClick={() => exportFechamentoCSV(f)}
+                                  className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg transition-colors">
+                                  <Download className="w-3.5 h-3.5" /> Baixar CSV
+                                </button>
+                              </div>
                               <div className="overflow-x-auto bg-gray-800/40 rounded-lg">
                                 <table className="w-full text-xs">
                                   <thead>
@@ -1141,7 +1164,9 @@ export default function PainelTerapeuta() {
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {f.sessoes.map(s => (
+                                    {f.sessoes
+                                      .slice((fechamentoSessoesPage - 1) * FECHAMENTO_SESSOES_PAGE_SIZE, fechamentoSessoesPage * FECHAMENTO_SESSOES_PAGE_SIZE)
+                                      .map(s => (
                                       <tr key={s.id} className="border-b border-white/5">
                                         <td className="px-3 py-2 text-white">{s.paciente_nome}</td>
                                         <td className="px-3 py-2 text-gray-300">{s.numero_sessao} de {s.total_sessoes}</td>
@@ -1152,6 +1177,14 @@ export default function PainelTerapeuta() {
                                   </tbody>
                                 </table>
                               </div>
+                              {f.sessoes.length > FECHAMENTO_SESSOES_PAGE_SIZE && (
+                                <Pagination
+                                  currentPage={fechamentoSessoesPage}
+                                  totalPages={Math.ceil(f.sessoes.length / FECHAMENTO_SESSOES_PAGE_SIZE)}
+                                  onPrevious={() => setFechamentoSessoesPage(p => Math.max(1, p - 1))}
+                                  onNext={() => setFechamentoSessoesPage(p => Math.min(Math.ceil(f.sessoes.length / FECHAMENTO_SESSOES_PAGE_SIZE), p + 1))}
+                                />
+                              )}
                             </div>
                           )}
                         </div>
