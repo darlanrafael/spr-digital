@@ -113,7 +113,7 @@ type PacienteAgrupado = {
   dataCompraMaisRecente: string
 }
 
-type Preset = 'today' | 'yesterday' | 'last_7d' | 'this_month' | 'custom'
+type Preset = 'all' | 'today' | 'last_7d' | 'custom'
 
 type Metricas = {
   sessoes_vendidas: number
@@ -137,10 +137,9 @@ type ConsultaHoje = {
 }
 
 const PRESET_LABELS: Record<Preset, string> = {
+  all: 'Todo período',
   today: 'Hoje',
-  yesterday: 'Ontem',
   last_7d: '7 dias',
-  this_month: 'Este mês',
   custom: 'Personalizado',
 }
 
@@ -175,9 +174,8 @@ function noPeriodo(dataIso: string, preset: Preset, dateStart: string, dateEnd: 
   const d = new Date(dataIso)
   switch (preset) {
     case 'today': return d.toDateString() === now.toDateString()
-    case 'yesterday': { const y = new Date(now); y.setDate(y.getDate() - 1); return d.toDateString() === y.toDateString() }
     case 'last_7d': { const diffDays = (now.getTime() - d.getTime()) / 86400000; return diffDays >= 0 && diffDays <= 7 }
-    case 'this_month': return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+    case 'all': return true
     default: return true
   }
 }
@@ -249,7 +247,7 @@ export default function PainelTerapeuta() {
   const [fechamentoExpandido, setFechamentoExpandido] = useState<string | null>(null)
 
   // Overview
-  const [ovPreset, setOvPreset] = useState<Preset>('this_month')
+  const [ovPreset, setOvPreset] = useState<Preset>('all')
   const [ovDateStart, setOvDateStart] = useState('')
   const [ovDateEnd, setOvDateEnd] = useState('')
   const [ovMetricas, setOvMetricas] = useState<Metricas>(METRICAS_VAZIA)
@@ -260,7 +258,7 @@ export default function PainelTerapeuta() {
   const [vendasSubTab, setVendasSubTab] = useState<'pendentes' | 'ativos' | 'concluidos' | 'reembolsados'>('pendentes')
   const [vBusca, setVBusca] = useState('')
   const [vFormato, setVFormato] = useState('all')
-  const [vPreset, setVPreset] = useState<Preset>('this_month')
+  const [vPreset, setVPreset] = useState<Preset>('all')
   const [vDateStart, setVDateStart] = useState('')
   const [vDateEnd, setVDateEnd] = useState('')
   const [vendasPendentes, setVendasPendentes] = useState<SaleInfo[]>([])

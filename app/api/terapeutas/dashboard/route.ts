@@ -46,36 +46,32 @@ function brasiliaToday(): Date {
   return new Date(Date.UTC(br.getUTCFullYear(), br.getUTCMonth(), br.getUTCDate()))
 }
 
-function getDateRange(preset: string, dateStart?: string, dateEnd?: string) {
+// "all" (Todo período) retorna from/to nulos — sem filtro de data. Backlog
+// (pendentes/ativos) não deveria sumir só porque o preset selecionado é
+// recente; só relatórios pontuais (Hoje/7 dias/Personalizado) filtram data.
+function getDateRange(preset: string, dateStart?: string, dateEnd?: string): { from: string | null; to: string | null } {
   const now = new Date()
   const today = brasiliaToday()
-  const yesterday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 1))
   const sevenDaysAgo = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 6))
-  const firstOfMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))
 
   switch (preset) {
     case 'today':
       return { from: brasiliaStartUTC(today), to: now.toISOString() }
-    case 'yesterday':
-      return { from: brasiliaStartUTC(yesterday), to: brasiliaEndUTC(yesterday) }
     case 'last_7d':
       return { from: brasiliaStartUTC(sevenDaysAgo), to: now.toISOString() }
-    case 'this_month':
-      return { from: brasiliaStartUTC(firstOfMonth), to: now.toISOString() }
     case 'custom':
-      return {
-        from: dateStart ?? brasiliaStartUTC(firstOfMonth),
-        to: dateEnd ?? now.toISOString(),
-      }
+      return { from: dateStart ?? null, to: dateEnd ?? null }
+    case 'all':
+      return { from: null, to: null }
     default:
-      return { from: brasiliaStartUTC(firstOfMonth), to: now.toISOString() }
+      return { from: null, to: null }
   }
 }
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl
-    const preset = searchParams.get('datePreset') ?? 'this_month'
+    const preset = searchParams.get('datePreset') ?? 'all'
     const dateStart = searchParams.get('dateStart') ?? undefined
     const dateEnd = searchParams.get('dateEnd') ?? undefined
     const terapeutaId = searchParams.get('terapeutaId') ?? 'all'
@@ -110,8 +106,9 @@ export async function GET(req: NextRequest) {
         .from('sales')
         .select('id,valor_pago_cliente,valor_liquido,produto,data_hora')
         .ilike('produto', '%Pedro | Denise%')
-        .gte('data_hora', from)
-        .lte('data_hora', to)
+      if (from) q = q.gte('data_hora', from)
+      if (to) q = q.lte('data_hora', to)
+      q = q
         .order('data_hora', { ascending: false })
         .range(offset, offset + PAGE - 1)
       if (saleIdsFiltrados !== null) {

@@ -9,7 +9,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
-type Preset = 'today' | 'yesterday' | 'last_7d' | 'this_month' | 'custom'
+type Preset = 'all' | 'today' | 'last_7d' | 'custom'
 
 type Metricas = {
   sessoes_vendidas: number
@@ -69,10 +69,9 @@ function fmtDt(iso: string | null) {
 }
 
 const PRESET_LABELS: Record<Preset, string> = {
+  all: 'Todo período',
   today: 'Hoje',
-  yesterday: 'Ontem',
   last_7d: '7 dias',
-  this_month: 'Este mês',
   custom: 'Personalizado',
 }
 
@@ -85,7 +84,7 @@ const METRICAS_VAZIA: Metricas = {
 
 // ─── Componente ──────────────────────────────────────────────────────────────
 export default function TerapeutasDashboard() {
-  const [preset, setPreset] = useState<Preset>('this_month')
+  const [preset, setPreset] = useState<Preset>('all')
   const [dateStart, setDateStart] = useState('')
   const [dateEnd, setDateEnd] = useState('')
   const [terapeutaId, setTerapeutaId] = useState('all')
