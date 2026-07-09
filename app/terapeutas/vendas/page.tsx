@@ -8,7 +8,7 @@ import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Preset = 'today' | 'yesterday' | 'last_7d' | 'this_month' | 'custom'
+type Preset = 'all' | 'today' | 'last_7d' | 'custom'
 type AbaAtiva = 'aprovadas' | 'reembolsos'
 type SubAba = 'pendentes' | 'ativos'
 type OcorrenciaTipo = null | 'select' | 'nota' | 'remarcacao' | 'reembolso'
@@ -22,6 +22,7 @@ type Sale = {
   plataforma: string | null
   valor_pago_cliente: number
   valor_liquido: number
+  preco_base: number
   data_hora: string
   status: string | null
 }
@@ -116,13 +117,30 @@ function inferirNumeroSessoes(produto: string): number {
   return 1
 }
 
+// preco_base é o preço "limpo" do plano (sem juros de parcelamento), então
+// bate exato contra a tabela de planos. Vendas parceladas em 2x (ex.: Fabio
+// Nery: 700 + 700 = 1.400) não batem sozinhas — aí soma-se o preco_base de
+// todas as vendas do mesmo paciente+produto e divide igual entre elas.
+const TABELA_SESSOES_POR_VALOR: { pedro: Record<number, number>; denise: Record<number, number> } = {
+  pedro: { 1300: 1, 1550: 2, 2860: 4, 5280: 8 },
+  denise: { 550: 1, 790: 2, 1400: 4, 2640: 8 },
+}
+function inferirNumeroSessoesPorValor(sale: Sale, todasVendas: Sale[]): number {
+  const tabela = sale.produto.toLowerCase().includes('denise') ? TABELA_SESSOES_POR_VALOR.denise : TABELA_SESSOES_POR_VALOR.pedro
+  if (tabela[sale.preco_base]) return tabela[sale.preco_base]
+  const irmas = todasVendas.filter(v => v.email === sale.email && v.produto === sale.produto)
+  const soma = irmas.reduce((a, v) => a + (v.preco_base ?? 0), 0)
+  if (irmas.length > 0 && tabela[soma]) return Math.round(tabela[soma] / irmas.length)
+  return inferirNumeroSessoes(sale.produto)
+}
+
 function nomeFromEmail(email: string): string {
   const prefix = email.split('@')[0]
   return prefix.replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 const PRESET_LABELS: Record<Preset, string> = {
-  today: 'Hoje', yesterday: 'Ontem', last_7d: '7 dias', this_month: 'Este mês', custom: 'Personalizado',
+  all: 'Todo período', today: 'Hoje', last_7d: '7 dias', custom: 'Personalizado',
 }
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -191,7 +209,7 @@ export default function TerapeutasVendas() {
   // Filtros
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('aprovadas')
   const [subAba, setSubAba] = useState<SubAba>('pendentes')
-  const [preset, setPreset] = useState<Preset>('this_month')
+  const [preset, setPreset] = useState<Preset>('all')
   const [dateStart, setDateStart] = useState('')
   const [dateEnd, setDateEnd] = useState('')
   const [busca, setBusca] = useState('')
@@ -337,7 +355,7 @@ export default function TerapeutasVendas() {
   const agendarVenda = agendarVendaId
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId)
     : null
-  const agendarNumSessoes = parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoes(agendarVenda.produto) : 1)
+  const agendarNumSessoes = parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
   const agendarPreviewDatas = agendarDataPrimeira && agendarVenda
     ? Array.from({ length: agendarNumSessoes }, (_, i) => {
         const d = new Date(agendarDataPrimeira)
@@ -655,7 +673,9 @@ export default function TerapeutasVendas() {
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate">{sale.produto}</td>
                               <td className="px-4 py-3 text-center">
-                                <span className="text-indigo-400 font-medium">{inferirNumeroSessoes(sale.produto)}</span>
+                                <span className="text-indigo-400 font-medium">
+                                  {inferirNumeroSessoesPorValor(sale, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])}
+                                </span>
                               </td>
                               <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
@@ -665,7 +685,7 @@ export default function TerapeutasVendas() {
                                   setAgendarVendaId(sale.id)
                                   setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
                                   setAgendarDataPrimeira(''); setAgendarErro('')
-                                  setAgendarNumSessoesInput(String(inferirNumeroSessoes(sale.produto)))
+                                  setAgendarNumSessoesInput(String(inferirNumeroSessoesPorValor(sale, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])))
                                 }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                   <Calendar className="w-3 h-3" /> Agendar
                                 </button>

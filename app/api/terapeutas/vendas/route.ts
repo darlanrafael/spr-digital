@@ -12,6 +12,7 @@ type SaleRow = {
   plataforma: string | null
   valor_pago_cliente: number
   valor_liquido: number
+  preco_base: number
   data_hora: string
   status: string | null
 }
@@ -76,23 +77,21 @@ function brasiliaToday(): Date {
 function brasiliaStartUTC(d: Date): string {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 3, 0, 0)).toISOString()
 }
-function brasiliaEndUTC(d: Date): string {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 2, 59, 59)).toISOString()
-}
-
-function getDateRange(preset: string, dateStart?: string, dateEnd?: string) {
+// "all" (Todo período) retorna from/to nulos — sem filtro de data nenhum.
+// Importante pra Agendamentos Pendentes/Pacientes Ativos: são listas de
+// backlog, não relatório de um período, e vendas antigas não podem sumir só
+// porque o preset selecionado é recente (mesmo bug já corrigido antes nos
+// Pacientes Ativos/Concluídos da tela do terapeuta).
+function getDateRange(preset: string, dateStart?: string, dateEnd?: string): { from: string | null; to: string | null } {
   const now = new Date()
   const today = brasiliaToday()
-  const yesterday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 1))
   const sevenDaysAgo = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 6))
-  const firstOfMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))
   switch (preset) {
     case 'today': return { from: brasiliaStartUTC(today), to: now.toISOString() }
-    case 'yesterday': return { from: brasiliaStartUTC(yesterday), to: brasiliaEndUTC(yesterday) }
     case 'last_7d': return { from: brasiliaStartUTC(sevenDaysAgo), to: now.toISOString() }
-    case 'this_month': return { from: brasiliaStartUTC(firstOfMonth), to: now.toISOString() }
-    case 'custom': return { from: dateStart ?? brasiliaStartUTC(firstOfMonth), to: dateEnd ?? now.toISOString() }
-    default: return { from: brasiliaStartUTC(firstOfMonth), to: now.toISOString() }
+    case 'custom': return { from: dateStart ?? null, to: dateEnd ?? null }
+    case 'all': return { from: null, to: null }
+    default: return { from: null, to: null }
   }
 }
 
@@ -100,7 +99,7 @@ function getDateRange(preset: string, dateStart?: string, dateEnd?: string) {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl
-    const datePreset = searchParams.get('datePreset') ?? 'this_month'
+    const datePreset = searchParams.get('datePreset') ?? 'all'
     const dateStart = searchParams.get('dateStart') ?? undefined
     const dateEnd = searchParams.get('dateEnd') ?? undefined
     const { from, to } = getDateRange(datePreset, dateStart, dateEnd)
@@ -116,12 +115,13 @@ export async function GET(req: NextRequest) {
     const PAGE = 1000
     let offset = 0
     while (true) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('sales')
-        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status')
+        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status')
         .ilike('produto', '%Pedro | Denise%')
-        .gte('data_hora', from)
-        .lte('data_hora', to)
+      if (from) query = query.gte('data_hora', from)
+      if (to) query = query.lte('data_hora', to)
+      const { data, error } = await query
         .order('data_hora', { ascending: false })
         .range(offset, offset + PAGE - 1)
       if (error) throw new Error(error.message)
