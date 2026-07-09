@@ -252,6 +252,17 @@ export default function FechamentosTerapeutasPage() {
                   <p className="px-4 py-8 text-center text-gray-600 text-xs border-t border-white/10">Nenhuma sessão futura vendida pra {terapeutaSelecionado?.nome ?? 'este terapeuta'}</p>
                 ) : (
                   <div className="border-t border-white/10">
+                    <div className="px-4 py-2 flex items-center gap-3 border-b border-white/5 bg-gray-800/30">
+                      <button onClick={() => setFuturasSelecionadas(new Set(futuras.sessoes.map(s => s.id)))}
+                        className="text-xs text-purple-400 hover:text-purple-300 font-medium transition-colors">
+                        Selecionar todos
+                      </button>
+                      <span className="text-gray-700">·</span>
+                      <button onClick={() => setFuturasSelecionadas(new Set())}
+                        className="text-xs text-gray-500 hover:text-gray-300 font-medium transition-colors">
+                        Desmarcar todos
+                      </button>
+                    </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
