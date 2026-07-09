@@ -503,6 +503,34 @@ export default function PainelTerapeuta() {
   // histórico: "quem reembolsou nesse mês").
   const pacientesConcluidos = useMemo(() => filtraPacientes(pacientes.filter(p => !p.ativo), false), [pacientes, vBusca, vFormato])
 
+  // Agrupa vendas pendentes por paciente (email) — um paciente pode ter mais
+  // de uma venda (ex.: parcelamento em cartão gera 2 vendas separadas), mas
+  // conta como 1 paciente pendente de agendamento.
+  const pacientesPendentesAgrupados = useMemo(() => {
+    const map = new Map<string, {
+      email: string; nome: string; produtos: string[]; qtdVendas: number
+      bruto: number; liquido: number; dataCompraMaisRecente: string; saleIds: string[]
+    }>()
+    for (const v of vendasPendentes) {
+      const existente = map.get(v.email)
+      if (existente) {
+        existente.produtos.push(v.produto)
+        existente.qtdVendas += 1
+        existente.bruto += v.valor_pago_cliente
+        existente.liquido += v.valor_liquido
+        existente.saleIds.push(v.id)
+        if (new Date(v.data_hora) < new Date(existente.dataCompraMaisRecente)) existente.dataCompraMaisRecente = v.data_hora
+      } else {
+        map.set(v.email, {
+          email: v.email, nome: v.nome, produtos: [v.produto], qtdVendas: 1,
+          bruto: v.valor_pago_cliente, liquido: v.valor_liquido,
+          dataCompraMaisRecente: v.data_hora, saleIds: [v.id],
+        })
+      }
+    }
+    return Array.from(map.values())
+  }, [vendasPendentes])
+
   const vendasReembolsadas = useMemo(() => {
     const buscaLower = vBusca.toLowerCase()
     return Object.values(vendas)
@@ -801,7 +829,7 @@ export default function PainelTerapeuta() {
 
                 <div className="flex items-center gap-2 mb-4">
                   {[
-                    { key: 'pendentes', label: `Pendentes de Agendamento [${vendasPendentes.length}]`, cls: 'bg-amber-600/80' },
+                    { key: 'pendentes', label: `Pendentes de Agendamento [${pacientesPendentesAgrupados.length}]`, cls: 'bg-amber-600/80' },
                     { key: 'ativos', label: `Pacientes Ativos [${pacientesAtivos.length}]`, cls: 'bg-blue-600/80' },
                     { key: 'concluidos', label: `Concluídos [${pacientesConcluidos.length}]`, cls: 'bg-green-600/80' },
                     { key: 'reembolsados', label: `Reembolsados [${vendasReembolsadas.length}]`, cls: 'bg-gray-600' },
@@ -826,24 +854,25 @@ export default function PainelTerapeuta() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-white/10">
-                            {['Data da compra', 'Paciente', 'Produto', 'Fat. Bruto', 'Líquido'].map(h => (
+                            {['Data da compra', 'Paciente', 'Produto', 'Vendas', 'Fat. Bruto', 'Líquido'].map(h => (
                               <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {vendasPendentes.length === 0 ? (
-                            <tr><td colSpan={5} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhuma venda pendente de agendamento</td></tr>
-                          ) : vendasPendentes.map(v => (
-                            <tr key={v.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
-                              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(v.data_hora)}</td>
+                          {pacientesPendentesAgrupados.length === 0 ? (
+                            <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhuma venda pendente de agendamento</td></tr>
+                          ) : pacientesPendentesAgrupados.map(p => (
+                            <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
                               <td className="px-4 py-3">
-                                <p className="text-white font-medium">{v.nome}</p>
-                                <p className="text-xs text-gray-500">{v.email}</p>
+                                <p className="text-white font-medium">{p.nome}</p>
+                                <p className="text-xs text-gray-500">{p.email}</p>
                               </td>
-                              <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{v.produto}</td>
-                              <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(v.valor_pago_cliente)}</td>
-                              <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(v.valor_liquido)}</td>
+                              <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{p.produtos.join(' + ')}</td>
+                              <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.qtdVendas > 1 ? `${p.qtdVendas} vendas` : '1 venda'}</td>
+                              <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(p.bruto)}</td>
+                              <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(p.liquido)}</td>
                             </tr>
                           ))}
                         </tbody>
