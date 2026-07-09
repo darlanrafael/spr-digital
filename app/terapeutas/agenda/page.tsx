@@ -54,7 +54,10 @@ export default function TerapeutasAgenda() {
       const [sResp, tResp] = await Promise.all([
         client.from('sessoes')
           .select('id,sale_id,terapeuta_id,numero_sessao,total_sessoes,status,data_agendada,link_meet,comissao_valor,paciente_nome,paciente_email,terapeutas(nome)')
-          .gte('data_agendada', inicio).lte('data_agendada', fim),
+          .gte('data_agendada', inicio).lte('data_agendada', fim)
+          // Sessão já entregue não é mais um compromisso futuro — some da
+          // agenda pra não confundir com o que ainda precisa acontecer.
+          .neq('status', 'entregue'),
         client.from('terapeutas').select('id,nome').eq('ativo', true).order('nome'),
       ])
       setSessoes((sResp.data ?? []) as unknown as Sessao[])

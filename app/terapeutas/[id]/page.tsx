@@ -458,6 +458,9 @@ export default function PainelTerapeuta() {
   function sessoesNoDiaAgenda(dia: number): Sessao[] {
     return sessoes.filter(s => {
       if (!s.data_agendada) return false
+      // Sessão já entregue não é mais um compromisso futuro — some da
+      // agenda pra não confundir com o que ainda precisa acontecer.
+      if (s.status === 'entregue') return false
       const d = new Date(s.data_agendada)
       return d.getFullYear() === agendaAno && d.getMonth() === agendaMes && d.getDate() === dia
     }).sort((a, b) => (a.data_agendada ?? '') < (b.data_agendada ?? '') ? -1 : 1)
