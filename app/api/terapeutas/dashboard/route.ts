@@ -3,10 +3,13 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 
 type SaleRow = {
   id: string
+  email: string
   valor_pago_cliente: number
   valor_liquido: number
+  preco_base: number
   produto: string
   data_hora: string
+  status: string | null
 }
 
 type SessaoRow = {
@@ -104,7 +107,7 @@ export async function GET(req: NextRequest) {
     while (true) {
       let q = supabase
         .from('sales')
-        .select('id,valor_pago_cliente,valor_liquido,produto,data_hora')
+        .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status')
         .ilike('produto', '%Pedro | Denise%')
       if (from) q = q.gte('data_hora', from)
       if (to) q = q.lte('data_hora', to)
@@ -143,10 +146,50 @@ export async function GET(req: NextRequest) {
       ? sessoes.filter(s => s.terapeuta_id === terapeutaId)
       : sessoes
 
+    // Vendas aprovadas que ainda não têm NENHUMA sessão criada continuam
+    // "vendidas" — o comercial decidiu deixá-las sem sessão até agendar
+    // manualmente (não criamos mais sessões placeholder), então elas não
+    // podem sumir das métricas de Overview só por não ter registro em
+    // `sessoes` ainda. Contam como vendidas/futuras usando o número de
+    // sessões do plano (via preco_base) e a comissão que será devida.
+    const TABELA_SESSOES: { pedro: Record<number, number>; denise: Record<number, number> } = {
+      pedro: { 1300: 1, 1550: 2, 2860: 4, 5280: 8 },
+      denise: { 550: 1, 790: 2, 1400: 4, 2640: 8 },
+    }
+    function inferirSessoesPorValor(sale: SaleRow, todasVendas: SaleRow[]): number {
+      const tabela = sale.produto.toLowerCase().includes('denise') ? TABELA_SESSOES.denise : TABELA_SESSOES.pedro
+      if (tabela[sale.preco_base]) return tabela[sale.preco_base]
+      const irmas = todasVendas.filter(v => v.email === sale.email && v.produto === sale.produto)
+      const soma = irmas.reduce((a, v) => a + (v.preco_base ?? 0), 0)
+      if (irmas.length > 0 && tabela[soma]) return Math.round(tabela[soma] / irmas.length)
+      return 1
+    }
+    const saleIdsComSessao = new Set(sessoes.map(s => s.sale_id))
+    const pendentesPorTerapeuta = new Map<string, { sessoes: number; comissao: number; bruto: number; saleIds: string[] }>()
+    for (const t of terapeutas) {
+      const primeiroNome = t.nome.trim().split(' ')[0].toLowerCase()
+      const pendentes = vendasRaw.filter(v =>
+        v.status === 'aprovada' && !saleIdsComSessao.has(v.id) && v.produto.toLowerCase().includes(primeiroNome)
+      )
+      let sessoesExtra = 0, comissaoExtra = 0, brutoExtra = 0
+      for (const v of pendentes) {
+        sessoesExtra += inferirSessoesPorValor(v, vendasRaw)
+        const imposto = (v.valor_liquido || 0) * 0.1285
+        comissaoExtra += ((v.valor_liquido || 0) - imposto) * (t.percentual_comissao / 100)
+        brutoExtra += v.valor_pago_cliente || 0
+      }
+      pendentesPorTerapeuta.set(t.id, { sessoes: sessoesExtra, comissao: comissaoExtra, bruto: brutoExtra, saleIds: pendentes.map(v => v.id) })
+    }
+    const pendentesFiltrado = terapeutaId !== 'all'
+      ? (pendentesPorTerapeuta.get(terapeutaId) ?? { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] })
+      : [...pendentesPorTerapeuta.values()].reduce((acc, p) => ({
+          sessoes: acc.sessoes + p.sessoes, comissao: acc.comissao + p.comissao, bruto: acc.bruto + p.bruto, saleIds: [...acc.saleIds, ...p.saleIds],
+        }), { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] as string[] })
+
     // 5. Métricas globais
     const sessoes_entregues = sessoesFiltradas.filter(s => s.status === 'entregue').length
-    const sessoes_futuras = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').length
-    const sessoes_vendidas = sessoesFiltradas.length
+    const sessoes_futuras = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesFiltrado.sessoes
+    const sessoes_vendidas = sessoesFiltradas.length + pendentesFiltrado.sessoes
 
     const faturamento_bruto = vendasRaw.reduce((a, v) => a + (v.valor_pago_cliente || 0), 0)
     const total_impostos = vendasRaw.reduce((a, v) => a + (v.valor_pago_cliente || 0) * 0.1285, 0)
@@ -157,31 +200,32 @@ export async function GET(req: NextRequest) {
     const faturamento_liquido_terapeutas = faturamento_liquido_total * 0.30
     const ticket_medio = vendasRaw.length > 0 ? faturamento_bruto / vendasRaw.length : 0
     const comissao_gerada = sessoesFiltradas.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + (s.comissao_valor || 0), 0)
-    const comissao_futura = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0)
-    // Comissão total sobre todas as sessões vendidas no período (entregues + futuras), independente de já ter sido paga —
+    const comissao_futura = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesFiltrado.comissao
+    // Comissão total sobre todas as sessões vendidas no período (entregues + futuras + ainda sem sessão criada), independente de já ter sido paga —
     // usado no card "Faturamento Líquido" da visão do próprio terapeuta.
-    const comissao_total_vendida = sessoesFiltradas.reduce((a, s) => a + (s.comissao_valor || 0), 0)
+    const comissao_total_vendida = sessoesFiltradas.reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesFiltrado.comissao
 
     // 6. Stats por terapeuta
     const now = new Date()
     const por_terapeuta = terapeutas.map(t => {
       const ts = sessoesFiltradas.filter(s => s.terapeuta_id === t.id)
+      const pendentesT = pendentesPorTerapeuta.get(t.id) ?? { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] }
       const saleIdsTerapeuta = [...new Set(ts.map(s => s.sale_id))]
       const fat_bruto_t = vendasRaw
         .filter(v => saleIdsTerapeuta.includes(v.id))
-        .reduce((a, v) => a + (v.valor_pago_cliente || 0), 0)
+        .reduce((a, v) => a + (v.valor_pago_cliente || 0), 0) + pendentesT.bruto
       const proximas = ts
         .filter(s => s.status === 'agendada' && s.data_agendada && new Date(s.data_agendada) > now)
         .sort((a, b) => (a.data_agendada ?? '') < (b.data_agendada ?? '') ? -1 : 1)
       return {
         id: t.id,
         nome: t.nome,
-        sessoes_vendidas: ts.length,
+        sessoes_vendidas: ts.length + pendentesT.sessoes,
         sessoes_entregues: ts.filter(s => s.status === 'entregue').length,
-        sessoes_futuras: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').length,
+        sessoes_futuras: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesT.sessoes,
         faturamento_bruto: fat_bruto_t,
         comissao_gerada: ts.filter(s => s.status === 'entregue').reduce((a, s) => a + (s.comissao_valor || 0), 0),
-        comissao_futura: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0),
+        comissao_futura: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesT.comissao,
         proxima_consulta: proximas[0]?.data_agendada ?? null,
       }
     })
