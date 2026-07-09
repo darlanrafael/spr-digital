@@ -10,6 +10,7 @@ type SessaoPendente = {
   total_sessoes: number
   comissao_valor: number
   data_entrega: string | null
+  data_agendada: string | null
   paciente_nome: string
 }
 
@@ -17,11 +18,27 @@ async function buscarPendentes(terapeutaId: string): Promise<{ sessoes: SessaoPe
   const supabase = getSupabaseAdmin()
   const { data } = await supabase
     .from('sessoes')
-    .select('id,sale_id,numero_sessao,total_sessoes,comissao_valor,data_entrega,paciente_nome')
+    .select('id,sale_id,numero_sessao,total_sessoes,comissao_valor,data_entrega,data_agendada,paciente_nome')
     .eq('terapeuta_id', terapeutaId)
     .eq('status', 'entregue')
     .eq('comissao_paga', false)
     .order('data_entrega', { ascending: true })
+  const sessoes = (data ?? []) as SessaoPendente[]
+  const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
+  return { sessoes, total }
+}
+
+// Sessões vendidas mas ainda não entregues — só entram no fechamento se o
+// admin escolher explicitamente antecipar o pagamento (nem sempre quer).
+async function buscarFuturas(terapeutaId: string): Promise<{ sessoes: SessaoPendente[]; total: number }> {
+  const supabase = getSupabaseAdmin()
+  const { data } = await supabase
+    .from('sessoes')
+    .select('id,sale_id,numero_sessao,total_sessoes,comissao_valor,data_entrega,data_agendada,paciente_nome')
+    .eq('terapeuta_id', terapeutaId)
+    .in('status', ['agendada', 'pendente'])
+    .eq('comissao_paga', false)
+    .order('data_agendada', { ascending: true, nullsFirst: false })
   const sessoes = (data ?? []) as SessaoPendente[]
   const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
   return { sessoes, total }
@@ -35,8 +52,9 @@ export async function GET(req: NextRequest) {
     if (!terapeutaId) return NextResponse.json({ error: 'terapeutaId é obrigatório' }, { status: 400 })
 
     const supabase = getSupabaseAdmin()
-    const [{ sessoes, total }, historicoResp] = await Promise.all([
+    const [{ sessoes, total }, futurasResp, historicoResp] = await Promise.all([
       buscarPendentes(terapeutaId),
+      buscarFuturas(terapeutaId),
       supabase
         .from('fechamentos_terapeutas')
         .select('*')
@@ -46,6 +64,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       preview: { sessoes, total },
+      futuras: futurasResp,
       historico: historicoResp.data ?? [],
     })
   } catch (err) {
@@ -63,8 +82,9 @@ export async function POST(req: NextRequest) {
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
+      sessoes_futuras_ids?: string[]
     }
-    const { terapeuta_id, senha, usuario_nome, usuario_tipo, usuario_email } = body
+    const { terapeuta_id, senha, usuario_nome, usuario_tipo, usuario_email, sessoes_futuras_ids } = body
 
     if (!terapeuta_id || !senha || !usuario_email) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
@@ -82,9 +102,24 @@ export async function POST(req: NextRequest) {
       .from('terapeutas').select('id,nome').eq('id', terapeuta_id).single()
     if (!terapeuta) return NextResponse.json({ error: 'Terapeuta não encontrado' }, { status: 404 })
 
-    const { sessoes, total } = await buscarPendentes(terapeuta_id)
+    const { sessoes: sessoesEntregues } = await buscarPendentes(terapeuta_id)
+
+    // Sessões futuras selecionadas pra antecipar — sempre opcional, o admin
+    // escolhe caso a caso. Revalida contra o banco (não confia em IDs soltos
+    // do front) pra garantir que são realmente dessa terapeuta, ainda não
+    // entregues e ainda não pagas.
+    let sessoesAntecipadas: SessaoPendente[] = []
+    if (sessoes_futuras_ids && sessoes_futuras_ids.length > 0) {
+      const { sessoes: futurasDisponiveis } = await buscarFuturas(terapeuta_id)
+      const idsValidos = new Set(sessoes_futuras_ids)
+      sessoesAntecipadas = futurasDisponiveis.filter(s => idsValidos.has(s.id))
+    }
+
+    const sessoes = [...sessoesEntregues, ...sessoesAntecipadas]
+    const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
+
     if (sessoes.length === 0) {
-      return NextResponse.json({ error: 'Nenhuma sessão entregue pendente de pagamento para este terapeuta' }, { status: 400 })
+      return NextResponse.json({ error: 'Nenhuma sessão pendente de pagamento para este terapeuta' }, { status: 400 })
     }
 
     const fechamentoId = randomUUID()

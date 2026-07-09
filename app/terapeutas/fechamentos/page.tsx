@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
+import Pagination from '@/components/Pagination'
 import { getSession } from '@/lib/auth'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
@@ -20,8 +21,11 @@ type SessaoPendente = {
   total_sessoes: number
   comissao_valor: number
   data_entrega: string | null
+  data_agendada: string | null
   paciente_nome: string
 }
+
+const SESSOES_PAGE_SIZE = 12
 
 type FechamentoHistorico = {
   id: string
@@ -47,10 +51,16 @@ export default function FechamentosTerapeutasPage() {
   const [adminEmail, setAdminEmail] = useState('')
 
   const [preview, setPreview] = useState<{ sessoes: SessaoPendente[]; total: number }>({ sessoes: [], total: 0 })
+  const [futuras, setFuturas] = useState<{ sessoes: SessaoPendente[]; total: number }>({ sessoes: [], total: 0 })
+  const [futurasAberto, setFuturasAberto] = useState(false)
+  const [futurasSelecionadas, setFuturasSelecionadas] = useState<Set<string>>(new Set())
   const [historico, setHistorico] = useState<FechamentoHistorico[]>([])
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState('')
   const [expandido, setExpandido] = useState<string | null>(null)
+
+  const [previewPage, setPreviewPage] = useState(1)
+  const [futurasPage, setFuturasPage] = useState(1)
 
   const [senhaOpen, setSenhaOpen] = useState(false)
   const [confirmLoading, setConfirmLoading] = useState(false)
@@ -80,7 +90,10 @@ export default function FechamentosTerapeutasPage() {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Erro ao carregar')
       setPreview(json.preview ?? { sessoes: [], total: 0 })
+      setFuturas(json.futuras ?? { sessoes: [], total: 0 })
       setHistorico(json.historico ?? [])
+      setPreviewPage(1); setFuturasPage(1)
+      setFuturasSelecionadas(new Set())
     } catch (e) {
       setErro(String(e))
     } finally {
@@ -92,6 +105,20 @@ export default function FechamentosTerapeutasPage() {
     if (terapeutaId) loadPreview(terapeutaId)
   }, [terapeutaId])
 
+  function toggleFuturaSelecionada(id: string) {
+    setFuturasSelecionadas(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const totalAntecipado = futuras.sessoes
+    .filter(s => futurasSelecionadas.has(s.id))
+    .reduce((a, s) => a + (s.comissao_valor || 0), 0)
+  const totalFinal = preview.total + totalAntecipado
+  const qtdFinal = preview.sessoes.length + futurasSelecionadas.size
+
   async function handleConfirmar(senha: string) {
     setConfirmLoading(true)
     setConfirmErro('')
@@ -100,6 +127,7 @@ export default function FechamentosTerapeutasPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         terapeuta_id: terapeutaId,
+        sessoes_futuras_ids: Array.from(futurasSelecionadas),
         senha,
         usuario_nome: adminEmail.split('@')[0],
         usuario_tipo: 'admin',
@@ -123,7 +151,7 @@ export default function FechamentosTerapeutasPage() {
         <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-white">Fechamentos · Terapeutas</h1>
-            <p className="text-sm text-gray-400 mt-1">Confirme o pagamento de comissão das sessões já entregues</p>
+            <p className="text-sm text-gray-400 mt-1">Confirme o pagamento de comissão das sessões já entregues — ou antecipe sessões futuras quando precisar</p>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500 whitespace-nowrap">Seu e-mail:</span>
@@ -154,7 +182,7 @@ export default function FechamentosTerapeutasPage() {
         ) : (
           <>
             {/* Preview de sessões pendentes de pagamento */}
-            <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden mb-6">
+            <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden mb-4">
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-white">
                   Sessões entregues pendentes de pagamento ({preview.sessoes.length})
@@ -177,7 +205,9 @@ export default function FechamentosTerapeutasPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {preview.sessoes.map(s => (
+                        {preview.sessoes
+                          .slice((previewPage - 1) * SESSOES_PAGE_SIZE, previewPage * SESSOES_PAGE_SIZE)
+                          .map(s => (
                           <tr key={s.id} className="border-b border-white/5">
                             <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
                             <td className="px-4 py-3 text-gray-300">{s.numero_sessao} de {s.total_sessoes}</td>
@@ -188,15 +218,96 @@ export default function FechamentosTerapeutasPage() {
                       </tbody>
                     </table>
                   </div>
-                  <div className="p-4 border-t border-white/10 flex justify-end">
-                    <button onClick={() => { setConfirmErro(''); setSenhaOpen(true) }}
-                      className="bg-green-600 hover:bg-green-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-                      Confirmar fechamento — {fmtBRL(preview.total)}
-                    </button>
-                  </div>
+                  {preview.sessoes.length > SESSOES_PAGE_SIZE && (
+                    <Pagination
+                      currentPage={previewPage}
+                      totalPages={Math.ceil(preview.sessoes.length / SESSOES_PAGE_SIZE)}
+                      onPrevious={() => setPreviewPage(p => Math.max(1, p - 1))}
+                      onNext={() => setPreviewPage(p => Math.min(Math.ceil(preview.sessoes.length / SESSOES_PAGE_SIZE), p + 1))}
+                    />
+                  )}
                 </>
               )}
             </div>
+
+            {/* Sessões futuras — antecipar pagamento (opcional, caso a caso) */}
+            <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden mb-6">
+              <button onClick={() => setFuturasAberto(v => !v)}
+                className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/2 transition-colors">
+                <div className="text-left">
+                  <h2 className="text-sm font-semibold text-white">
+                    Sessões futuras — antecipar pagamento ({futuras.sessoes.length})
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Sessões vendidas mas ainda não entregues. Marque só as que quiser adiantar pro terapeuta.</p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {futurasSelecionadas.size > 0 && (
+                    <span className="text-sm font-bold text-purple-400">{futurasSelecionadas.size} selecionada(s) — {fmtBRL(totalAntecipado)}</span>
+                  )}
+                  {futurasAberto ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+                </div>
+              </button>
+              {futurasAberto && (
+                futuras.sessoes.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-gray-600 text-xs border-t border-white/10">Nenhuma sessão futura vendida pra {terapeutaSelecionado?.nome ?? 'este terapeuta'}</p>
+                ) : (
+                  <div className="border-t border-white/10">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/5">
+                            <th className="px-4 py-3 w-8"></th>
+                            {['Paciente', 'Sessão', 'Data agendada', 'Comissão'].map(h => (
+                              <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {futuras.sessoes
+                            .slice((futurasPage - 1) * SESSOES_PAGE_SIZE, futurasPage * SESSOES_PAGE_SIZE)
+                            .map(s => (
+                            <tr key={s.id} className="border-b border-white/5 cursor-pointer hover:bg-white/2 transition-colors" onClick={() => toggleFuturaSelecionada(s.id)}>
+                              <td className="px-4 py-3">
+                                <input type="checkbox" checked={futurasSelecionadas.has(s.id)} onChange={() => toggleFuturaSelecionada(s.id)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-4 h-4 rounded accent-purple-600" />
+                              </td>
+                              <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                              <td className="px-4 py-3 text-gray-300">{s.numero_sessao} de {s.total_sessoes}</td>
+                              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(s.data_agendada)}</td>
+                              <td className="px-4 py-3 text-purple-400 whitespace-nowrap">{fmtBRL(s.comissao_valor)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {futuras.sessoes.length > SESSOES_PAGE_SIZE && (
+                      <Pagination
+                        currentPage={futurasPage}
+                        totalPages={Math.ceil(futuras.sessoes.length / SESSOES_PAGE_SIZE)}
+                        onPrevious={() => setFuturasPage(p => Math.max(1, p - 1))}
+                        onNext={() => setFuturasPage(p => Math.min(Math.ceil(futuras.sessoes.length / SESSOES_PAGE_SIZE), p + 1))}
+                      />
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+
+            {qtdFinal > 0 && (
+              <div className="bg-gray-900 border border-white/10 rounded-xl p-4 mb-6 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white font-medium">
+                    {preview.sessoes.length} entregue(s){futurasSelecionadas.size > 0 ? ` + ${futurasSelecionadas.size} antecipada(s)` : ''} = {qtdFinal} sessão(ões)
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">Total a pagar</p>
+                </div>
+                <button onClick={() => { setConfirmErro(''); setSenhaOpen(true) }}
+                  className="bg-green-600 hover:bg-green-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                  Confirmar fechamento — {fmtBRL(totalFinal)}
+                </button>
+              </div>
+            )}
 
             {/* Histórico */}
             <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
@@ -259,7 +370,7 @@ export default function FechamentosTerapeutasPage() {
         onClose={() => { setSenhaOpen(false); setConfirmErro('') }}
         onConfirm={handleConfirmar}
         titulo="Confirmar fechamento de comissão"
-        descricao={`Digite sua senha para confirmar o pagamento de ${fmtBRL(preview.total)}`}
+        descricao={`Digite sua senha para confirmar o pagamento de ${fmtBRL(totalFinal)}`}
         loading={confirmLoading}
         erro={confirmErro}
       />
