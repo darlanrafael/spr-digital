@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, Lock, Mail } from 'lucide-react'
-import { login, getSession } from '@/lib/auth'
+import { login, loginDashboardUser, getSession } from '@/lib/auth'
 import { useApp } from '@/contexts/AppContext'
 
 export default function LoginPage() {
@@ -24,7 +24,9 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     await new Promise(r => setTimeout(r, 400))
-    const user = login(email.trim(), password)
+    // Tenta primeiro os usuários fixos (admin/gestor de sempre); se não
+    // achar, tenta os usuários cadastrados em /terapeutas/admin (ex.: sócio).
+    const user = login(email.trim(), password) ?? await loginDashboardUser(email.trim(), password)
     if (!user) {
       setLoading(false)
       setError('E-mail ou senha incorretos')

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Plus, User, Users, Activity, Eye, EyeOff, CheckCircle, Key, X } from 'lucide-react'
+import { Plus, User, Users, Activity, Eye, EyeOff, CheckCircle, Key, X, Shield } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import { useApp } from '@/contexts/AppContext'
@@ -36,7 +36,16 @@ type LogEntry = {
   created_at: string
 }
 
-type Tab = 'terapeutas' | 'usuarios' | 'log'
+type Tab = 'terapeutas' | 'usuarios' | 'dashboard' | 'log'
+
+type UsuarioDashboard = {
+  id: string
+  nome: string
+  email: string
+  role: string
+  ativo: boolean
+  created_at: string
+}
 
 function fmtDt(iso: string) {
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -63,12 +72,21 @@ export default function AdminPage() {
   const [uErro, setUErro] = useState('')
   const [uSucesso, setUSucesso] = useState('')
 
+  // Usuários do dashboard principal (login/permissões separado dos de cima)
+  const [usuariosDashboard, setUsuariosDashboard] = useState<UsuarioDashboard[]>([])
+  const [udLoading, setUdLoading] = useState(false)
+  const [novoUsuarioDashboard, setNovoUsuarioDashboard] = useState({ nome: '', email: '', senha: '', role: 'socio' })
+  const [showSenhaDashboard, setShowSenhaDashboard] = useState(false)
+  const [udSaving, setUdSaving] = useState(false)
+  const [udErro, setUdErro] = useState('')
+  const [udSucesso, setUdSucesso] = useState('')
+
   // Log
   const [log, setLog] = useState<LogEntry[]>([])
   const [logLoading, setLogLoading] = useState(false)
 
   // Alterar senha
-  type SenhaTarget = { tipo: 'terapeuta' | 'usuario'; id: string; nome: string }
+  type SenhaTarget = { tipo: 'terapeuta' | 'usuario' | 'dashboard'; id: string; nome: string }
   const [senhaTarget, setSenhaTarget] = useState<SenhaTarget | null>(null)
   const [novaSenha, setNovaSenha] = useState('')
   const [confirmarSenha, setConfirmarSenha] = useState('')
@@ -102,6 +120,14 @@ export default function AdminPage() {
     setLogLoading(false)
   }
 
+  async function loadUsuariosDashboard() {
+    setUdLoading(true)
+    const res = await fetch('/api/dashboard-usuarios')
+    const json = await res.json()
+    setUsuariosDashboard(Array.isArray(json) ? json : [])
+    setUdLoading(false)
+  }
+
   function showToast(msg: string) {
     setToast(msg)
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -116,6 +142,8 @@ export default function AdminPage() {
     setSenhaLoading(true)
     const endpoint = senhaTarget.tipo === 'terapeuta'
       ? '/api/terapeutas/admin/terapeutas'
+      : senhaTarget.tipo === 'dashboard'
+      ? '/api/dashboard-usuarios'
       : '/api/terapeutas/admin/usuarios'
     const res = await fetch(endpoint, {
       method: 'PATCH',
@@ -133,6 +161,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (tab === 'usuarios' && usuarios.length === 0) loadUsuarios()
+    if (tab === 'dashboard' && usuariosDashboard.length === 0) loadUsuariosDashboard()
     if (tab === 'log' && log.length === 0) loadLog()
   }, [tab])
 
@@ -199,6 +228,31 @@ export default function AdminPage() {
     loadUsuarios()
   }
 
+  async function handleCriarUsuarioDashboard(e: React.FormEvent) {
+    e.preventDefault()
+    setUdSaving(true); setUdErro(''); setUdSucesso('')
+    const res = await fetch('/api/dashboard-usuarios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(novoUsuarioDashboard),
+    })
+    const json = await res.json()
+    setUdSaving(false)
+    if (!res.ok) { setUdErro(json.error ?? 'Erro'); return }
+    setUdSucesso('Usuário criado com sucesso!')
+    setNovoUsuarioDashboard({ nome: '', email: '', senha: '', role: 'socio' })
+    loadUsuariosDashboard()
+  }
+
+  async function handleToggleUsuarioDashboard(u: UsuarioDashboard) {
+    await fetch('/api/dashboard-usuarios', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: u.id, ativo: !u.ativo }),
+    })
+    loadUsuariosDashboard()
+  }
+
   if (user && user.role !== 'admin') {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -221,6 +275,7 @@ export default function AdminPage() {
           {([
             { key: 'terapeutas', label: 'Terapeutas', icon: User },
             { key: 'usuarios', label: 'Usuários', icon: Users },
+            { key: 'dashboard', label: 'Usuários Dashboard', icon: Shield },
             { key: 'log', label: 'Log', icon: Activity },
           ] as { key: Tab; label: string; icon: React.ElementType }[]).map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => setTab(key)}
@@ -437,6 +492,123 @@ export default function AdminPage() {
                               {u.ativo ? 'Desativar' : 'Ativar'}
                             </button>
                             <button onClick={() => { setSenhaTarget({ tipo: 'usuario', id: u.id, nome: u.nome }); setNovaSenha(''); setConfirmarSenha(''); setSenhaErro('') }}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+                              <Key className="w-3 h-3" /> Senha
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* === TAB: USUÁRIOS DASHBOARD === */}
+        {tab === 'dashboard' && (
+          <div className="space-y-6">
+            <p className="text-xs text-gray-500 -mt-2">
+              Login pro dashboard principal (Dashboard, Vendas, DRE, Caixa, Fechamentos etc.) — separado dos usuários acima, que são só do módulo de Terapeutas.
+              O papel <span className="text-purple-400 font-medium">sócio</span> vê tudo, exceto a divisão de repasse entre sócios na tela de Fechamentos.
+            </p>
+            {/* Formulário */}
+            <div className="bg-gray-900 border border-white/10 rounded-xl p-5">
+              <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                <Plus className="w-4 h-4 text-indigo-400" /> Criar usuário do dashboard
+              </h2>
+              <form onSubmit={handleCriarUsuarioDashboard} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Nome</label>
+                  <input type="text" required value={novoUsuarioDashboard.nome} onChange={e => setNovoUsuarioDashboard(p => ({ ...p, nome: e.target.value }))}
+                    placeholder="Nome completo"
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">E-mail</label>
+                  <input type="email" required value={novoUsuarioDashboard.email} onChange={e => setNovoUsuarioDashboard(p => ({ ...p, email: e.target.value }))}
+                    placeholder="email@exemplo.com"
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Senha</label>
+                  <div className="relative">
+                    <input type={showSenhaDashboard ? 'text' : 'password'} required value={novoUsuarioDashboard.senha} onChange={e => setNovoUsuarioDashboard(p => ({ ...p, senha: e.target.value }))}
+                      placeholder="Senha de acesso"
+                      className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 pr-9 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                    <button type="button" onClick={() => setShowSenhaDashboard(p => !p)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                      {showSenhaDashboard ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Papel</label>
+                  <select value={novoUsuarioDashboard.role} onChange={e => setNovoUsuarioDashboard(p => ({ ...p, role: e.target.value }))}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50">
+                    <option value="socio">Sócio (vê tudo, exceto repasse entre sócios)</option>
+                    <option value="admin">Admin (acesso completo)</option>
+                    <option value="financeiro">Financeiro</option>
+                    <option value="gestor">Gestor</option>
+                  </select>
+                </div>
+                {udErro && <p className="sm:col-span-2 text-xs text-red-400">{udErro}</p>}
+                {udSucesso && (
+                  <p className="sm:col-span-2 text-xs text-green-400 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" />{udSucesso}
+                  </p>
+                )}
+                <div className="sm:col-span-2">
+                  <button type="submit" disabled={udSaving}
+                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg transition-colors">
+                    {udSaving ? 'Criando...' : 'Criar usuário'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Lista */}
+            <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white">Usuários do dashboard ({usuariosDashboard.length})</h2>
+                <button onClick={loadUsuariosDashboard} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Atualizar</button>
+              </div>
+              {udLoading ? (
+                <div className="flex items-center justify-center h-20">
+                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/5">
+                      {['Nome', 'E-mail', 'Papel', 'Status', 'Criado em', ''].map(h => (
+                        <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usuariosDashboard.length === 0 ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-600 text-xs">Nenhum usuário cadastrado</td></tr>
+                    ) : usuariosDashboard.map(u => (
+                      <tr key={u.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
+                        <td className="px-4 py-3 text-white">{u.nome}</td>
+                        <td className="px-4 py-3 text-gray-400 text-xs">{u.email}</td>
+                        <td className="px-4 py-3">
+                          <span className="text-xs text-purple-400 capitalize">{u.role}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${u.ativo ? 'text-green-500 bg-green-500/10' : 'text-gray-500 bg-gray-500/10'}`}>
+                            {u.ativo ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-500 text-xs">{fmtDt(u.created_at)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <button onClick={() => handleToggleUsuarioDashboard(u)}
+                              className={`text-xs ${u.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
+                              {u.ativo ? 'Desativar' : 'Ativar'}
+                            </button>
+                            <button onClick={() => { setSenhaTarget({ tipo: 'dashboard', id: u.id, nome: u.nome }); setNovaSenha(''); setConfirmarSenha(''); setSenhaErro('') }}
                               className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
                               <Key className="w-3 h-3" /> Senha
                             </button>

@@ -170,6 +170,9 @@ function FechamentosContent() {
   }
 
   const canEdit = user?.role === 'admin'
+  // Sócio (parceiro com % no projeto) vê todo o fechamento — faturamento,
+  // custos, lucro — mas não a divisão individual de quanto cada sócio retira.
+  const podeVerRepasse = user?.role !== 'socio'
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
 
   const [custosPeriodo, setCustosPeriodo] = useState(() => {
@@ -895,6 +898,7 @@ function FechamentosContent() {
                   </div>
                 </div>
 
+                {podeVerRepasse && (
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-4">Divisão entre Sócios</h3>
                   <div className="space-y-3 mb-4">
@@ -942,6 +946,7 @@ function FechamentosContent() {
                     </div>
                   )}
                 </div>
+                )}
 
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => setActiveStep(2)}
@@ -1040,6 +1045,7 @@ function FechamentosContent() {
                     </div>
 
                     {/* Bloco 2 — Repasse entre sócios */}
+                    {podeVerRepasse && (
                     <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
                       <div className="p-4 border-b border-white/10">
                         <h3 className="text-sm font-semibold text-white">Repasse entre sócios</h3>
@@ -1072,6 +1078,7 @@ function FechamentosContent() {
                         </table>
                       </div>
                     </div>
+                    )}
 
                     {/* Bloco 3 — Alertas pós-fechamento */}
                     {alertas.length > 0 && (
@@ -1130,7 +1137,7 @@ function FechamentosContent() {
                     )}
 
                     {/* Bloco 4 — Repasse ajustado */}
-                    {alertas.length > 0 && (
+                    {alertas.length > 0 && podeVerRepasse && (
                       <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
                         <div className="p-4 border-b border-white/10">
                           <h3 className="text-sm font-semibold text-white">Repasse ajustado após deduções</h3>
@@ -1243,6 +1250,8 @@ function HistoricoTab({ closings }: { closings: Closing[] }) {
 const COMPRADORES_PAGE_SIZE = 12
 
 function ClosingCard({ closing }: { closing: Closing }) {
+  const { user } = useApp()
+  const podeVerRepasse = user?.role !== 'socio'
   const [expanded, setExpanded] = useState(false)
   const [compradoresPage, setCompradoresPage] = useState(1)
   const [produtosFiltro, setProdutosFiltro] = useState<string[]>(() => (closing.byProduct ?? []).map(p => p.nome))
@@ -1320,13 +1329,13 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 <p className="text-gray-600">Lucro real</p>
                 <p className={`font-medium ${closing.lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(closing.lucroReal)}</p>
               </div>
-              {spr && (
+              {podeVerRepasse && spr && (
                 <div>
                   <p className="text-gray-600">Repasse SPR DIGITAL LTDA</p>
                   <p className="text-gray-300 font-medium">{formatCurrency(spr.repasse_final ?? spr.valor)}</p>
                 </div>
               )}
-              {pedro && (
+              {podeVerRepasse && pedro && (
                 <div>
                   <p className="text-gray-600">Repasse Pedro Roncada</p>
                   <p className="text-gray-300 font-medium">{formatCurrency(pedro.repasse_final ?? pedro.valor)}</p>
@@ -1502,6 +1511,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
           )}
 
           {/* Seção 3 — Repasse entre sócios */}
+          {podeVerRepasse && (
           <div className="border-b border-white/5">
             <div className="px-4 pt-4 pb-2">
               <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Repasse entre sócios</h4>
@@ -1533,6 +1543,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
               </table>
             </div>
           </div>
+          )}
 
           {/* Seção 4 — Reembolsos e chargebacks */}
           <div className="border-b border-white/5">

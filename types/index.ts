@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'gestor' | 'financeiro'
+export type UserRole = 'admin' | 'gestor' | 'financeiro' | 'socio'
 export type Platform = 'kiwify' | 'hubla'
 
 export interface User {

@@ -41,6 +41,12 @@ function getCredentials(): Credential[] {
   return creds
 }
 
+export function persistSession(user: User): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
+  }
+}
+
 export function login(email: string, password: string): User | null {
   const creds = getCredentials()
   const found = creds.find(
@@ -53,9 +59,22 @@ export function login(email: string, password: string): User | null {
     role: found.role,
     projetoId: found.projetoId,
   }
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
-  }
+  persistSession(user)
+  return user
+}
+
+// Usuários cadastrados via /terapeutas/admin (tabela usuarios_dashboard —
+// hoje só o papel "socio", mas serve pra qualquer usuário criado ali) — login
+// verificado no servidor, diferente dos usuários fixos acima.
+export async function loginDashboardUser(email: string, password: string): Promise<User | null> {
+  const res = await fetch('/api/dashboard-usuarios/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, senha: password }),
+  })
+  if (!res.ok) return null
+  const user = await res.json() as User
+  persistSession(user)
   return user
 }
 
