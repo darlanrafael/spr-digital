@@ -6,6 +6,11 @@ import { Eye, EyeOff, Lock, Mail } from 'lucide-react'
 import { login, loginDashboardUser, getSession } from '@/lib/auth'
 import { useApp } from '@/contexts/AppContext'
 
+// Sem isso a Vercel pode servir um bundle antigo do CDN por um tempo depois
+// do deploy — inaceitável numa página de login, especialmente ao remover uma
+// credencial (a antiga continuaria "funcionando" no bundle velho em cache).
+export const dynamic = 'force-dynamic'
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
