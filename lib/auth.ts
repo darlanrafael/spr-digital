@@ -11,13 +11,11 @@ interface Credential {
 }
 
 function getCredentials(): Credential[] {
+  // Rafael (USER1) migrou pro sistema novo (usuarios_dashboard, verificado
+  // no servidor) — login dele passa por loginDashboardUser() agora, não
+  // mais por aqui. Removido daqui de propósito pra credencial antiga parar
+  // de funcionar.
   const creds: Credential[] = [
-    {
-      email: process.env.NEXT_PUBLIC_USER1_EMAIL ?? 'rafael@spr.com',
-      password: process.env.NEXT_PUBLIC_USER1_PASSWORD ?? 'spr2026',
-      name: process.env.NEXT_PUBLIC_USER1_NAME ?? 'Rafael',
-      role: (process.env.NEXT_PUBLIC_USER1_ROLE as UserRole) ?? 'admin',
-    },
     {
       email: process.env.NEXT_PUBLIC_USER2_EMAIL ?? 'pedro@spr.com',
       password: process.env.NEXT_PUBLIC_USER2_PASSWORD ?? 'spr2026',
