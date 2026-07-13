@@ -6,6 +6,9 @@ import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle } from 'lucide-react
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
+import { getSession } from '@/lib/auth'
+
+type TerapeutaSession = { nome: string; email: string; tipo: string }
 
 // Página inteiramente dinâmica (dados carregados client-side em tempo real —
 // agendamentos, remarcações, comissões). Sem isso o Next.js prerenderiza como
@@ -240,6 +243,7 @@ export default function TerapeutasVendas() {
 
   // Auth
   const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
+  const [sessionNome, setSessionNome] = useState('')
 
   // Toast
   const [toast, setToast] = useState('')
@@ -324,6 +328,27 @@ export default function TerapeutasVendas() {
   }, [preset, dateStart, dateEnd])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // "Seu e-mail" ficava sempre travado em rafael@spr.com por padrão — pra
+  // qualquer outro usuário logado (comercial, outro admin) as ações com
+  // senha (agendar, remarcar etc.) nunca batiam, porque tentavam validar a
+  // senha dele contra a conta errada. Carrega o e-mail/nome reais da sessão.
+  useEffect(() => {
+    const adminSession = getSession()
+    if (adminSession) {
+      setAdminEmail(adminSession.email)
+      setSessionNome(adminSession.name)
+      return
+    }
+    const raw = localStorage.getItem('terapeutas_session')
+    if (raw) {
+      try {
+        const session = JSON.parse(raw) as TerapeutaSession
+        setAdminEmail(session.email)
+        setSessionNome(session.nome)
+      } catch { /* ignore */ }
+    }
+  }, [])
 
   // Veio de um link "Agendar" na tela de um terapeuta (ex.: /terapeutas/[id] →
   // aba Pendentes de Agendamento) — abre o modal direto na venda já filtrada.
@@ -449,7 +474,7 @@ export default function TerapeutasVendas() {
         acao: scAcao,
         motivo: scAcao === 'anular' ? anularMotivo : undefined,
         data_entrega: scAcao === 'concluir' ? scConcluirData : undefined,
-        usuario_nome: nomeFromEmail(adminEmail),
+        usuario_nome: sessionNome || nomeFromEmail(adminEmail),
         usuario_tipo: 'admin',
         usuario_email: adminEmail,
         senha,
@@ -477,7 +502,7 @@ export default function TerapeutasVendas() {
         sale_id: prontuarioVendaId,
         ...payload,
         senha,
-        usuario_nome: nomeFromEmail(adminEmail),
+        usuario_nome: sessionNome || nomeFromEmail(adminEmail),
         usuario_tipo: 'admin',
         usuario_email: adminEmail,
       }),

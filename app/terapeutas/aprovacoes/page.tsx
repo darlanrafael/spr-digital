@@ -5,10 +5,13 @@ import { CheckCircle, X, RefreshCw, AlertTriangle } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
+import { getSession } from '@/lib/auth'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
 export const dynamic = 'force-dynamic'
+
+type TerapeutaSession = { nome: string; email: string; tipo: string }
 
 type Solicitacao = {
   id: string
@@ -47,6 +50,7 @@ export default function TerapeutasAprovacoes() {
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState('')
   const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
+  const [sessionNome, setSessionNome] = useState('')
 
   // Toast
   const [toast, setToast] = useState('')
@@ -88,6 +92,27 @@ export default function TerapeutasAprovacoes() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  // "Seu e-mail" ficava sempre travado em rafael@spr.com por padrão — pra
+  // qualquer outro usuário logado (comercial, outro admin) as ações com
+  // senha nunca batiam, porque tentavam validar a senha dele contra a conta
+  // errada. Carrega o e-mail/nome reais da sessão.
+  useEffect(() => {
+    const adminSession = getSession()
+    if (adminSession) {
+      setAdminEmail(adminSession.email)
+      setSessionNome(adminSession.name)
+      return
+    }
+    const raw = localStorage.getItem('terapeutas_session')
+    if (raw) {
+      try {
+        const session = JSON.parse(raw) as TerapeutaSession
+        setAdminEmail(session.email)
+        setSessionNome(session.nome)
+      } catch { /* ignore */ }
+    }
+  }, [])
+
   function nomeFromEmail(email: string) {
     return email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
@@ -102,7 +127,7 @@ export default function TerapeutasAprovacoes() {
         id: aprovarId,
         acao: 'aprovar',
         senha,
-        usuario_nome: nomeFromEmail(adminEmail),
+        usuario_nome: sessionNome || nomeFromEmail(adminEmail),
         usuario_email: adminEmail,
       }),
     })
@@ -130,7 +155,7 @@ export default function TerapeutasAprovacoes() {
         acao: 'rejeitar',
         justificativa: rejeitarJustificativa,
         senha,
-        usuario_nome: nomeFromEmail(adminEmail),
+        usuario_nome: sessionNome || nomeFromEmail(adminEmail),
         usuario_email: adminEmail,
       }),
     })

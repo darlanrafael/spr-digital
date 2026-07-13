@@ -59,10 +59,14 @@ function exportFechamentoCSV(f: FechamentoHistorico) {
   URL.revokeObjectURL(url)
 }
 
+type TerapeutaSession = { nome: string; email: string; tipo: string }
+
 export default function FechamentosTerapeutasPage() {
   const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])
   const [terapeutaId, setTerapeutaId] = useState('')
   const [adminEmail, setAdminEmail] = useState('')
+  const [sessionNome, setSessionNome] = useState('')
+  const [sessionTipo, setSessionTipo] = useState('admin')
 
   const [preview, setPreview] = useState<{ sessoes: SessaoPendente[]; total: number }>({ sessoes: [], total: 0 })
   const [futuras, setFuturas] = useState<{ sessoes: SessaoPendente[]; total: number }>({ sessoes: [], total: 0 })
@@ -83,8 +87,24 @@ export default function FechamentosTerapeutasPage() {
   const [sucessoMsg, setSucessoMsg] = useState('')
 
   useEffect(() => {
+    // "Seu e-mail" só lia a sessão de admin do dashboard principal — qualquer
+    // usuário logado direto pelo módulo de Terapeutas (comercial, etc.)
+    // ficava sem e-mail nenhum aqui, e a senha nunca batia.
     const session = getSession()
-    if (session) setAdminEmail(session.email)
+    if (session) {
+      setAdminEmail(session.email)
+      setSessionNome(session.name)
+    } else {
+      const raw = localStorage.getItem('terapeutas_session')
+      if (raw) {
+        try {
+          const ts = JSON.parse(raw) as TerapeutaSession
+          setAdminEmail(ts.email)
+          setSessionNome(ts.nome)
+          setSessionTipo(ts.tipo)
+        } catch { /* ignore */ }
+      }
+    }
     fetch('/api/terapeutas/admin/terapeutas')
       .then(r => r.json())
       .then((data: Terapeuta[]) => {
@@ -144,8 +164,8 @@ export default function FechamentosTerapeutasPage() {
         terapeuta_id: terapeutaId,
         sessoes_futuras_ids: Array.from(futurasSelecionadas),
         senha,
-        usuario_nome: adminEmail.split('@')[0],
-        usuario_tipo: 'admin',
+        usuario_nome: sessionNome || adminEmail.split('@')[0],
+        usuario_tipo: sessionTipo,
         usuario_email: adminEmail,
       }),
     })
