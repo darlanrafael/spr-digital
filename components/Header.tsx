@@ -72,8 +72,10 @@ export default function Header() {
 
   if (pathname === '/terapeutas/login') return null
 
-  // Header simplificado para terapeutas sem sessão do sistema principal
-  if (isTerapeutas && !user && terapeutaSession) {
+  // Header simplificado (sem menu) só pra terapeuta de verdade — ela fica
+  // travada no próprio painel. Comercial/outros tipos logados por aqui
+  // precisam navegar livre, então caem no header completo abaixo.
+  if (isTerapeutas && !user && terapeutaSession && terapeutaSession.tipo === 'terapeuta') {
     return (
       <header className="sticky top-0 z-40 border-b border-white/10 bg-gray-900/80 backdrop-blur-md">
         <div className="max-w-screen-xl mx-auto px-4">
@@ -157,28 +159,32 @@ export default function Header() {
 
           {/* Right side */}
           <div className="flex items-center gap-2">
-            {/* Project selector */}
-            <div className="relative">
-              <select
-                value={isTerapeutas ? 'terapeutas' : selectedProject}
-                onChange={e => {
-                  const v = e.target.value
-                  if (v === 'terapeutas') {
-                    router.push('/terapeutas')
-                  } else {
-                    setSelectedProject(v)
-                    router.push('/')
-                  }
-                }}
-                className="appearance-none bg-gray-800 border border-white/10 rounded-lg pl-3 pr-7 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 cursor-pointer max-w-[160px] truncate"
-              >
-                {availableProjects.map(p => (
-                  <option key={p.id} value={p.id}>{p.nome}</option>
-                ))}
-                <option value="terapeutas">Atendimentos - Terapeutas</option>
-              </select>
-              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
-            </div>
+            {/* Project selector — não faz sentido pra quem só tem sessão do
+                módulo de Terapeutas (comercial etc.), sem acesso ao dashboard
+                principal multi-projeto. */}
+            {user && (
+              <div className="relative">
+                <select
+                  value={isTerapeutas ? 'terapeutas' : selectedProject}
+                  onChange={e => {
+                    const v = e.target.value
+                    if (v === 'terapeutas') {
+                      router.push('/terapeutas')
+                    } else {
+                      setSelectedProject(v)
+                      router.push('/')
+                    }
+                  }}
+                  className="appearance-none bg-gray-800 border border-white/10 rounded-lg pl-3 pr-7 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-indigo-500 cursor-pointer max-w-[160px] truncate"
+                >
+                  {availableProjects.map(p => (
+                    <option key={p.id} value={p.id}>{p.nome}</option>
+                  ))}
+                  <option value="terapeutas">Atendimentos - Terapeutas</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+              </div>
+            )}
 
             {/* Atualizar dados */}
             <div className="flex items-center gap-1.5">
@@ -207,7 +213,7 @@ export default function Header() {
             </button>
 
             {/* Avatar */}
-            {user && (
+            {user ? (
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center">
                   <span className="text-white text-xs font-semibold">{getInitials(user.name)}</span>
@@ -215,6 +221,23 @@ export default function Header() {
                 <span className="text-xs text-gray-400 hidden lg:block">{user.name}</span>
                 <button
                   onClick={handleLogout}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                  title="Sair"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : terapeutaSession && (
+              // Comercial/outros tipos logados só pelo módulo de Terapeutas
+              // (sem sessão do dashboard principal) — mesmo avatar/logout,
+              // lendo da sessão certa.
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center">
+                  <span className="text-white text-xs font-semibold">{getInitials(terapeutaSession.nome)}</span>
+                </div>
+                <span className="text-xs text-gray-400 hidden lg:block">{terapeutaSession.nome}</span>
+                <button
+                  onClick={handleTerapeutaLogout}
                   className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
                   title="Sair"
                 >

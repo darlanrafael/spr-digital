@@ -237,6 +237,7 @@ export default function PainelTerapeuta() {
   const id = params.id as string
 
   const [terapeuta, setTerapeuta] = useState<Terapeuta | null>(null)
+  const [outrasTerapeutas, setOutrasTerapeutas] = useState<{ id: string; nome: string }[]>([])
   const [sessoes, setSessoes] = useState<Sessao[]>([])
   const [vendas, setVendas] = useState<Record<string, SaleInfo>>({})
   const [ocorrencias, setOcorrencias] = useState<Record<string, Ocorrencia[]>>({})
@@ -308,12 +309,14 @@ export default function PainelTerapeuta() {
     const client = getSupabaseClient()
     if (!client) return
     setLoading(true)
-    const [tResp, sResp] = await Promise.all([
+    const [tResp, sResp, todasResp] = await Promise.all([
       client.from('terapeutas').select('id,nome,email,percentual_comissao').eq('id', id).single(),
       client.from('sessoes').select('id,sale_id,numero_sessao,total_sessoes,status,status_consulta,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,entregue_confirmado_por,iniciado_em,concluido_em,vendedor_nome,agendado_por')
         .eq('terapeuta_id', id).order('sale_id').order('numero_sessao', { ascending: true }),
+      client.from('terapeutas').select('id,nome').eq('ativo', true).order('nome'),
     ])
     if (tResp.data) setTerapeuta(tResp.data as unknown as Terapeuta)
+    setOutrasTerapeutas((todasResp.data ?? []) as { id: string; nome: string }[])
     const sessoesData = (sResp.data ?? []) as Sessao[]
     setSessoes(sessoesData)
 
@@ -716,6 +719,24 @@ export default function PainelTerapeuta() {
             <div>
               <h1 className="text-xl font-semibold text-white">{terapeuta.nome}</h1>
               <p className="text-sm text-gray-400 mt-0.5">{terapeuta.email} · Comissão {terapeuta.percentual_comissao}%</p>
+            </div>
+          )}
+
+          {/* Trocar de terapeuta sem sair da tela — só pra quem gerencia mais
+              de uma (admin/comercial); a própria terapeuta não vê isso. */}
+          {!isTerapeutaSession && outrasTerapeutas.length > 1 && (
+            <div className="flex items-center gap-1.5 flex-wrap mt-4">
+              {outrasTerapeutas.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => router.push(`/terapeutas/${t.id}`)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    t.id === id ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white border border-white/10'
+                  }`}
+                >
+                  {t.nome}
+                </button>
+              ))}
             </div>
           )}
         </div>

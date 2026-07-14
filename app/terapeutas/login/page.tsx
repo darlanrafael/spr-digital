@@ -3,6 +3,10 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+// Sem isso a Vercel pode servir um bundle antigo do CDN por um tempo depois
+// do deploy — crítico numa tela de login/redirecionamento.
+export const dynamic = 'force-dynamic'
+
 export default function TerapeutasLogin() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -27,7 +31,9 @@ export default function TerapeutasLogin() {
       if (json.usuario.tipo === 'terapeuta' && json.usuario.terapeuta_id) {
         router.push(`/terapeutas/${json.usuario.terapeuta_id}`)
       } else {
-        router.push('/terapeutas/vendas')
+        // Comercial/admin escolhe qual terapeuta ver — cai na lista, não
+        // direto na ferramenta antiga de vendas.
+        router.push('/terapeutas/lista')
       }
     } catch {
       setErro('Erro de conexão. Tente novamente.')
