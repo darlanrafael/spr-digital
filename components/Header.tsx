@@ -27,6 +27,14 @@ const TERAPEUTAS_NAV: NavLink[] = [
   { href: '/terapeutas/lista', label: 'Terapeutas' },
 ]
 
+// Comercial vê a mesma visão que a terapeuta tem (via /terapeutas/[id]), só
+// com o acréscimo de poder escolher qual terapeuta visualizar — não o
+// dashboard consolidado da empresa (faturamento/lucro) nem a ferramenta
+// antiga de vendas.
+const TERAPEUTAS_NAV_COMERCIAL: NavLink[] = [
+  { href: '/terapeutas/lista', label: 'Terapeutas' },
+]
+
 export default function Header() {
   const { user, setUser, selectedProject, setSelectedProject, projects, isDark, toggleTheme, isLoading, lastLoadedAt, reloadData } = useApp()
   const pathname = usePathname()
@@ -123,7 +131,7 @@ export default function Header() {
           {/* Nav */}
           <nav className="hidden md:flex items-center gap-1">
             {(isTerapeutas ? [
-              ...TERAPEUTAS_NAV,
+              ...(terapeutaSession?.tipo === 'comercial' ? TERAPEUTAS_NAV_COMERCIAL : TERAPEUTAS_NAV),
               ...(user?.role === 'admin' ? [
                 { href: '/terapeutas/fechamentos', label: 'Fechamentos' },
                 { href: '/terapeutas/admin', label: 'Admin' },

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
-  CheckCircle, RefreshCw, ArrowLeft, X,
+  CheckCircle, RefreshCw, ArrowLeft, X, AlertTriangle,
   Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download,
 } from 'lucide-react'
 import Link from 'next/link'
@@ -220,6 +220,41 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 
 const STATUS_REEMBOLSO = ['reembolsada', 'chargeback', 'cancelada', 'em_protesto']
 
+const OCORRENCIA_META: Record<string, { icon: string; label: string; cls: string }> = {
+  nota:                  { icon: '📝', label: 'Nota',                    cls: 'text-gray-400 bg-gray-400/10 border-gray-400/20' },
+  remarcacao:            { icon: '📅', label: 'Remarcação',              cls: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20' },
+  confirmacao_entrega:   { icon: '✅', label: 'Sessão Entregue',         cls: 'text-green-500 bg-green-500/10 border-green-500/20' },
+  solicitacao_reembolso: { icon: '💰', label: 'Solicitação de Reembolso', cls: 'text-orange-400 bg-orange-400/10 border-orange-400/20' },
+  reembolso_aprovado:    { icon: '✅', label: 'Reembolso Aprovado',      cls: 'text-green-500 bg-green-500/10 border-green-500/20' },
+  reembolso_rejeitado:   { icon: '❌', label: 'Reembolso Rejeitado',     cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
+}
+
+function calcularReembolsoLocal(params: {
+  terapeuta_nome: string
+  sessoes_total: number
+  sessoes_feitas: number
+  valor_pago: number
+}): { valor_reembolso: number; explicacao: string } {
+  const tabelaPedro: Record<number, number> = { 1: 1300, 2: 1550, 4: 2860, 8: 5280 }
+  const tabelaDenise: Record<number, number> = { 1: 550, 2: 790, 4: 1400, 8: 2640 }
+  const isPedro = params.terapeuta_nome.toLowerCase().includes('pedro')
+  const tabela = isPedro ? tabelaPedro : tabelaDenise
+  const planos = Object.keys(tabela).map(Number).sort((a, b) => a - b)
+  if (params.sessoes_feitas === 0) {
+    return { valor_reembolso: params.valor_pago, explicacao: `Nenhuma sessão realizada — reembolso integral de ${fmtBRL(params.valor_pago)}` }
+  }
+  if (params.sessoes_feitas >= params.sessoes_total) {
+    return { valor_reembolso: 0, explicacao: 'Todas as sessões foram realizadas — sem reembolso' }
+  }
+  let plano_eq = 0, valor_eq = 0
+  for (const p of planos) { if (p <= params.sessoes_feitas) { plano_eq = p; valor_eq = tabela[p] } }
+  const valor_reembolso = Math.max(0, params.valor_pago - valor_eq)
+  return {
+    valor_reembolso,
+    explicacao: `Comprou ${params.sessoes_total} sessão(ões) (${fmtBRL(params.valor_pago)}), realizou ${params.sessoes_feitas} sessão(ões) → equivale ao plano de ${plano_eq} sessão(ões) = ${fmtBRL(valor_eq)} → Reembolso: ${fmtBRL(valor_reembolso)}`,
+  }
+}
+
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MESES_NOME = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 
@@ -296,14 +331,30 @@ export default function PainelTerapeuta() {
   const [vDateEnd, setVDateEnd] = useState('')
   const [vendasPendentes, setVendasPendentes] = useState<SaleInfo[]>([])
 
-  // Pacientes e prontuário
+  // Pacientes e prontuário — Ocorrências (Nota / Remarcar / Reembolso), igual
+  // ao módulo original em vendas/page.tsx
   const [prontuarioEmail, setProntuarioEmail] = useState<string | null>(null)
-  const [notaFormOpen, setNotaFormOpen] = useState(false)
+  const [ocorrenciaTipo, setOcorrenciaTipo] = useState<'select' | 'nota' | 'remarcacao' | 'reembolso' | null>(null)
+  // Nota
   const [notaTitulo, setNotaTitulo] = useState('')
   const [notaDesc, setNotaDesc] = useState('')
   const [notaErro, setNotaErro] = useState('')
   const [notaLoading, setNotaLoading] = useState(false)
   const [notaSenhaOpen, setNotaSenhaOpen] = useState(false)
+  // Remarcar consulta (form do prontuário — distinto do modal rápido da Agenda)
+  const [remSessaoId, setRemSessaoId] = useState('')
+  const [remNovaData, setRemNovaData] = useState('')
+  const [remSolicitadoPor, setRemSolicitadoPor] = useState('')
+  const [remMotivo, setRemMotivo] = useState('')
+  const [remErro, setRemErro] = useState('')
+  const [remLoading, setRemLoading] = useState(false)
+  const [remSenhaOpen, setRemSenhaOpen] = useState(false)
+  // Solicitação de reembolso parcial
+  const [reeSessoes, setReeSessoes] = useState<string[]>([])
+  const [reeMotivo, setReeMotivo] = useState('')
+  const [reeErro, setReeErro] = useState('')
+  const [reeLoading, setReeLoading] = useState(false)
+  const [reeSenhaOpen, setReeSenhaOpen] = useState(false)
 
   async function loadData() {
     const client = getSupabaseClient()
@@ -445,10 +496,12 @@ export default function PainelTerapeuta() {
     return () => clearInterval(interval)
   }, [id, ovPreset])
 
-  // Reset formulário de nota quando o prontuário abre/fecha
+  // Reset das ocorrências quando o prontuário abre/fecha
   useEffect(() => {
-    setNotaFormOpen(false)
+    setOcorrenciaTipo(null)
     setNotaTitulo(''); setNotaDesc(''); setNotaErro('')
+    setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo(''); setRemErro('')
+    setReeSessoes([]); setReeMotivo(''); setReeErro('')
   }, [prontuarioEmail])
 
   // Histórico de fechamentos de comissão (somente leitura)
@@ -604,6 +657,22 @@ export default function PainelTerapeuta() {
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
   }, [prontuarioPaciente, ocorrencias])
 
+  const sessoesPendentesProntuario = prontuarioSessoesOrdenadas.filter(s => s.status === 'agendada' || s.status === 'pendente')
+  const entreguesProntuario = prontuarioPaciente?.entregues ?? 0
+  const totalProntuario = prontuarioPaciente?.total ?? 0
+  // Reembolso calculado por tabela de preços — usa o terapeuta desta própria página
+  const reembolsoCalc = prontuarioPaciente && terapeuta
+    ? calcularReembolsoLocal({
+        terapeuta_nome: terapeuta.nome,
+        sessoes_total: totalProntuario,
+        sessoes_feitas: entreguesProntuario,
+        valor_pago: prontuarioPaciente.bruto,
+      })
+    : null
+
+  const remValido = remSessaoId && remNovaData && new Date(remNovaData) > new Date() && remSolicitadoPor && remMotivo.length >= 10
+  const reeValido = reeSessoes.length > 0 && reeMotivo.length >= 20
+
   async function handleStatusAcao(senha: string) {
     if (!statusSessaoId) return
     setStatusLoading(true)
@@ -674,12 +743,73 @@ export default function PainelTerapeuta() {
     const json = await res.json()
     setNotaLoading(false)
     if (!res.ok) { setNotaErro(json.error ?? 'Erro'); return }
-    setNotaSenhaOpen(false); setNotaFormOpen(false)
+    setNotaSenhaOpen(false); setOcorrenciaTipo(null)
     setNotaTitulo(''); setNotaDesc('')
     loadData()
   }
 
   const notaValida = notaTitulo.trim().length > 0 && notaDesc.trim().length >= 10
+
+  // Remarcar consulta a partir do card de Ocorrências do prontuário — chama o
+  // mesmo endpoint que de fato atualiza data_agendada (distinto do modal
+  // rápido da Agenda, que usa handleRemarcar acima).
+  async function handleRemarcarOcorrencia(senha: string) {
+    if (!remSessaoId || !remNovaData) return
+    setRemLoading(true); setRemErro('')
+    const res = await fetch('/api/terapeutas/sessoes/remarcar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessao_id: remSessaoId,
+        nova_data: remNovaData,
+        motivo: remMotivo,
+        solicitado_por: remSolicitadoPor,
+        usuario_email: adminEmail,
+        senha,
+      }),
+    })
+    const json = await res.json()
+    setRemLoading(false)
+    if (!res.ok) { setRemErro(json.error ?? 'Erro'); return }
+    setRemSenhaOpen(false); setOcorrenciaTipo(null)
+    setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
+    loadData()
+  }
+
+  async function handleReembolso(senha: string) {
+    if (!prontuarioSaleMaisRecente) return
+    setReeLoading(true); setReeErro('')
+    const sessoesSel = prontuarioSessoesOrdenadas.filter(s => reeSessoes.includes(s.id))
+    const valorFinal = reembolsoCalc?.valor_reembolso ?? 0
+    const res = await fetch('/api/terapeutas/vendas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sale_id: prontuarioSaleMaisRecente.id,
+        tipo: 'solicitacao_reembolso',
+        titulo: `Solicitação de reembolso parcial — ${entreguesProntuario} sessão(ões) realizadas`,
+        descricao: `${reembolsoCalc?.explicacao ?? ''}. Sessões a cancelar: ${sessoesSel.map(s => s.numero_sessao).join(', ')}. Motivo: ${reeMotivo}`,
+        dados_extras: {
+          sessoes_ids: reeSessoes,
+          sessoes_numeros: sessoesSel.map(s => s.numero_sessao),
+          valor_reembolso: valorFinal,
+          motivo: reeMotivo,
+          paciente_nome: prontuarioSaleMaisRecente.nome,
+          paciente_email: prontuarioSaleMaisRecente.email,
+        },
+        senha,
+        usuario_nome: sessionNome || adminEmail.split('@')[0],
+        usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
+        usuario_email: adminEmail,
+      }),
+    })
+    const json = await res.json()
+    setReeLoading(false)
+    if (!res.ok) { setReeErro(json.error ?? 'Erro'); return }
+    setReeSenhaOpen(false); setOcorrenciaTipo(null)
+    setReeSessoes([]); setReeMotivo('')
+    loadData()
+  }
 
   function renderPresetFiltro(preset: Preset, setPreset: (p: Preset) => void, dateStart: string, setDateStart: (v: string) => void, dateEnd: string, setDateEnd: (v: string) => void) {
     return (
@@ -1427,23 +1557,47 @@ export default function PainelTerapeuta() {
                 </div>
               </div>
 
-              {/* SEÇÃO 3 — Ocorrências (só notas) */}
+              {/* SEÇÃO 3 — Ocorrências */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Ocorrências</h4>
-                  {!notaFormOpen && (
-                    <button onClick={() => setNotaFormOpen(true)}
+                  {ocorrenciaTipo === null && (
+                    <button onClick={() => setOcorrenciaTipo('select')}
                       className="text-xs text-green-500 hover:text-green-400 font-medium transition-colors">
-                      + Registrar Nota
+                      + Registrar Ocorrência
                     </button>
                   )}
                 </div>
 
-                {notaFormOpen && (
+                {/* Seleção de tipo */}
+                {ocorrenciaTipo === 'select' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4">
+                    <p className="text-xs text-gray-400 mb-3 font-medium">Selecione o tipo de ocorrência:</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {[
+                        { tipo: 'nota' as const, icon: '📝', title: 'Nota / Observação', desc: 'Registre uma nota ou observação sobre o paciente' },
+                        { tipo: 'remarcacao' as const, icon: '📅', title: 'Remarcar Consulta', desc: 'Solicite a remarcação de uma consulta agendada' },
+                        { tipo: 'reembolso' as const, icon: '💰', title: 'Solicitação de Reembolso Parcial', desc: 'Reembolso de sessões não realizadas — vai para aprovação do CEO' },
+                      ].map(({ tipo, icon, title, desc }) => (
+                        <button key={tipo} onClick={() => setOcorrenciaTipo(tipo)}
+                          className="text-left p-3 bg-gray-800 hover:bg-gray-700 border border-white/10 hover:border-white/20 rounded-xl transition-colors">
+                          <p className="text-base mb-1">{icon}</p>
+                          <p className="text-xs font-medium text-white mb-1">{title}</p>
+                          <p className="text-[10px] text-gray-500 leading-relaxed">{desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => setOcorrenciaTipo(null)}
+                      className="mt-3 text-xs text-gray-500 hover:text-gray-400 transition-colors">Cancelar</button>
+                  </div>
+                )}
+
+                {/* Formulário: NOTA */}
+                {ocorrenciaTipo === 'nota' && (
                   <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-medium text-white">📝 Nova nota / observação</p>
-                      <button onClick={() => setNotaFormOpen(false)} className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setOcorrenciaTipo(null)} className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
                     </div>
                     <div>
                       <label className="text-[10px] text-gray-500 block mb-1">Título <span className="text-red-400">*</span></label>
@@ -1460,7 +1614,7 @@ export default function PainelTerapeuta() {
                     </div>
                     {notaErro && <p className="text-xs text-red-400">{notaErro}</p>}
                     <div className="flex gap-2 pt-1">
-                      <button onClick={() => setNotaFormOpen(false)}
+                      <button onClick={() => setOcorrenciaTipo(null)}
                         className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
                       <button onClick={() => { if (!notaValida) { setNotaErro('Preencha o título e a descrição (mín. 10 caracteres)'); return } setNotaErro(''); setNotaSenhaOpen(true) }}
                         disabled={!notaValida}
@@ -1471,19 +1625,165 @@ export default function PainelTerapeuta() {
                   </div>
                 )}
 
+                {/* Formulário: REMARCAR */}
+                {ocorrenciaTipo === 'remarcacao' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-white">📅 Remarcar consulta</p>
+                      <button onClick={() => setOcorrenciaTipo(null)} className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Qual sessão remarcar? <span className="text-red-400">*</span></label>
+                      <select value={remSessaoId} onChange={e => {
+                        const s = prontuarioSessoesOrdenadas.find(x => x.id === e.target.value)
+                        setRemSessaoId(e.target.value)
+                        setRemNovaData(s?.data_agendada ? isoToDatetimeLocalBRT(s.data_agendada) : '')
+                      }} className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
+                        <option value="">Selecionar sessão...</option>
+                        {sessoesPendentesProntuario.map(s => (
+                          <option key={s.id} value={s.id}>
+                            Sessão {s.numero_sessao} — {fmtDt(s.data_agendada)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-gray-500 block mb-1">Nova data e horário <span className="text-red-400">*</span></label>
+                        <input type="datetime-local" value={remNovaData} onChange={e => setRemNovaData(e.target.value)}
+                          className="w-full bg-gray-700 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        {remNovaData && new Date(remNovaData) <= new Date() && (
+                          <p className="text-[10px] text-red-400 mt-0.5">A nova data deve ser no futuro</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500 block mb-1">Solicitado por <span className="text-red-400">*</span></label>
+                        <select value={remSolicitadoPor} onChange={e => setRemSolicitadoPor(e.target.value)}
+                          className="w-full bg-gray-700 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
+                          <option value="">Selecionar...</option>
+                          <option value="paciente">Paciente</option>
+                          <option value="terapeuta">Terapeuta</option>
+                          <option value="comercial">Comercial/Admin</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Motivo da remarcação <span className="text-red-400">*</span> (mín. 10 caracteres)</label>
+                      <textarea value={remMotivo} onChange={e => setRemMotivo(e.target.value)} rows={3}
+                        placeholder="Descreva o motivo pelo qual a consulta está sendo remarcada..."
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 resize-y" />
+                      {remMotivo.length > 0 && remMotivo.length < 10 && (
+                        <p className="text-[10px] text-red-400 mt-0.5">O motivo é obrigatório (mínimo 10 caracteres)</p>
+                      )}
+                    </div>
+                    {remErro && <p className="text-xs text-red-400">{remErro}</p>}
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => setOcorrenciaTipo(null)}
+                        className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
+                      <button onClick={() => {
+                        if (!remSessaoId) { setRemErro('Selecione a sessão'); return }
+                        if (!remSolicitadoPor) { setRemErro('Informe quem solicitou a remarcação'); return }
+                        if (remMotivo.length < 10) { setRemErro('Descreva o motivo com pelo menos 10 caracteres'); return }
+                        if (!remNovaData || new Date(remNovaData) <= new Date()) { setRemErro('A nova data deve ser no futuro'); return }
+                        setRemErro(''); setRemSenhaOpen(true)
+                      }} disabled={!remValido}
+                        className="px-4 py-1.5 text-xs font-medium text-white bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 rounded-lg transition-colors">
+                        Confirmar remarcação
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Formulário: REEMBOLSO */}
+                {ocorrenciaTipo === 'reembolso' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-white">💰 Solicitação de reembolso parcial</p>
+                      <button onClick={() => setOcorrenciaTipo(null)} className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-2">Sessões elegíveis para reembolso <span className="text-red-400">*</span></label>
+                      {sessoesPendentesProntuario.length === 0 ? (
+                        <p className="text-xs text-gray-600">Nenhuma sessão pendente/agendada para reembolso.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {sessoesPendentesProntuario.map(s => {
+                            const valorSessao = prontuarioPaciente
+                              ? prontuarioPaciente.bruto / (totalProntuario || 1)
+                              : 0
+                            return (
+                              <label key={s.id} className="flex items-center gap-2.5 cursor-pointer p-2 bg-gray-700/50 rounded-lg hover:bg-gray-700">
+                                <input type="checkbox" checked={reeSessoes.includes(s.id)}
+                                  onChange={e => setReeSessoes(p => e.target.checked ? [...p, s.id] : p.filter(x => x !== s.id))}
+                                  className="accent-indigo-500 w-3.5 h-3.5" />
+                                <span className="text-xs text-white">
+                                  Sessão {s.numero_sessao} — {fmtDt(s.data_agendada)} — <span className="text-green-500">{fmtBRL(valorSessao)}</span>
+                                </span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    {reembolsoCalc && (
+                      <div className="bg-gray-700/50 rounded-lg p-3 space-y-1">
+                        <p className="text-[10px] text-gray-500">Cálculo por tabela de preços:</p>
+                        <p className="text-lg font-bold text-red-400">{fmtBRL(reembolsoCalc.valor_reembolso)}</p>
+                        <p className="text-[11px] text-gray-400 leading-relaxed">{reembolsoCalc.explicacao}</p>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Motivo do reembolso <span className="text-red-400">*</span> (mín. 20 caracteres)</label>
+                      <textarea value={reeMotivo} onChange={e => setReeMotivo(e.target.value)} rows={3}
+                        placeholder="Descreva detalhadamente o motivo do reembolso..."
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 resize-y" />
+                      {reeMotivo.length > 0 && reeMotivo.length < 20 && (
+                        <p className="text-[10px] text-red-400 mt-0.5">{20 - reeMotivo.length} caracteres restantes</p>
+                      )}
+                    </div>
+                    <div className="flex items-start gap-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg p-3">
+                      <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-yellow-400">Esta solicitação será enviada para aprovação do CEO antes de ser processada. As sessões NÃO serão canceladas imediatamente.</p>
+                    </div>
+                    {reeErro && <p className="text-xs text-red-400">{reeErro}</p>}
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => setOcorrenciaTipo(null)}
+                        className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
+                      <button onClick={() => {
+                        if (reeSessoes.length === 0) { setReeErro('Selecione pelo menos uma sessão'); return }
+                        if (reeMotivo.length < 20) { setReeErro('Descreva o motivo com pelo menos 20 caracteres'); return }
+                        setReeErro(''); setReeSenhaOpen(true)
+                      }} disabled={!reeValido}
+                        className="px-4 py-1.5 text-xs font-medium text-white bg-orange-600 hover:bg-orange-500 disabled:opacity-50 rounded-lg transition-colors">
+                        Enviar solicitação
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Lista de ocorrências */}
                 <div className="space-y-2">
                   {prontuarioOcorrencias.length === 0 ? (
-                    <p className="text-xs text-gray-600 text-center py-3">Nenhuma ocorrência registrada.</p>
-                  ) : prontuarioOcorrencias.map(o => (
-                    <div key={o.id} className="bg-gray-800/40 border border-white/5 rounded-lg p-3 text-xs">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-white font-medium">{o.titulo}</span>
-                        <span className="text-gray-600 text-[10px]">{fmtDt(o.created_at)}</span>
+                    <p className="text-xs text-gray-600 text-center py-4">Nenhuma ocorrência registrada.</p>
+                  ) : prontuarioOcorrencias.map(o => {
+                    const meta = OCORRENCIA_META[o.tipo] ?? { icon: '📌', label: o.tipo, cls: 'text-gray-400 bg-gray-400/10 border-gray-400/20' }
+                    return (
+                      <div key={o.id} className={`border rounded-xl p-3 ${meta.cls}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span>{meta.icon}</span>
+                            <span className="text-[11px] font-medium">{meta.label}</span>
+                          </div>
+                          <span className="text-[10px] opacity-60">{fmtDt(o.created_at)}</span>
+                        </div>
+                        <p className="text-xs text-white font-medium mb-0.5">{o.titulo}</p>
+                        <p className="text-xs opacity-80 leading-relaxed">{o.descricao}</p>
+                        <p className="text-[10px] opacity-50 mt-2">
+                          Registrado por {o.criado_por_nome} ({o.criado_por_tipo})
+                        </p>
                       </div>
-                      <p className="text-gray-400">{o.descricao}</p>
-                      <p className="text-gray-600 text-[10px] mt-1">Por: {o.criado_por_nome}</p>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
 
@@ -1500,6 +1800,26 @@ export default function PainelTerapeuta() {
         descricao="Digite sua senha para registrar a ocorrência"
         loading={notaLoading}
         erro={notaErro}
+      />
+
+      <SenhaModal
+        isOpen={remSenhaOpen}
+        onClose={() => { setRemSenhaOpen(false); setRemErro('') }}
+        onConfirm={handleRemarcarOcorrencia}
+        titulo="Confirmar remarcação"
+        descricao="Digite sua senha para remarcar a sessão"
+        loading={remLoading}
+        erro={remErro}
+      />
+
+      <SenhaModal
+        isOpen={reeSenhaOpen}
+        onClose={() => { setReeSenhaOpen(false); setReeErro('') }}
+        onConfirm={handleReembolso}
+        titulo="Enviar solicitação de reembolso"
+        descricao="Digite sua senha para enviar para aprovação do CEO"
+        loading={reeLoading}
+        erro={reeErro}
       />
 
       {/* Modal detalhe da sessão — Agenda */}
