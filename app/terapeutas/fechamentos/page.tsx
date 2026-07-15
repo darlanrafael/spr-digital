@@ -90,19 +90,28 @@ export default function FechamentosTerapeutasPage() {
     // "Seu e-mail" só lia a sessão de admin do dashboard principal — qualquer
     // usuário logado direto pelo módulo de Terapeutas (comercial, etc.)
     // ficava sem e-mail nenhum aqui, e a senha nunca batia.
-    const session = getSession()
-    if (session) {
-      setAdminEmail(session.email)
-      setSessionNome(session.name)
-    } else {
-      const raw = localStorage.getItem('terapeutas_session')
-      if (raw) {
-        try {
-          const ts = JSON.parse(raw) as TerapeutaSession
-          setAdminEmail(ts.email)
-          setSessionNome(ts.nome)
-          setSessionTipo(ts.tipo)
-        } catch { /* ignore */ }
+    //
+    // terapeutas_session tem prioridade: a senha aqui é validada contra
+    // usuarios_sistema (tabela do módulo de terapeutas), então um spr_session
+    // esquecido no navegador (login do dashboard principal, de outra conta ou
+    // de um teste anterior) sempre falha com "Senha inválida" se usado no
+    // lugar do login real da pessoa no módulo.
+    const raw = localStorage.getItem('terapeutas_session')
+    let usouTerapeutaSession = false
+    if (raw) {
+      try {
+        const ts = JSON.parse(raw) as TerapeutaSession
+        setAdminEmail(ts.email)
+        setSessionNome(ts.nome)
+        setSessionTipo(ts.tipo)
+        usouTerapeutaSession = true
+      } catch { /* ignore, cai pro fallback abaixo */ }
+    }
+    if (!usouTerapeutaSession) {
+      const session = getSession()
+      if (session) {
+        setAdminEmail(session.email)
+        setSessionNome(session.name)
       }
     }
     fetch('/api/terapeutas/admin/terapeutas')

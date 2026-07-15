@@ -96,20 +96,26 @@ export default function TerapeutasAprovacoes() {
   // qualquer outro usuário logado (comercial, outro admin) as ações com
   // senha nunca batiam, porque tentavam validar a senha dele contra a conta
   // errada. Carrega o e-mail/nome reais da sessão.
+  //
+  // terapeutas_session tem prioridade sobre o login do dashboard principal:
+  // a senha aqui é validada contra usuarios_sistema (tabela do módulo de
+  // terapeutas), então um spr_session esquecido no navegador (de outra
+  // conta, ou de um teste anterior) sempre falha com "Senha inválida" se
+  // for usado em vez do login real da pessoa no módulo.
   useEffect(() => {
-    const adminSession = getSession()
-    if (adminSession) {
-      setAdminEmail(adminSession.email)
-      setSessionNome(adminSession.name)
-      return
-    }
     const raw = localStorage.getItem('terapeutas_session')
     if (raw) {
       try {
         const session = JSON.parse(raw) as TerapeutaSession
         setAdminEmail(session.email)
         setSessionNome(session.nome)
-      } catch { /* ignore */ }
+        return
+      } catch { /* ignore, cai pro fallback abaixo */ }
+    }
+    const adminSession = getSession()
+    if (adminSession) {
+      setAdminEmail(adminSession.email)
+      setSessionNome(adminSession.name)
     }
   }, [])
 

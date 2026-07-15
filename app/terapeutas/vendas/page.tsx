@@ -333,20 +333,30 @@ export default function TerapeutasVendas() {
   // qualquer outro usuário logado (comercial, outro admin) as ações com
   // senha (agendar, remarcar etc.) nunca batiam, porque tentavam validar a
   // senha dele contra a conta errada. Carrega o e-mail/nome reais da sessão.
+  //
+  // A senha de ações aqui dentro (agendar, remarcar, nota, reembolso) é
+  // sempre validada contra usuarios_sistema — a tabela do módulo de
+  // terapeutas, separada do login principal (usuarios_dashboard). Por isso
+  // terapeutas_session tem que ter prioridade: se o navegador também tiver
+  // um spr_session (login do dashboard principal) guardado — mesmo que
+  // antigo/de outra pessoa, esquecido no mesmo computador — usá-lo aqui
+  // sempre falha com "Senha inválida", porque esse e-mail não existe em
+  // usuarios_sistema. Foi exatamente o bug do Felipe (comercial): a página
+  // pegava o spr_session travado no navegador em vez do login dele.
   useEffect(() => {
-    const adminSession = getSession()
-    if (adminSession) {
-      setAdminEmail(adminSession.email)
-      setSessionNome(adminSession.name)
-      return
-    }
     const raw = localStorage.getItem('terapeutas_session')
     if (raw) {
       try {
         const session = JSON.parse(raw) as TerapeutaSession
         setAdminEmail(session.email)
         setSessionNome(session.nome)
-      } catch { /* ignore */ }
+        return
+      } catch { /* ignore, cai pro fallback abaixo */ }
+    }
+    const adminSession = getSession()
+    if (adminSession) {
+      setAdminEmail(adminSession.email)
+      setSessionNome(adminSession.name)
     }
   }, [])
 

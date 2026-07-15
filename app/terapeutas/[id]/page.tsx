@@ -419,16 +419,13 @@ export default function PainelTerapeuta() {
   }
 
   useEffect(() => {
-    // Admin session takes absolute priority over terapeutas_session
-    const adminSession = getSession()
-    if (adminSession) {
-      setAdminEmail(adminSession.email)
-      setSessionNome(adminSession.name)
-      // isTerapeutaSession stays false — admin sees full view
-      if (id) loadData()
-      return
-    }
-
+    // terapeutas_session tem prioridade sobre o login do dashboard principal
+    // — a senha de ações aqui (agendar, remarcar, nota, reembolso etc.) é
+    // validada contra usuarios_sistema (tabela do módulo de terapeutas), uma
+    // tabela separada de usuarios_dashboard. Se o navegador também tiver um
+    // spr_session guardado (login do dashboard principal, de outra conta ou
+    // de um teste anterior) e ele for usado no lugar do login real da
+    // pessoa no módulo, a senha nunca bate — foi o bug do Felipe (comercial).
     const raw = localStorage.getItem('terapeutas_session')
     if (raw) {
       try {
@@ -441,10 +438,16 @@ export default function PainelTerapeuta() {
             router.replace(`/terapeutas/${session.terapeuta_id}`)
             return
           }
-          if (id) loadData()
-          return
         }
-      } catch { /* ignore */ }
+        if (id) loadData()
+        return
+      } catch { /* ignore, cai pro fallback abaixo */ }
+    }
+
+    const adminSession = getSession()
+    if (adminSession) {
+      setAdminEmail(adminSession.email)
+      setSessionNome(adminSession.name)
     }
     if (id) loadData()
   }, [id])
