@@ -262,6 +262,9 @@ export default function TerapeutasVendas() {
   const [agendarSenhaOpen, setAgendarSenhaOpen] = useState(false)
   const [agendarLoading, setAgendarLoading] = useState(false)
   const [agendarErro, setAgendarErro] = useState('')
+  // Modal de confirmação — o toast discreto passava despercebido; aqui o
+  // usuário precisa ver claramente que o agendamento foi concluído.
+  const [agendarSucesso, setAgendarSucesso] = useState<{ sessoes: number; nome: string } | null>(null)
 
   // Prontuário
   const [prontuarioVendaId, setProntuarioVendaId] = useState<string | null>(null)
@@ -467,9 +470,10 @@ export default function TerapeutasVendas() {
     const json = await res.json()
     setAgendarLoading(false)
     if (!res.ok) { setAgendarErro(json.error ?? 'Erro'); return }
-    setAgendarSenhaOpen(false); setAgendarVendaId(null)
+    setAgendarSenhaOpen(false)
+    setAgendarSucesso({ sessoes: json.sessoes_criadas, nome: agendarVenda?.nome ?? '' })
+    setAgendarVendaId(null)
     setAgendarDataPrimeira('')
-    showToast(`✓ ${json.sessoes_criadas} sessões agendadas com sucesso!`)
     loadData()
   }
 
@@ -1416,6 +1420,25 @@ export default function TerapeutasVendas() {
       <SenhaModal isOpen={reeSenhaOpen} onClose={() => { setReeSenhaOpen(false); setReeErro('') }}
         onConfirm={handleReembolso} titulo="Enviar solicitação de reembolso"
         descricao="Digite sua senha para enviar para aprovação do CEO" loading={reeLoading} erro={reeErro} />
+
+      {/* Confirmação de agendamento */}
+      {agendarSucesso && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAgendarSucesso(null)}>
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-7 h-7 text-green-500" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1">Agendamento confirmado!</h3>
+            <p className="text-sm text-gray-400 mb-5">
+              {agendarSucesso.sessoes} sessão(ões) agendada(s){agendarSucesso.nome ? ` para ${agendarSucesso.nome}` : ''} com sucesso.
+            </p>
+            <button onClick={() => setAgendarSucesso(null)}
+              className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (
