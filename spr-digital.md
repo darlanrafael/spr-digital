@@ -1131,10 +1131,11 @@ Isso permite rodar o app localmente mesmo sem configurar o Supabase, apenas para
 - Auditoria fatura-a-fatura da Hubla foi feita só pra 01/06-01/07/2026; não repetida pros outros meses além de maio
 - Exportação PDF/Excel das telas
 - Relatório de debrief de lançamento
-- Adicionar mais usuários sem precisar de redeployment (hoje requer variáveis de ambiente)
+- Adicionar mais usuários sem precisar de redeployment — **resolvido parcialmente em 10/07/2026**: sócios do dashboard principal (`usuarios_dashboard`) e usuários do módulo de terapeutas (`usuarios_sistema` — admin/comercial/terapeuta) já são criados via UI (`/terapeutas/admin`), sem redeploy. Só os 2-3 usuários hardcoded originais do dashboard (Pedro e o 3º opcional, em `lib/auth.ts`) ainda dependem de variável de ambiente.
 - RLS no Supabase (hoje usa service_role_key como bypass)
 - Testes automatizados (projeto não tem nenhum framework de teste configurado — verificação é sempre `npm run build` + teste manual)
 - Notificações por email em fechamentos
+- O campo `permissoes` (jsonb) em `usuarios_sistema` — preenchido pela UI de admin (`agendar`/`remarcar`/`ver_vendas` etc.) mas **nunca lido/checado em nenhuma API** (`/api/terapeutas/sessoes/agendar` e afins só verificam a senha, não essas flags). Hoje é decorativo — se algum fluxo futuro precisar de permissões granulares de verdade, precisa implementar a checagem, não só confiar que o campo já faz algo.
 
 ### Comandos úteis
 ```bash
