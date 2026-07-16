@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Pencil, Check, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { formatCurrency, getMonthLabel, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
+import { getDreAjustes, upsertDreAjuste } from '@/lib/services'
 
 type DREToggle = 'dre' | 'fluxo'
 
@@ -32,13 +33,48 @@ function DREContent() {
   const { sales, costs, products, selectedProject, user } = useApp()
   const [toggle, setToggle] = useState<DREToggle>('dre')
   const [editingOther, setEditingOther] = useState<string | null>(null)
+  // Persistido em dre_ajustes (antes só existia em estado local e sumia ao
+  // dar refresh na página).
   const [otherValues, setOtherValues] = useState<Record<string, number>>({})
   const [editVal, setEditVal] = useState('')
+
+  // Meta Ads ao vivo pela API (mesma fonte do card "Investimento Meta Ads" do
+  // Dashboard) — antes vinha da tabela meta_ads, um lançamento manual por mês
+  // que ficava desatualizado/zerado sempre que ninguém preenchia.
+  const [metaAdsLive, setMetaAdsLive] = useState<Record<string, number>>({})
+  const [metaAdsLoading, setMetaAdsLoading] = useState(false)
 
   const canEdit = user?.role === 'admin' || user?.role === 'financeiro'
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
 
   const months = MONTHS_6
+  const projectIdForApis = selectedProject === 'all' ? 'proj_1' : selectedProject
+
+  useEffect(() => {
+    getDreAjustes(projectIdForApis).then(setOtherValues).catch(() => setOtherValues({}))
+  }, [projectIdForApis])
+
+  useEffect(() => {
+    let cancelled = false
+    setMetaAdsLoading(true)
+    Promise.all(months.map(async month => {
+      const [ano, mes] = month.split('-').map(Number)
+      const dateStart = `${month}-01`
+      const ultimoDia = new Date(ano, mes, 0).getDate()
+      const dateEnd = `${month}-${String(ultimoDia).padStart(2, '0')}`
+      try {
+        const res = await fetch(`/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${projectIdForApis}`, { cache: 'no-store' })
+        const data = await res.json() as { total?: number }
+        return [month, typeof data.total === 'number' ? data.total : 0] as const
+      } catch {
+        return [month, 0] as const
+      }
+    })).then(pairs => {
+      if (cancelled) return
+      setMetaAdsLive(Object.fromEntries(pairs))
+    }).finally(() => { if (!cancelled) setMetaAdsLoading(false) })
+    return () => { cancelled = true }
+  }, [months, projectIdForApis])
 
   function getSalesForMonth(month: string) {
     return sales.filter(s => {
@@ -60,27 +96,23 @@ function DREContent() {
       const aliquota = getAliquotaByPreco(s.preco_base)
       return a + s.valor_liquido - getImpostoBase(s) * (aliquota / 100)
     }, 0)
-    const metaAds = costs.metaAds
-      .filter(m => m.mes === month && (selectedProject === 'all' || m.projetoId === selectedProject))
-      .reduce((a, m) => a + m.valor, 0)
+    const metaAds = metaAdsLive[month] ?? 0
     const fixedCosts = costs.fixos.filter(c => c.data.startsWith(month)).reduce((a, c) => a + c.valor, 0)
+    const varCosts = costs.variaveis.filter(v => v.data.startsWith(month)).reduce((a, v) => a + v.valor, 0)
     const outros = otherValues[month] ?? 0
-    const resultado = receitaLiquida - metaAds - fixedCosts - outros
+    const resultado = receitaLiquida - metaAds - fixedCosts - varCosts - outros
 
     // Fluxo de caixa
-    const varCosts = costs.variaveis
-      .filter(v => v.data.startsWith(month))
-      .reduce((a, v) => a + v.valor, 0)
     const entradas = receitaBruta
     const saidaImpostos = impostos
     const saldoFinal = entradas - saidaImpostos - metaAds - fixedCosts - varCosts
 
     return {
       month, receitaBruta, impostos, taxasPlataforma, receitaLiquida, liquidoPosImpostos,
-      metaAds, fixedCosts, outros, resultado,
-      entradas, saidaImpostos, varCosts, saldoFinal,
+      metaAds, fixedCosts, varCosts, outros, resultado,
+      entradas, saidaImpostos, saldoFinal,
     }
-  }), [months, sales, costs, productMap, selectedProject, otherValues])
+  }), [months, sales, costs, productMap, selectedProject, otherValues, metaAdsLive])
 
   function startEdit(month: string) {
     setEditingOther(month)
@@ -88,8 +120,10 @@ function DREContent() {
   }
 
   function saveEdit(month: string) {
-    setOtherValues(p => ({ ...p, [month]: parseFloat(editVal) || 0 }))
+    const valor = parseFloat(editVal) || 0
+    setOtherValues(p => ({ ...p, [month]: valor }))
     setEditingOther(null)
+    upsertDreAjuste(projectIdForApis, month, valor).catch(() => {})
   }
 
   return (
@@ -135,8 +169,9 @@ function DREContent() {
                   <DRERow label="(-) Taxas plataforma" data={monthData} field="taxasPlataforma" negative />
                   <DRERow label="= Receita líquida" data={monthData} field="receitaLiquida" bold />
                   <DRERow label="= Líquido Pós-Impostos" data={monthData} field="liquidoPosImpostos" bold green />
-                  <DRERow label="(-) Meta Ads" data={monthData} field="metaAds" negative />
+                  <DRERow label={metaAdsLoading ? '(-) Meta Ads (carregando...)' : '(-) Meta Ads'} data={monthData} field="metaAds" negative />
                   <DRERow label="(-) Custos fixos" data={monthData} field="fixedCosts" negative />
+                  <DRERow label="(-) Custos variáveis" data={monthData} field="varCosts" negative />
 
                   {/* Outros — editável */}
                   <tr className="border-b border-white/5 hover:bg-white/2">

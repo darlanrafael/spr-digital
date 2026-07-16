@@ -290,6 +290,7 @@ export async function getFixedCosts(): Promise<FixedCost[]> {
     descricao: r.descricao,
     valor: Number(r.valor),
     data: r.data,
+    fechamentoId: r.fechamento_id ?? null,
   }))
 }
 
@@ -345,6 +346,7 @@ export async function getVariableCosts(
     valor: Number(r.valor),
     data: r.data,
     projetoId: r.project_id ?? null,
+    fechamentoId: r.fechamento_id ?? null,
   }))
 }
 
@@ -378,6 +380,31 @@ export async function deleteCost(id: string): Promise<void> {
   if (error) throw error
 }
 
+// Marca custos fixos/variáveis como já incluídos num fechamento (fechamento_id
+// preenchido) — depois disso eles não aparecem mais no Dashboard nem voltam a
+// ser oferecidos como preview num próximo fechamento. Só roda no confirm do
+// fechamento, sobre os IDs que de fato entraram no preview daquele fechamento.
+export async function marcarCustosComoFechados(
+  fixedCostIds: string[],
+  variableCostIds: string[],
+  fechamentoId: string,
+): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client) return
+  if (fixedCostIds.length > 0) {
+    const { error } = await client.from('fixed_costs')
+      .update({ fechamento_id: fechamentoId })
+      .in('id', fixedCostIds)
+    if (error) throw error
+  }
+  if (variableCostIds.length > 0) {
+    const { error } = await client.from('variable_costs')
+      .update({ fechamento_id: fechamentoId })
+      .in('id', variableCostIds)
+    if (error) throw error
+  }
+}
+
 // ─── Meta Ads ────────────────────────────────────────────────────────────────
 
 export async function getMetaAds(
@@ -405,6 +432,32 @@ export async function upsertMetaAds(projectId: string, mes: string, valor: numbe
   const { error } = await client
     .from('meta_ads')
     .upsert({ project_id: projectId, mes, valor }, { onConflict: 'project_id,mes' })
+  if (error) throw error
+}
+
+// ─── DRE — ajuste manual "Outros" ────────────────────────────────────────────
+// Antes só existia em estado local do React (`otherValues`) e sumia ao dar
+// refresh na página — persistido por mês/projeto pra sobreviver de verdade.
+
+export async function getDreAjustes(projectId: string): Promise<Record<string, number>> {
+  const client = getSupabaseClient()
+  if (!client) return {}
+  const { data, error } = await client
+    .from('dre_ajustes')
+    .select('mes,valor')
+    .eq('project_id', projectId)
+  if (error) throw error
+  const out: Record<string, number> = {}
+  for (const r of data ?? []) out[r.mes] = Number(r.valor)
+  return out
+}
+
+export async function upsertDreAjuste(projectId: string, mes: string, valor: number): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client
+    .from('dre_ajustes')
+    .upsert({ project_id: projectId, mes, valor, updated_at: new Date().toISOString() }, { onConflict: 'project_id,mes' })
   if (error) throw error
 }
 

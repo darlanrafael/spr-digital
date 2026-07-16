@@ -1,7 +1,7 @@
 'use client'
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { User, Sale, CostsData, Closing, CashflowEntry, Project, Product } from '@/types'
+import { User, Sale, CostsData, Closing, CashflowEntry, Project, Product, FixedCost, VariableCost } from '@/types'
 import { getSession } from '@/lib/auth'
 import { getSupabaseClient } from '@/lib/supabase'
 import {
@@ -78,8 +78,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setProducts(semSupabase && prod.length === 0 ? productsFallback as Product[] : prod)
       setSales(semSupabase && s.length === 0 ? salesFallback as Sale[] : s)
       setCosts({
-        fixos: semSupabase && c.fixos.length === 0 ? costsFallback.fixos : c.fixos,
-        variaveis: semSupabase && c.variaveis.length === 0 ? costsFallback.variaveis : c.variaveis,
+        fixos: semSupabase && c.fixos.length === 0 ? costsFallback.fixos as FixedCost[] : c.fixos,
+        variaveis: semSupabase && c.variaveis.length === 0 ? costsFallback.variaveis as VariableCost[] : c.variaveis,
         metaAds: semSupabase && c.metaAds.length === 0 ? costsFallback.metaAds : c.metaAds,
       })
       setClosings(semSupabase && cl.length === 0 ? closingsFallback as unknown as Closing[] : cl)

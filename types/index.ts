@@ -56,6 +56,7 @@ export interface FixedCost {
   descricao: string
   valor: number
   data: string
+  fechamentoId: string | null
 }
 
 export interface VariableCost {
@@ -64,6 +65,7 @@ export interface VariableCost {
   valor: number
   data: string
   projetoId: string | null
+  fechamentoId: string | null
 }
 
 export interface MetaAdsEntry {

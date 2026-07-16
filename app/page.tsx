@@ -292,14 +292,17 @@ function DashboardContent() {
 
   const roas = metaAdsTotal > 0 ? faturamentoLiquido / metaAdsTotal : null
 
+  // Custo já incluído num fechamento confirmado (fechamentoId preenchido) já
+  // foi pago naquele fechamento — não deve mais aparecer aqui, senão parece
+  // que ainda está pendente de pagamento quando na verdade já saiu.
   const fixedCostsFiltered = useMemo(
-    () => costs.fixos.filter(c => c.data.startsWith(custosMesRef)),
+    () => costs.fixos.filter(c => c.data.startsWith(custosMesRef) && !c.fechamentoId),
     [costs.fixos, custosMesRef]
   )
   const fixedCostsTotal = fixedCostsFiltered.reduce((a, c) => a + c.valor, 0)
 
   const varCostsFiltered = useMemo(
-    () => costs.variaveis.filter(v => v.data.startsWith(custosMesRef)),
+    () => costs.variaveis.filter(v => v.data.startsWith(custosMesRef) && !v.fechamentoId),
     [costs.variaveis, custosMesRef]
   )
 
@@ -369,6 +372,7 @@ function DashboardContent() {
       descricao: newFixedForm.descricao,
       valor: parseFloat(newFixedForm.valor) || 0,
       data: `${custosMesRef}-01`,
+      fechamentoId: null,
     }
     try { await svcAddFixed(newFixed) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, fixos: [...prev.fixos, newFixed] }))
@@ -402,6 +406,7 @@ function DashboardContent() {
       valor: parseFloat(varForm.valor),
       data: `${varForm.data}-01`,
       projetoId: selectedProject === 'all' ? null : selectedProject,
+      fechamentoId: null,
     }
     try { await svcAddVar(newVar) } catch (e) { console.error(e) }
     setCosts(prev => ({ ...prev, variaveis: [...prev.variaveis, newVar] }))

@@ -10,7 +10,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry } from '@/types'
-import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow } from '@/lib/services'
+import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
 import { getSupabaseClient } from '@/lib/supabase'
 
 type Step = 1 | 2 | 3 | 4
@@ -31,7 +31,7 @@ export default function FechamentosPage() {
 }
 
 function FechamentosContent() {
-  const { sales, costs, products, closings, setClosings, cashflow, setCashflow, selectedProject, user } = useApp()
+  const { sales, costs, setCosts, products, closings, setClosings, cashflow, setCashflow, selectedProject, user } = useApp()
 
   const [pageTab, setPageTab] = useState<PageTab>('novo')
   const [activeStep, setActiveStep] = useState<Step>(1)
@@ -180,18 +180,46 @@ function FechamentosContent() {
     const mes = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     return { inicio: mes, fim: mes }
   })
+  // Enquanto o usuário não mexer manualmente nas datas, o período do preview
+  // se ajusta sozinho: começa no mês do custo mais antigo ainda não incluído
+  // em nenhum fechamento (fechamentoId vazio) até o mês atual. Isso garante
+  // que o preview de um novo fechamento sempre traga exatamente os custos
+  // lançados desde o fechamento anterior, sem risco de pagar de novo algo que
+  // já tenha sido pago.
+  const [custosPeriodoAuto, setCustosPeriodoAuto] = useState(true)
 
+  useEffect(() => {
+    if (!custosPeriodoAuto) return
+    const pendentes = [...costs.fixos, ...costs.variaveis].filter(c => !c.fechamentoId)
+    if (pendentes.length === 0) return
+    const menorMes = pendentes.reduce((min, c) => {
+      const mes = c.data.slice(0, 7)
+      return mes < min ? mes : min
+    }, pendentes[0].data.slice(0, 7))
+    const d = new Date()
+    const mesAtual = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    setCustosPeriodo({ inicio: menorMes, fim: mesAtual })
+  }, [costs.fixos, costs.variaveis, custosPeriodoAuto])
+
+  function setCustosPeriodoManual(patch: Partial<{ inicio: string; fim: string }>) {
+    setCustosPeriodoAuto(false)
+    setCustosPeriodo(prev => ({ ...prev, ...patch }))
+  }
+
+  // !fechamentoId é a garantia real contra reuso — mesmo que o usuário edite
+  // as datas manualmente e o intervalo acabe incluindo um mês já fechado, um
+  // custo já pago nunca volta a aparecer aqui.
   const fixedCostsIncluidos = useMemo(
     () => costs.fixos.filter(c => {
       const mes = c.data.slice(0, 7)
-      return mes >= custosPeriodo.inicio && mes <= custosPeriodo.fim
+      return !c.fechamentoId && mes >= custosPeriodo.inicio && mes <= custosPeriodo.fim
     }),
     [costs.fixos, custosPeriodo]
   )
   const variableCostsIncluidos = useMemo(
     () => costs.variaveis.filter(v => {
       const mes = v.data.slice(0, 7)
-      return mes >= custosPeriodo.inicio && mes <= custosPeriodo.fim
+      return !v.fechamentoId && mes >= custosPeriodo.inicio && mes <= custosPeriodo.fim
     }),
     [costs.variaveis, custosPeriodo]
   )
@@ -395,6 +423,17 @@ function FechamentosContent() {
     try { await svcAddClosing(newClosing, selectedProject) } catch (e) { console.error(e) }
     setClosings(prev => [...prev, newClosing])
 
+    // Marca os custos deste fechamento como pagos — não devem mais aparecer
+    // no Dashboard nem ser oferecidos de novo num próximo fechamento.
+    const fixedIds = fixedCostsIncluidos.map(c => c.id)
+    const varIds = variableCostsIncluidos.map(c => c.id)
+    try { await marcarCustosComoFechados(fixedIds, varIds, newClosing.id) } catch (e) { console.error(e) }
+    setCosts(prev => ({
+      ...prev,
+      fixos: prev.fixos.map(c => fixedIds.includes(c.id) ? { ...c, fechamentoId: newClosing.id } : c),
+      variaveis: prev.variaveis.map(c => varIds.includes(c.id) ? { ...c, fechamentoId: newClosing.id } : c),
+    }))
+
     const lastBalance = cashflow.length > 0 ? cashflow[cashflow.length - 1].saldoAcumulado : 0
     const cfEntry: CashflowEntry = {
       id: `cf_${Date.now()}`,
@@ -474,18 +513,18 @@ function FechamentosContent() {
               <div className="space-y-4">
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-3">Mês de referência dos custos</h3>
-                  <p className="text-xs text-gray-500 mb-3">Define quais lançamentos de Custos Fixos e Variáveis entram neste fechamento (o preview abaixo já reflete o período escolhido).</p>
+                  <p className="text-xs text-gray-500 mb-3">Define quais lançamentos de Custos Fixos e Variáveis entram neste fechamento (o preview abaixo já reflete o período escolhido). Por padrão já vem preenchido do primeiro custo ainda não pago em nenhum fechamento anterior até hoje — custos já incluídos num fechamento nunca aparecem de novo, mesmo se você ajustar as datas.</p>
                   <div className="flex flex-wrap items-center gap-3">
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">De</label>
                       <input type="month" value={custosPeriodo.inicio}
-                        onChange={e => setCustosPeriodo(p => ({ ...p, inicio: e.target.value }))}
+                        onChange={e => setCustosPeriodoManual({ inicio: e.target.value })}
                         className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Até</label>
                       <input type="month" value={custosPeriodo.fim}
-                        onChange={e => setCustosPeriodo(p => ({ ...p, fim: e.target.value }))}
+                        onChange={e => setCustosPeriodoManual({ fim: e.target.value })}
                         className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
                     </div>
                   </div>
