@@ -720,8 +720,14 @@ Após deploy, configurar nas plataformas:
 
 O projeto usa **autenticação própria via localStorage**, sem Supabase Auth. Isso foi uma decisão deliberada para simplicidade — o sistema tem poucos usuários internos.
 
+Desde 10/07/2026 existem **dois mecanismos de login lado a lado** para o dashboard principal (ver seção "Atualizada em 10-15/07/2026" no fim do documento para o histórico completo):
+
+1. **Credenciais hardcoded** via variáveis de ambiente `NEXT_PUBLIC_USER*` (`getCredentials()`) — hoje só o usuário 2 (Pedro) e um usuário 3 opcional continuam aqui. **Rafael (usuário 1) foi removido de propósito** desta lista — sua credencial antiga (`rafael@spr.com`) não funciona mais.
+2. **Login real no banco** (`loginDashboardUser()`, tabela `usuarios_dashboard`, senha verificada no servidor via `POST /api/dashboard-usuarios/login`) — usado pelo login novo do Rafael e por qualquer "sócio" cadastrado. Usuários são criados/editados em `/terapeutas/admin` (aba de usuários do dashboard).
+
+`login(email, senha)` (hardcoded) é tentado primeiro; se falhar, `app/login/page.tsx` cai para `loginDashboardUser()`. Os dois preenchem a mesma sessão (`localStorage['spr_session']`), então o resto do app (`getSession()`, `ProtectedRoute` etc.) não precisa saber qual dos dois autenticou.
+
 **Funcionamento:**
-- Credenciais hardcoded via variáveis de ambiente `NEXT_PUBLIC_USER*`
 - Login salva o usuário em `localStorage` na chave `spr_session`
 - `ProtectedRoute` verifica a sessão; se não houver, redireciona para `/login`
 - Logout remove o item do localStorage
@@ -734,10 +740,13 @@ O projeto usa **autenticação própria via localStorage**, sem Supabase Auth. I
 | `admin` | Acesso total — pode editar custos, criar fechamentos, ver todos os projetos |
 | `gestor` | Acesso restrito ao seu `projetoId` — não pode editar custos |
 | `financeiro` | Acesso a todos os projetos mas sem edição de custos |
+| `socio` | Acesso igual ao `admin` em tudo, **exceto** a seção "Divisão entre Sócios" em `/fechamentos` (gate `user?.role !== 'socio'` em `app/fechamentos/page.tsx`) — vê faturamento, lucro, custos etc. normalmente, só não vê o percentual/valor de cada sócio |
 
-**Seletor de projeto:** Gestores (`role: 'gestor'`) são automaticamente fixados no `projetoId` configurado na variável de ambiente. Admins e financeiros veem todos os projetos.
+**Seletor de projeto:** Gestores (`role: 'gestor'`) são automaticamente fixados no `projetoId` configurado na variável de ambiente. Admins, financeiros e sócios veem todos os projetos.
 
 > **Limitação conhecida:** O `projetoId` do usuário 2 (gestor) está **hardcoded** como `'proj_1'` diretamente em `lib/auth.ts:26` — não há variável de ambiente para controlá-lo. Se precisar vincular o gestor a outro projeto, editar `lib/auth.ts` diretamente.
+
+> **Importante — dois sistemas de auth totalmente separados:** o módulo `/terapeutas/*` tem seu **próprio** login (`terapeutas_session` no localStorage, tabela `usuarios_sistema`, ver seção 5.2/292) — independente deste aqui (`spr_session`/`usuarios_dashboard`). São bancos de usuários diferentes, com papéis diferentes (`admin/gestor/financeiro/socio` aqui vs. `admin/comercial/terapeuta` lá). Um admin que usa os dois módulos precisa de uma linha ativa em **cada** tabela, com a mesma senha (hash calculado por `hashSenha()` de `lib/terapeutas-auth.ts` — sha256 + salt fixo, diferente da forma como a senha é guardada em `usuarios_dashboard`). Ver o changelog de 15/07/2026 no fim do documento para o bug real que isso já causou.
 
 ---
 
@@ -1108,8 +1117,8 @@ Isso permite rodar o app localmente mesmo sem configurar o Supabase, apenas para
 - Login pelo formulário carrega os dados corretamente (antes ficava vazio até um F5)
 - `normTs()` converte timezone corretamente por plataforma (Kiwify não sofre mais a dupla conversão de -3h) e `getSales()` pagina por cursor, não por offset — nenhuma venda desaparece mais de Vendas/Fechamentos/DRE por causa de horário ou paginação (seção 14, "Conversão de timezone" e seção 16)
 - Integração Meta Ads API com filtro por nomenclatura de campanha
-- Módulo Terapeutas completo (login, agenda, comissões, aprovações)
-- Autenticação com 3 papéis (admin, gestor, financeiro)
+- Módulo Terapeutas completo (login, agenda, comissões, aprovações), incluindo papel "comercial" com visão unificada em `/terapeutas/[id]` (troca de terapeuta + agendamento + Ocorrências completas) e papel "sócio" com login real via `usuarios_dashboard`
+- Autenticação com 4 papéis (admin, gestor, financeiro, sócio) — sócio com login real no banco (`usuarios_dashboard`), os demais via credenciais hardcoded (seção 10)
 - DRE mensal automático dos últimos 6 meses
 - Fechamentos financeiros com distribuição por sócio
 - Fluxo de caixa com lançamentos automáticos e manuais
@@ -1153,3 +1162,14 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 *Atualizada em 04/07/2026: corrigido bug crítico em `AppContext.tsx` onde qualquer lista vazia do Supabase (não só quando não configurado) acionava o fallback mock — chegou a injetar um reembolso fictício ("Bruno Ferreira", R$1.497) como dedução real no primeiro fechamento de verdade após o reset do histórico. Ver seção 18.*
 
 *Atualizada novamente em 04/07/2026: botão "Atualizar dados" no Header; fix do login pelo formulário não carregando dados; e os dois bugs mais sérios encontrados até agora — `normTs()` aplicando a conversão de UTC→Brasília também nas vendas da Kiwify (que já vêm em horário de Brasília), fazendo vendas entre 00:00-02:59 sumirem pro dia anterior em todo filtro de período; e `getSales()` paginando por offset (`.range()`) numa tabela que recebe inserts o tempo todo, fazendo vendas já existentes somem aleatoriamente da busca. Os dois corrigidos no commit `de0faac`, confirmados batendo exato com consulta direta no banco. Ver seção 14 e seção 16.*
+
+*Atualizada em 16/07/2026, cobrindo o período de 05 a 15/07/2026 que não tinha sido registrado ainda (ver `git log` pra a lista completa de commits — muita coisa no Fechamento/Custos do Funil/Módulo Terapeutas ficou só no código nesses dias). Os pontos mais importantes:*
+
+- **Custos do Funil e melhorias no Fechamento (05-09/07):** custo de tráfego por termos de UTM, custos fixos/variáveis por mês de referência, múltiplos períodos por produto ("funil perpétuo"), paginação e markup de 13,85% no Custo de Tráfego, correção de um bug crítico de paginação de vendas com `created_at` duplicado, permite fechar mês com prejuízo, e a feature de "Custos do Funil" que desconta o repasse do terapeuta (comissão) do lucro antes de dividir entre sócios — fórmula: `repasse = líquido pós-impostos do produto × percentual de comissão do terapeuta`, só pra produtos cujo nome bate com o nome de um terapeuta cadastrado. Ver seção 12 (`/fechamentos`) e seção 14.
+- **Painel unificado do terapeuta (06-09/07):** `/terapeutas/[id]` ganhou abas Overview/Vendas/Agenda/Fechamentos espelhando as telas do CEO (ver seção 12 acima, ainda descreve a versão de 06/07 — desde então a tela também ganhou aba "Pendentes de Agendamento" agrupada por paciente com link direto de "Agendar", filtro "Concluídos" ignorando período, e data de entrega manual ao concluir sessão), fechamento de comissão dos terapeutas em `/terapeutas/fechamentos` com paginação/CSV e "antecipar pagamento" de sessões futuras (com botão selecionar todos), correção de bug de timezone feio (horário errado ao agendar/remarcar/concluir — `brasiliaLocalToISO()`/`isoToDatetimeLocalBRT()` em `lib/terapeutas-auth.ts`), e Agenda/Consultas de Hoje passaram a excluir sessões já `entregue` (dividido em quadrantes "Consultas de Hoje" + "Próximas Consultas").
+- **Papel "sócio" (10/07):** novo sistema de login real pro dashboard principal — tabela `usuarios_dashboard`, verificado no servidor via `POST /api/dashboard-usuarios/login`, gerenciável em `/terapeutas/admin`. Sócio vê tudo igual a admin, exceto a seção "Divisão entre Sócios" em `/fechamentos` (`user?.role !== 'socio'`). Deliberadamente **não** reaproveitou a tabela `usuarios_sistema` do módulo de terapeutas — motivo: um gate de permissão ali (`usuario_tipo === 'terapeuta'` em `/api/terapeutas/fechamentos`) deixaria qualquer papel não-terapeuta aprovar pagamento de comissão, então os dois sistemas de auth continuam propositalmente separados (ver seção 10).
+- **Login do CEO migrado (10/07):** Rafael trocou de `rafael@spr.com` pro sistema novo (`usuarios_dashboard`, e-mail próprio, senha nova) — a credencial antiga foi removida do código (`getCredentials()` em `lib/auth.ts`), não funciona mais.
+- **Bug real: "Seu e-mail" travado errado em 3 telas do módulo de terapeutas (13/07):** `vendas`, `aprovacoes` e `fechamentos` de terapeutas usavam um e-mail hardcoded/vazio pro campo que autentica ações com senha — qualquer usuário que não fosse o Rafael original tinha as próprias ações sempre rejeitadas com "Senha inválida". Corrigido lendo a sessão de verdade (`getSession()` ou `terapeutas_session`) em vez de um valor fixo.
+- **UX do comercial (13-14/07):** o vendedor (papel `comercial` em `usuarios_sistema`) ganhou a mesma visão que a terapeuta tem em `/terapeutas/[id]`, com um seletor de terapeutas ativos pra transitar entre eles, mais a capacidade de agendar sessões (que a terapeuta não tem). O menu do Header foi restrito pra esse papel — só vê "Terapeutas" (`/terapeutas/lista`), sem acesso ao dashboard consolidado da empresa (faturamento bruto/líquido SPR) nem à ferramenta antiga `/terapeutas/vendas`. As Ocorrências do prontuário (Nota, Remarcar Consulta, Solicitação de Reembolso Parcial) foram portadas integralmente de `/terapeutas/vendas` pra dentro de `/terapeutas/[id]`, que antes só tinha a opção de Nota.
+- **Bug real: colisão de sessão entre os dois sistemas de auth (15/07):** as 4 telas do módulo de terapeutas liam `getSession()` (login do dashboard principal, `spr_session`) com prioridade sobre `terapeutas_session` pra popular o e-mail usado nas ações com senha — mas essa senha é sempre validada contra `usuarios_sistema`, nunca contra `usuarios_dashboard`. Se o navegador tivesse qualquer `spr_session` guardado (de outra conta, ou de um teste anterior, mesmo esquecido), a ação sempre falhava com "Senha inválida", mesmo com a senha certa. Foi o bug que impediu o comercial (Felipe) de agendar sessões. Corrigido invertendo a prioridade (terapeutas_session primeiro) nas 4 telas, e criada uma linha ativa em `usuarios_sistema` pro e-mail novo do Rafael (sem ela, o mesmo bug ia pegar ele também, vindo do dashboard principal sem login separado no módulo). Testado de ponta a ponta em produção com dados descartáveis antes de confirmar corrigido. Ver seção 10.
+- **Modal de confirmação ao agendar (15/07):** o toast discreto de "sessões agendadas com sucesso" passava despercebido — trocado por um modal central que exige clique em "OK".
