@@ -48,3 +48,6 @@ data/users.json
 
 # supabase CLI local cache
 /supabase/.temp/
+
+# superpowers brainstorming scratch
+.superpowers/
