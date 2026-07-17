@@ -12,6 +12,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import Pagination from '@/components/Pagination'
+import AgendaDiaTerapeuta, { SessaoDia, CompromissoDia } from '@/components/terapeutas/AgendaDiaTerapeuta'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 
@@ -25,6 +26,7 @@ type Terapeuta = {
   email: string
   percentual_comissao: number
   vendas_a_partir_de: string | null
+  duracao_sessao_minutos: number
 }
 
 type Sessao = {
@@ -316,6 +318,8 @@ export default function PainelTerapeuta() {
   const [agendaMes, setAgendaMes] = useState(hoje.getMonth())
   const [agendaAno, setAgendaAno] = useState(hoje.getFullYear())
   const [agendaDetalhe, setAgendaDetalhe] = useState<Sessao | null>(null)
+  const [agendaDiaSelecionado, setAgendaDiaSelecionado] = useState<Date | null>(null)
+  const [compromissos, setCompromissos] = useState<CompromissoDia[]>([])
 
   // Fechamentos de comissão (histórico, somente leitura)
   const [fechamentos, setFechamentos] = useState<FechamentoHistorico[]>([])
@@ -391,7 +395,7 @@ export default function PainelTerapeuta() {
     if (!client) return
     setLoading(true)
     const [tResp, sResp, todasResp] = await Promise.all([
-      client.from('terapeutas').select('id,nome,email,percentual_comissao,vendas_a_partir_de').eq('id', id).single(),
+      client.from('terapeutas').select('id,nome,email,percentual_comissao,vendas_a_partir_de,duracao_sessao_minutos').eq('id', id).single(),
       client.from('sessoes').select('id,sale_id,numero_sessao,total_sessoes,status,status_consulta,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,entregue_confirmado_por,iniciado_em,concluido_em,vendedor_nome,agendado_por')
         .eq('terapeuta_id', id).order('sale_id').order('numero_sessao', { ascending: true }),
       client.from('terapeutas').select('id,nome').eq('ativo', true).order('nome'),
@@ -422,6 +426,10 @@ export default function PainelTerapeuta() {
         })
       : sessoesTodas
     setSessoes(sessoesData)
+
+    const { data: compromissosData } = await client
+      .from('compromissos_terapeuta').select('id,titulo,inicio,fim').eq('terapeuta_id', id).order('inicio')
+    setCompromissos((compromissosData ?? []) as CompromissoDia[])
 
     const saleIdsVisiveis = [...new Set(sessoesData.map(s => s.sale_id))]
     const sessaoIds = sessoesData.map(s => s.id)
@@ -1345,55 +1353,90 @@ export default function PainelTerapeuta() {
 
             {/* ══════════════ AGENDA ══════════════ */}
             {terapeutaTab === 'agenda' && (
-              <>
-                <div className="mb-4 flex items-center justify-between">
-                  <p className="text-sm font-medium text-white">{MESES_NOME[agendaMes]} {agendaAno}</p>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => navMesAgenda(-1)} aria-label="Mês anterior" className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => navMesAgenda(1)} aria-label="Próximo mês" className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
+              agendaDiaSelecionado ? (
+                <AgendaDiaTerapeuta
+                  data={agendaDiaSelecionado}
+                  sessoes={sessoes
+                    .filter(s => s.data_agendada && s.status !== 'cancelada'
+                      && new Date(s.data_agendada).toDateString() === agendaDiaSelecionado.toDateString())
+                    .map((s): SessaoDia => ({
+                      id: s.id,
+                      paciente_nome: s.paciente_nome,
+                      numero_sessao: s.numero_sessao,
+                      total_sessoes: s.total_sessoes,
+                      status: s.status,
+                      data_agendada: s.data_agendada as string,
+                    }))}
+                  compromissos={compromissos.filter(c =>
+                    new Date(c.inicio).toDateString() === agendaDiaSelecionado.toDateString())}
+                  duracaoSessaoMinutos={terapeuta?.duracao_sessao_minutos ?? 60}
+                  onClickSessao={(sessaoDia) => {
+                    const sessaoCompleta = sessoes.find(s => s.id === sessaoDia.id)
+                    if (sessaoCompleta) setAgendaDetalhe(sessaoCompleta)
+                  }}
+                  onClickCompromisso={() => { /* wired in Task 5 */ }}
+                  onClickLivre={() => { /* wired in Task 5 */ }}
+                  onNavegarDia={(dir) => setAgendaDiaSelecionado(d => {
+                    if (!d) return d
+                    const novo = new Date(d)
+                    novo.setDate(novo.getDate() + dir)
+                    return novo
+                  })}
+                  onVoltarMes={() => setAgendaDiaSelecionado(null)}
+                />
+              ) : (
+                <>
+                  <div className="mb-4 flex items-center justify-between">
+                    <p className="text-sm font-medium text-white">{MESES_NOME[agendaMes]} {agendaAno}</p>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => navMesAgenda(-1)} aria-label="Mês anterior" className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => navMesAgenda(1)} aria-label="Próximo mês" className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
-                  <div className="grid grid-cols-7 border-b border-white/10">
-                    {DIAS_SEMANA.map(d => (
-                      <div key={d} className="px-2 py-3 text-center text-xs text-gray-500 font-medium">{d}</div>
-                    ))}
+                  <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
+                    <div className="grid grid-cols-7 border-b border-white/10">
+                      {DIAS_SEMANA.map(d => (
+                        <div key={d} className="px-2 py-3 text-center text-xs text-gray-500 font-medium">{d}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7">
+                      {agendaCells.map((dia, idx) => {
+                        const ss = dia ? sessoesNoDiaAgenda(dia) : []
+                        const isHoje = dia === agendaHojeCell
+                        return (
+                          <button key={idx} type="button" disabled={!dia}
+                            onClick={() => dia && setAgendaDiaSelecionado(new Date(agendaAno, agendaMes, dia))}
+                            className={`min-h-[90px] p-1.5 border-b border-r border-white/5 text-left ${!dia ? 'bg-gray-900/50 cursor-default' : 'hover:bg-white/5 transition-colors cursor-pointer'}`}>
+                            {dia && (
+                              <>
+                                <span className={`text-xs font-medium inline-flex w-6 h-6 items-center justify-center rounded-full mb-1 ${
+                                  isHoje ? 'bg-indigo-600 text-white' : 'text-gray-400'
+                                }`}>{dia}</span>
+                                <div className="space-y-0.5">
+                                  {ss.slice(0, 3).map(s => (
+                                    <div key={s.id}
+                                      className="w-full text-left text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300 truncate">
+                                      {s.data_agendada ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''} {s.paciente_nome.split(' ')[0]}
+                                    </div>
+                                  ))}
+                                  {ss.length > 3 && (
+                                    <span className="text-[10px] text-gray-500">+{ss.length - 3} mais</span>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
-                  <div className="grid grid-cols-7">
-                    {agendaCells.map((dia, idx) => {
-                      const ss = dia ? sessoesNoDiaAgenda(dia) : []
-                      const isHoje = dia === agendaHojeCell
-                      return (
-                        <div key={idx} className={`min-h-[90px] p-1.5 border-b border-r border-white/5 ${!dia ? 'bg-gray-900/50' : ''}`}>
-                          {dia && (
-                            <>
-                              <span className={`text-xs font-medium inline-flex w-6 h-6 items-center justify-center rounded-full mb-1 ${
-                                isHoje ? 'bg-indigo-600 text-white' : 'text-gray-400'
-                              }`}>{dia}</span>
-                              <div className="space-y-0.5">
-                                {ss.slice(0, 3).map(s => (
-                                  <button key={s.id} onClick={() => setAgendaDetalhe(s)}
-                                    className="w-full text-left text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 truncate transition-colors">
-                                    {s.data_agendada ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''} {s.paciente_nome.split(' ')[0]}
-                                  </button>
-                                ))}
-                                {ss.length > 3 && (
-                                  <span className="text-[10px] text-gray-500">+{ss.length - 3} mais</span>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              </>
+                </>
+              )
             )}
 
             {/* ══════════════ FECHAMENTOS ══════════════ */}
