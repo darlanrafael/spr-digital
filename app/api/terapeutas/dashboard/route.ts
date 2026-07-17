@@ -141,7 +141,11 @@ export async function GET(req: NextRequest) {
       if (nomesQueBatem.length === 0) return true
       return nomesQueBatem.some(n => {
         const corte = cortePorNome.get(n)
-        return !corte || v.data_hora >= corte
+        // Comparação por Date, não por string — vendas_a_partir_de agora é
+        // timestamptz (hora exata), e o formato ISO devolvido pelo Postgres
+        // (offset +00:00) não é diretamente comparável por string com o
+        // formato de data_hora (Z, com milissegundos).
+        return !corte || new Date(v.data_hora).getTime() >= new Date(corte).getTime()
       })
     }
 
@@ -167,12 +171,12 @@ export async function GET(req: NextRequest) {
       if (data.length < PAGE) break
       offset += PAGE
     }
-    // O corte só vale pra vendas que ainda NÃO têm sessão nenhuma (backlog
-    // sem reconciliar) — ver o filtro de "pendentes" abaixo. Uma venda que já
-    // tem sessão real criada (ex: os pacientes lançados manualmente) sempre
-    // conta, não importa a data — cortar aqui também fazia sessões e
-    // faturamento reais desaparecerem do Overview só por a venda ser antiga.
-    const vendasRaw = vendasRawTotal
+    // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
+    // vendas anteriores ao corte somem de TODAS as telas (Overview, Ativos,
+    // Concluídos, Agenda) — não só das Pendentes de Agendamento. O histórico
+    // real continua no banco, só para de contar aqui; o paciente é
+    // relançado manualmente (venda + sessões) quando tiver sessão futura.
+    const vendasRaw = vendasRawTotal.filter(saleAposCorte)
 
     const saleIds = vendasRaw.map(v => v.id)
 
@@ -336,8 +340,14 @@ export async function GET(req: NextRequest) {
       .in('status', ['agendada', 'pendente'])
       .order('data_agendada', { ascending: true })
 
+    // Terapeuta com corte configurado: consulta de hoje/futura só conta se a
+    // venda que a originou é depois do corte — mesma regra do resto da
+    // página, senão sessão real antiga (pré-corte) reaparece aqui mesmo
+    // sumindo de Overview/Ativos.
+    const corteAtivoNoFiltro = terapeutaId !== 'all' && !!terapeutaFiltro?.vendas_a_partir_de
     if (terapeutaId !== 'all') {
       hojeQ = hojeQ.eq('terapeuta_id', terapeutaId)
+      if (corteAtivoNoFiltro) hojeQ = hojeQ.in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
     }
 
     // Próximas consultas — depois de hoje, ainda não entregues. Um segundo
@@ -352,6 +362,7 @@ export async function GET(req: NextRequest) {
 
     if (terapeutaId !== 'all') {
       proximasQ = proximasQ.eq('terapeuta_id', terapeutaId)
+      if (corteAtivoNoFiltro) proximasQ = proximasQ.in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
     }
 
     const [{ data: hojeData }, { data: proximasData }] = await Promise.all([hojeQ, proximasQ])

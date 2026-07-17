@@ -125,7 +125,10 @@ export async function GET(req: NextRequest) {
       if (nomesQueBatem.length === 0) return true
       return nomesQueBatem.some(n => {
         const corte = cortePorNome.get(n)
-        return !corte || v.data_hora >= corte
+        // Date, não string — vendas_a_partir_de é timestamptz (hora exata)
+        // e o offset devolvido pelo Postgres não é comparável por string
+        // com o formato de data_hora.
+        return !corte || new Date(v.data_hora).getTime() >= new Date(corte).getTime()
       })
     }
 
@@ -151,11 +154,11 @@ export async function GET(req: NextRequest) {
       if (data.length < PAGE) break
       offset += PAGE
     }
-    // O corte só vale pra vendas SEM sessão nenhuma ainda (backlog sem
-    // reconciliar) — aplicado abaixo, direto no filtro de vendasPendentes.
-    // Uma venda que já tem sessão real (ex: paciente lançado manualmente)
-    // sempre aparece em Ativos/Concluídos, não importa a data da compra.
-    const vendasAll = vendasAllTotal
+    // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
+    // vendas anteriores ao corte somem de Pendentes/Ativos/Concluídos aqui
+    // também — mesma regra da página do terapeuta, pra essa lista geral não
+    // voltar a mostrar paciente antigo que já devia estar zerado.
+    const vendasAll = vendasAllTotal.filter(saleAposCorte)
 
     const allSaleIds = vendasAll.map(v => v.id)
 

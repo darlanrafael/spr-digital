@@ -398,22 +398,40 @@ export default function PainelTerapeuta() {
     ])
     if (tResp.data) setTerapeuta(tResp.data as unknown as Terapeuta)
     setOutrasTerapeutas((todasResp.data ?? []) as { id: string; nome: string }[])
-    const sessoesData = (sResp.data ?? []) as Sessao[]
+    const terapeutaResp = tResp.data as unknown as Terapeuta | null
+    const corte = terapeutaResp?.vendas_a_partir_de ?? null
+    const sessoesTodas = (sResp.data ?? []) as Sessao[]
+
+    const saleIds = [...new Set(sessoesTodas.map(s => s.sale_id))]
+    const vendasMap: Record<string, SaleInfo> = {}
+    if (saleIds.length > 0) {
+      const { data: vendasData } = await client
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status').in('id', saleIds)
+      for (const v of (vendasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
+    }
+    setVendas(vendasMap)
+
+    // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
+    // sessão só conta se a venda que a originou é depois do corte — histórico
+    // real continua no banco, só some da tela (Overview/Ativos/Agenda) até o
+    // paciente ser relançado manualmente com uma sessão futura de verdade.
+    const sessoesData = corte
+      ? sessoesTodas.filter(s => {
+          const venda = vendasMap[s.sale_id]
+          return venda ? new Date(venda.data_hora).getTime() >= new Date(corte).getTime() : false
+        })
+      : sessoesTodas
     setSessoes(sessoesData)
 
-    const saleIds = [...new Set(sessoesData.map(s => s.sale_id))]
+    const saleIdsVisiveis = [...new Set(sessoesData.map(s => s.sale_id))]
     const sessaoIds = sessoesData.map(s => s.id)
-    if (saleIds.length > 0) {
-      const [vendasResp, ocResp, remResp] = await Promise.all([
-        client.from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status').in('id', saleIds),
-        client.from('ocorrencias_prontuario').select('id,sale_id,tipo,titulo,descricao,criado_por_nome,criado_por_tipo,created_at').in('sale_id', saleIds).order('created_at', { ascending: false }),
+    if (saleIdsVisiveis.length > 0) {
+      const [ocResp, remResp] = await Promise.all([
+        client.from('ocorrencias_prontuario').select('id,sale_id,tipo,titulo,descricao,criado_por_nome,criado_por_tipo,created_at').in('sale_id', saleIdsVisiveis).order('created_at', { ascending: false }),
         sessaoIds.length > 0
           ? client.from('remarcacoes_historico').select('*').in('sessao_id', sessaoIds).order('created_at', { ascending: true })
           : Promise.resolve({ data: [] as Remarcacao[] }),
       ])
-      const vendasMap: Record<string, SaleInfo> = {}
-      for (const v of (vendasResp.data ?? []) as SaleInfo[]) vendasMap[v.id] = v
-      setVendas(vendasMap)
 
       const ocMap: Record<string, Ocorrencia[]> = {}
       for (const o of (ocResp.data ?? []) as Ocorrencia[]) {
@@ -433,7 +451,6 @@ export default function PainelTerapeuta() {
     // Vendas aprovadas do terapeuta que AINDA não têm sessão nenhuma criada —
     // sem isso ficam invisíveis pro terapeuta e pro admin, mesmo já tendo
     // sido corretamente atribuídas a ele/ela pelo nome do produto.
-    const terapeutaResp = tResp.data as unknown as Terapeuta | null
     const nomeTerapeuta = terapeutaResp?.nome
     if (nomeTerapeuta) {
       const primeiroNome = nomeTerapeuta.split(' ')[0]
