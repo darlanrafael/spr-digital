@@ -162,7 +162,12 @@ export async function GET(req: NextRequest) {
       if (data.length < PAGE) break
       offset += PAGE
     }
-    const vendasRaw = vendasRawTotal.filter(saleAposCorte)
+    // O corte só vale pra vendas que ainda NÃO têm sessão nenhuma (backlog
+    // sem reconciliar) — ver o filtro de "pendentes" abaixo. Uma venda que já
+    // tem sessão real criada (ex: os pacientes lançados manualmente) sempre
+    // conta, não importa a data — cortar aqui também fazia sessões e
+    // faturamento reais desaparecerem do Overview só por a venda ser antiga.
+    const vendasRaw = vendasRawTotal
 
     const saleIds = vendasRaw.map(v => v.id)
 
@@ -208,7 +213,7 @@ export async function GET(req: NextRequest) {
     for (const t of terapeutas) {
       const primeiroNome = t.nome.trim().split(' ')[0].toLowerCase()
       const pendentes = vendasRaw.filter(v =>
-        v.status === 'aprovada' && !saleIdsComSessao.has(v.id) && v.produto.toLowerCase().includes(primeiroNome)
+        v.status === 'aprovada' && !saleIdsComSessao.has(v.id) && v.produto.toLowerCase().includes(primeiroNome) && saleAposCorte(v)
       )
       let sessoesExtra = 0, comissaoExtra = 0, brutoExtra = 0
       for (const v of pendentes) {

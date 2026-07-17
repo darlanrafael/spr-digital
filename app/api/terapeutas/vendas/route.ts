@@ -151,7 +151,11 @@ export async function GET(req: NextRequest) {
       if (data.length < PAGE) break
       offset += PAGE
     }
-    const vendasAll = vendasAllTotal.filter(saleAposCorte)
+    // O corte só vale pra vendas SEM sessão nenhuma ainda (backlog sem
+    // reconciliar) — aplicado abaixo, direto no filtro de vendasPendentes.
+    // Uma venda que já tem sessão real (ex: paciente lançado manualmente)
+    // sempre aparece em Ativos/Concluídos, não importa a data da compra.
+    const vendasAll = vendasAllTotal
 
     const allSaleIds = vendasAll.map(v => v.id)
 
@@ -226,7 +230,7 @@ export async function GET(req: NextRequest) {
       ['reembolsada', 'chargeback', 'cancelada', 'em_protesto'].includes(v.status ?? '')
     )
     const vendasPendentes = vendasAprovadas.filter(v =>
-      !sessoesPorVenda[v.id] || sessoesPorVenda[v.id].length === 0
+      (!sessoesPorVenda[v.id] || sessoesPorVenda[v.id].length === 0) && saleAposCorte(v)
     )
     const vendasAtivos = vendasAprovadas.filter(v =>
       sessoesPorVenda[v.id] && sessoesPorVenda[v.id].length > 0
