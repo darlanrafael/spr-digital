@@ -101,10 +101,10 @@ export async function GET(req: NextRequest) {
     // 1. Terapeutas ativos
     const { data: terapeutasData } = await supabase
       .from('terapeutas')
-      .select('id,nome,percentual_comissao')
+      .select('id,nome,percentual_comissao,vendas_a_partir_de')
       .eq('ativo', true)
       .order('nome')
-    const terapeutas = (terapeutasData ?? []) as { id: string; nome: string; percentual_comissao: number }[]
+    const terapeutas = (terapeutasData ?? []) as { id: string; nome: string; percentual_comissao: number; vendas_a_partir_de: string | null }[]
 
     // 2. Se filtro de terapeuta: restringir pelo nome dela no produto (não só
     // pelas vendas que já têm sessão — senão as pendentes de agendamento
@@ -124,7 +124,23 @@ export async function GET(req: NextRequest) {
     const nomesTerapeutas = primeiroNomeFiltro
       ? [primeiroNomeFiltro]
       : terapeutas.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean)
-    const vendasRaw: SaleRow[] = []
+    // vendas_a_partir_de: corte de data por terapeuta — usado quando o
+    // histórico anterior é grande demais pra reconciliar 1:1 (ex: Pedro,
+    // calendário que já rodava fora do sistema). Vendas anteriores ao corte
+    // não contam mais automaticamente; o paciente é lançado manualmente.
+    const cortePorNome = new Map(
+      terapeutas.map(t => [t.nome.trim().split(' ')[0].toLowerCase(), t.vendas_a_partir_de])
+    )
+    function saleAposCorte(v: SaleRow): boolean {
+      const nomesQueBatem = nomesTerapeutas.filter(n => v.produto.toLowerCase().includes(n))
+      if (nomesQueBatem.length === 0) return true
+      return nomesQueBatem.some(n => {
+        const corte = cortePorNome.get(n)
+        return !corte || v.data_hora >= corte
+      })
+    }
+
+    const vendasRawTotal: SaleRow[] = []
     const PAGE = 1000
     let offset = 0
     while (true) {
@@ -142,10 +158,11 @@ export async function GET(req: NextRequest) {
       const { data, error } = await q
       if (error) throw new Error(error.message)
       if (!data || data.length === 0) break
-      vendasRaw.push(...(data as SaleRow[]))
+      vendasRawTotal.push(...(data as SaleRow[]))
       if (data.length < PAGE) break
       offset += PAGE
     }
+    const vendasRaw = vendasRawTotal.filter(saleAposCorte)
 
     const saleIds = vendasRaw.map(v => v.id)
 

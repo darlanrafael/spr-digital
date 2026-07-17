@@ -24,6 +24,7 @@ type Terapeuta = {
   nome: string
   email: string
   percentual_comissao: number
+  vendas_a_partir_de: string | null
 }
 
 type Sessao = {
@@ -340,6 +341,26 @@ export default function PainelTerapeuta() {
   const [vDateEnd, setVDateEnd] = useState('')
   const [vendasPendentes, setVendasPendentes] = useState<SaleInfo[]>([])
 
+  // Lançamento manual — paciente já em atendimento fora do sistema (venda +
+  // sessões numa tacada só), pra quando o histórico é grande demais pra
+  // reconciliar contra uma venda antiga importada (ver vendas_a_partir_de).
+  const [manualOpen, setManualOpen] = useState(false)
+  const [manualNome, setManualNome] = useState('')
+  const [manualEmail, setManualEmail] = useState('')
+  const [manualTelefone, setManualTelefone] = useState('')
+  const [manualProduto, setManualProduto] = useState('')
+  const [manualPlataforma, setManualPlataforma] = useState('hubla')
+  const [manualValorBruto, setManualValorBruto] = useState('')
+  const [manualValorLiquido, setManualValorLiquido] = useState('')
+  const [manualDataCompra, setManualDataCompra] = useState('')
+  const [manualTotalSessoes, setManualTotalSessoes] = useState('')
+  const [manualUltimaNumero, setManualUltimaNumero] = useState('')
+  const [manualUltimaData, setManualUltimaData] = useState('')
+  const [manualErro, setManualErro] = useState('')
+  const [manualLoading, setManualLoading] = useState(false)
+  const [manualSenhaOpen, setManualSenhaOpen] = useState(false)
+  const [manualSucesso, setManualSucesso] = useState<{ nome: string; criadas: number; puladas: number } | null>(null)
+
   // Pacientes e prontuário — Ocorrências (Nota / Remarcar / Reembolso), igual
   // ao módulo original em vendas/page.tsx
   const [prontuarioEmail, setProntuarioEmail] = useState<string | null>(null)
@@ -370,7 +391,7 @@ export default function PainelTerapeuta() {
     if (!client) return
     setLoading(true)
     const [tResp, sResp, todasResp] = await Promise.all([
-      client.from('terapeutas').select('id,nome,email,percentual_comissao').eq('id', id).single(),
+      client.from('terapeutas').select('id,nome,email,percentual_comissao,vendas_a_partir_de').eq('id', id).single(),
       client.from('sessoes').select('id,sale_id,numero_sessao,total_sessoes,status,status_consulta,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,entregue_confirmado_por,iniciado_em,concluido_em,vendedor_nome,agendado_por')
         .eq('terapeuta_id', id).order('sale_id').order('numero_sessao', { ascending: true }),
       client.from('terapeutas').select('id,nome').eq('ativo', true).order('nome'),
@@ -412,14 +433,22 @@ export default function PainelTerapeuta() {
     // Vendas aprovadas do terapeuta que AINDA não têm sessão nenhuma criada —
     // sem isso ficam invisíveis pro terapeuta e pro admin, mesmo já tendo
     // sido corretamente atribuídas a ele/ela pelo nome do produto.
-    const nomeTerapeuta = (tResp.data as unknown as Terapeuta | null)?.nome
+    const terapeutaResp = tResp.data as unknown as Terapeuta | null
+    const nomeTerapeuta = terapeutaResp?.nome
     if (nomeTerapeuta) {
       const primeiroNome = nomeTerapeuta.split(' ')[0]
-      const { data: candidatas } = await client
+      let candidatasQuery = client
         .from('sales')
         .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status')
         .ilike('produto', `%${primeiroNome}%`)
         .eq('status', 'aprovada')
+      // vendas_a_partir_de: corte de data — vendas anteriores não aparecem
+      // mais em Pendentes de Agendamento (paciente lançado manualmente em
+      // vez de reconciliar contra a venda antiga importada).
+      if (terapeutaResp?.vendas_a_partir_de) {
+        candidatasQuery = candidatasQuery.gte('data_hora', terapeutaResp.vendas_a_partir_de)
+      }
+      const { data: candidatas } = await candidatasQuery
       const pendentes = ((candidatas ?? []) as SaleInfo[]).filter(v => !saleIds.includes(v.id))
       setVendasPendentes(pendentes)
     }
@@ -823,6 +852,44 @@ export default function PainelTerapeuta() {
     loadData()
   }
 
+  const manualValido = manualNome.trim() && manualEmail.trim() && manualProduto.trim()
+    && (parseFloat(manualValorBruto.replace(',', '.')) || 0) > 0
+    && (parseFloat(manualValorLiquido.replace(',', '.')) || 0) > 0
+    && manualDataCompra
+    && (parseInt(manualTotalSessoes, 10) || 0) > 0
+    && (parseInt(manualUltimaNumero, 10) || 0) >= 1
+    && (parseInt(manualUltimaNumero, 10) || 0) <= (parseInt(manualTotalSessoes, 10) || 0)
+    && manualUltimaData
+
+  async function handleLancamentoManual(senha: string) {
+    setManualLoading(true); setManualErro('')
+    const res = await fetch('/api/terapeutas/vendas/lancamento-manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        terapeuta_id: id,
+        nome: manualNome, email: manualEmail, telefone: manualTelefone || undefined,
+        produto: manualProduto, plataforma: manualPlataforma,
+        valor_pago_cliente: parseFloat(manualValorBruto.replace(',', '.')) || 0,
+        valor_liquido: parseFloat(manualValorLiquido.replace(',', '.')) || 0,
+        data_hora: manualDataCompra,
+        total_sessoes: parseInt(manualTotalSessoes, 10) || 0,
+        ultima_sessao_numero: parseInt(manualUltimaNumero, 10) || 0,
+        ultima_sessao_data: manualUltimaData,
+        usuario_email: adminEmail, senha,
+      }),
+    })
+    const json = await res.json()
+    setManualLoading(false)
+    if (!res.ok) { setManualErro(json.error ?? 'Erro'); return }
+    setManualSenhaOpen(false); setManualOpen(false)
+    setManualSucesso({ nome: manualNome, criadas: json.sessoes_criadas, puladas: json.sessoes_puladas })
+    setManualNome(''); setManualEmail(''); setManualTelefone(''); setManualProduto('')
+    setManualValorBruto(''); setManualValorLiquido(''); setManualDataCompra('')
+    setManualTotalSessoes(''); setManualUltimaNumero(''); setManualUltimaData('')
+    loadData()
+  }
+
   function renderPresetFiltro(preset: Preset, setPreset: (p: Preset) => void, dateStart: string, setDateStart: (v: string) => void, dateEnd: string, setDateEnd: (v: string) => void) {
     return (
       <div className="flex flex-wrap items-center gap-2">
@@ -889,13 +956,16 @@ export default function PainelTerapeuta() {
           </div>
         ) : (
           <>
-            {/* Tabs de página */}
+            {/* Tabs de página — Fechamentos (comissão a pagar) não faz sentido pra
+                quem tem 0% (ex: Pedro, sócio): sempre mostraria R$0,00. O
+                repasse dele passa pela Divisão entre Sócios do /fechamentos
+                da empresa, não por aqui. */}
             <div className="flex items-center gap-1 bg-gray-900 border border-white/10 rounded-xl p-1 mb-6 w-fit">
               {([
                 { key: 'overview', label: 'Overview' },
                 { key: 'vendas', label: 'Vendas' },
                 { key: 'agenda', label: 'Agenda' },
-                { key: 'fechamentos', label: 'Fechamentos' },
+                ...(terapeuta?.percentual_comissao === 0 ? [] : [{ key: 'fechamentos', label: 'Fechamentos' }] as const),
               ] as const).map(tab => (
                 <button
                   key={tab.key}
@@ -1077,20 +1147,28 @@ export default function PainelTerapeuta() {
                   {renderPresetFiltro(vPreset, setVPreset, vDateStart, setVDateStart, vDateEnd, setVDateEnd)}
                 </div>
 
-                <div className="flex items-center gap-2 mb-4">
-                  {[
-                    { key: 'pendentes', label: `Pendentes de Agendamento [${pacientesPendentesAgrupados.length}]`, cls: 'bg-amber-600/80' },
-                    { key: 'ativos', label: `Pacientes Ativos [${pacientesAtivos.length}]`, cls: 'bg-blue-600/80' },
-                    { key: 'concluidos', label: `Concluídos [${pacientesConcluidos.length}]`, cls: 'bg-green-600/80' },
-                    { key: 'reembolsados', label: `Reembolsados [${vendasReembolsadas.length}]`, cls: 'bg-gray-600' },
-                  ].map(tab => (
-                    <button key={tab.key} onClick={() => setVendasSubTab(tab.key as typeof vendasSubTab)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                        vendasSubTab === tab.key ? `${tab.cls} text-white` : 'text-gray-400 hover:text-white border border-white/10'
-                      }`}>
-                      {tab.label}
+                <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {[
+                      { key: 'pendentes', label: `Pendentes de Agendamento [${pacientesPendentesAgrupados.length}]`, cls: 'bg-amber-600/80' },
+                      { key: 'ativos', label: `Pacientes Ativos [${pacientesAtivos.length}]`, cls: 'bg-blue-600/80' },
+                      { key: 'concluidos', label: `Concluídos [${pacientesConcluidos.length}]`, cls: 'bg-green-600/80' },
+                      { key: 'reembolsados', label: `Reembolsados [${vendasReembolsadas.length}]`, cls: 'bg-gray-600' },
+                    ].map(tab => (
+                      <button key={tab.key} onClick={() => setVendasSubTab(tab.key as typeof vendasSubTab)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                          vendasSubTab === tab.key ? `${tab.cls} text-white` : 'text-gray-400 hover:text-white border border-white/10'
+                        }`}>
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                  {!isTerapeutaSession && (
+                    <button onClick={() => { setManualErro(''); setManualProduto(`Mentoria Particular - ${terapeuta?.nome ?? ''}`); setManualOpen(true) }}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+                      + Lançar paciente manualmente
                     </button>
-                  ))}
+                  )}
                 </div>
 
                 {vendasSubTab === 'pendentes' && (
@@ -1843,6 +1921,138 @@ export default function PainelTerapeuta() {
         loading={reeLoading}
         erro={reeErro}
       />
+
+      {/* Modal: Lançamento manual de paciente (venda + sessões) */}
+      {manualOpen && !manualSenhaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white">Lançar paciente manualmente</h3>
+              <button onClick={() => setManualOpen(false)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">Cria a venda e as sessões numa tacada só — para pacientes já em atendimento fora do sistema.</p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Nome do paciente <span className="text-red-400">*</span></label>
+                  <input type="text" value={manualNome} onChange={e => setManualNome(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">E-mail <span className="text-red-400">*</span></label>
+                  <input type="email" value={manualEmail} onChange={e => setManualEmail(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Telefone</label>
+                <input type="text" value={manualTelefone} onChange={e => setManualTelefone(e.target.value)}
+                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Produto <span className="text-red-400">*</span></label>
+                  <input type="text" value={manualProduto} onChange={e => setManualProduto(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Plataforma</label>
+                  <select value={manualPlataforma} onChange={e => setManualPlataforma(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
+                    <option value="hubla">Hubla</option>
+                    <option value="kiwify">Kiwify</option>
+                    <option value="manual">Manual</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Valor bruto (R$) <span className="text-red-400">*</span></label>
+                  <input type="text" inputMode="decimal" value={manualValorBruto} onChange={e => setManualValorBruto(e.target.value)}
+                    placeholder="0,00"
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Valor líquido (R$) <span className="text-red-400">*</span></label>
+                  <input type="text" inputMode="decimal" value={manualValorLiquido} onChange={e => setManualValorLiquido(e.target.value)}
+                    placeholder="0,00"
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Data da compra <span className="text-red-400">*</span></label>
+                <input type="datetime-local" value={manualDataCompra} onChange={e => setManualDataCompra(e.target.value)}
+                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+              </div>
+              <div className="border-t border-white/10 pt-3">
+                <p className="text-xs text-gray-400 font-medium mb-2">Sessões</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Total do pacote <span className="text-red-400">*</span></label>
+                    <input type="number" min={1} value={manualTotalSessoes} onChange={e => setManualTotalSessoes(e.target.value)}
+                      className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Última sessão feita (nº) <span className="text-red-400">*</span></label>
+                    <input type="number" min={1} value={manualUltimaNumero} onChange={e => setManualUltimaNumero(e.target.value)}
+                      className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Data dela <span className="text-red-400">*</span></label>
+                    <input type="datetime-local" value={manualUltimaData} onChange={e => setManualUltimaData(e.target.value)}
+                      className="w-full bg-gray-800 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-600 mt-2">
+                  As sessões anteriores à informada são preenchidas automaticamente de 7 em 7 dias como entregues. Sessões depois dela só entram quando você tiver a data real.
+                </p>
+              </div>
+              {manualErro && <p className="text-xs text-red-400">{manualErro}</p>}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setManualOpen(false)}
+                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => {
+                if (!manualValido) { setManualErro('Preencha todos os campos obrigatórios corretamente'); return }
+                setManualErro(''); setManualSenhaOpen(true)
+              }} disabled={!manualValido}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors">
+                Confirmar lançamento
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SenhaModal
+        isOpen={manualSenhaOpen}
+        onClose={() => { setManualSenhaOpen(false); setManualErro('') }}
+        onConfirm={handleLancamentoManual}
+        titulo="Confirmar lançamento manual"
+        descricao="Digite sua senha para criar a venda e as sessões"
+        loading={manualLoading}
+        erro={manualErro}
+      />
+
+      {/* Confirmação de lançamento manual */}
+      {manualSucesso && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setManualSucesso(null)}>
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-7 h-7 text-green-500" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1">Paciente lançado!</h3>
+            <p className="text-sm text-gray-400 mb-5">
+              {manualSucesso.criadas} sessão(ões) de {manualSucesso.nome} registrada(s).
+              {manualSucesso.puladas > 0 && ` ${manualSucesso.puladas} sessão(ões) futura(s) ficaram de fora até você informar a data real.`}
+            </p>
+            <button onClick={() => setManualSucesso(null)}
+              className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal detalhe da sessão — Agenda */}
       {agendaDetalhe && (

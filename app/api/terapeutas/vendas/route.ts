@@ -107,18 +107,39 @@ export async function GET(req: NextRequest) {
 
     // Terapeutas ativos
     const { data: terapeutasData } = await supabase
-      .from('terapeutas').select('id,nome').eq('ativo', true).order('nome')
-    const terapeutas = (terapeutasData ?? []) as { id: string; nome: string }[]
+      .from('terapeutas').select('id,nome,vendas_a_partir_de').eq('ativo', true).order('nome')
+    const terapeutasRaw = (terapeutasData ?? []) as { id: string; nome: string; vendas_a_partir_de: string | null }[]
+    const terapeutas = terapeutasRaw.map(t => ({ id: t.id, nome: t.nome }))
+
+    // Antes o filtro era fixo em '%Pedro | Denise%' (o produto conjunto
+    // antigo) — deixava de fora qualquer produto individual de um terapeuta
+    // (ex: "Mentoria Particular - Pedro Roncada"). Filtra dinamicamente pelo
+    // nome de cada terapeuta ativo.
+    const nomesTerapeutas = terapeutasRaw.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean)
+    // vendas_a_partir_de: corte de data por terapeuta — vendas anteriores ao
+    // corte não aparecem mais em Pendentes/Ativos (paciente é lançado
+    // manualmente em vez de reconciliar contra a venda antiga importada).
+    const cortePorNome = new Map(terapeutasRaw.map(t => [t.nome.trim().split(' ')[0].toLowerCase(), t.vendas_a_partir_de]))
+    function saleAposCorte(v: { produto: string; data_hora: string }): boolean {
+      const nomesQueBatem = nomesTerapeutas.filter(n => v.produto.toLowerCase().includes(n))
+      if (nomesQueBatem.length === 0) return true
+      return nomesQueBatem.some(n => {
+        const corte = cortePorNome.get(n)
+        return !corte || v.data_hora >= corte
+      })
+    }
 
     // Vendas paginadas
-    const vendasAll: SaleRow[] = []
+    const vendasAllTotal: SaleRow[] = []
     const PAGE = 1000
     let offset = 0
     while (true) {
       let query = supabase
         .from('sales')
         .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status')
-        .ilike('produto', '%Pedro | Denise%')
+      if (nomesTerapeutas.length > 0) {
+        query = query.or(nomesTerapeutas.map(n => `produto.ilike.%${n}%`).join(','))
+      }
       if (from) query = query.gte('data_hora', from)
       if (to) query = query.lte('data_hora', to)
       const { data, error } = await query
@@ -126,10 +147,11 @@ export async function GET(req: NextRequest) {
         .range(offset, offset + PAGE - 1)
       if (error) throw new Error(error.message)
       if (!data || data.length === 0) break
-      vendasAll.push(...(data as SaleRow[]))
+      vendasAllTotal.push(...(data as SaleRow[]))
       if (data.length < PAGE) break
       offset += PAGE
     }
+    const vendasAll = vendasAllTotal.filter(saleAposCorte)
 
     const allSaleIds = vendasAll.map(v => v.id)
 
