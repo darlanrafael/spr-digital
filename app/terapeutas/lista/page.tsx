@@ -17,9 +17,11 @@ type Terapeuta = {
   email: string
   percentual_comissao: number
   ativo: boolean
+  vendas_a_partir_de: string | null
 }
 
 type Sessao = {
+  sale_id: string
   terapeuta_id: string
   status: string
   comissao_valor: number
@@ -42,6 +44,7 @@ export default function TerapeutasLista() {
   const router = useRouter()
   const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])
   const [sessoes, setSessoes] = useState<Sessao[]>([])
+  const [vendaDataPorSale, setVendaDataPorSale] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -60,18 +63,44 @@ export default function TerapeutasLista() {
       const client = getSupabaseClient()
       if (!client) return
       const [tResp, sResp] = await Promise.all([
-        client.from('terapeutas').select('id,nome,email,percentual_comissao,ativo').order('nome'),
-        client.from('sessoes').select('terapeuta_id,status,comissao_valor,comissao_paga'),
+        client.from('terapeutas').select('id,nome,email,percentual_comissao,ativo,vendas_a_partir_de').order('nome'),
+        client.from('sessoes').select('sale_id,terapeuta_id,status,comissao_valor,comissao_paga'),
       ])
-      setTerapeutas((tResp.data ?? []) as Terapeuta[])
-      setSessoes((sResp.data ?? []) as Sessao[])
+      const terapeutasData = (tResp.data ?? []) as Terapeuta[]
+      const sessoesData = (sResp.data ?? []) as Sessao[]
+      setTerapeutas(terapeutasData)
+      setSessoes(sessoesData)
+
+      // Terapeuta em modo "começar do zero" (vendas_a_partir_de): sessão só
+      // conta se a venda que a originou é depois do corte — mesma regra da
+      // página do terapeuta, senão o card volta a mostrar histórico antigo
+      // que já devia estar zerado.
+      const temCorte = terapeutasData.some(t => t.vendas_a_partir_de)
+      if (temCorte) {
+        const saleIds = [...new Set(sessoesData.map(s => s.sale_id))]
+        const dataPorSale: Record<string, string> = {}
+        const BATCH = 200
+        for (let i = 0; i < saleIds.length; i += BATCH) {
+          const batch = saleIds.slice(i, i + BATCH)
+          const { data } = await client.from('sales').select('id,data_hora').in('id', batch)
+          for (const v of (data ?? []) as { id: string; data_hora: string }[]) dataPorSale[v.id] = v.data_hora
+        }
+        setVendaDataPorSale(dataPorSale)
+      }
       setLoading(false)
     }
     load()
   }, [])
 
-  function statsDoTerapeuta(id: string) {
-    const ts = sessoes.filter(s => s.terapeuta_id === id)
+  function statsDoTerapeuta(t: Terapeuta) {
+    let ts = sessoes.filter(s => s.terapeuta_id === t.id)
+    if (t.vendas_a_partir_de) {
+      const corte = t.vendas_a_partir_de
+      ts = ts.filter(s => {
+        const dataVenda = vendaDataPorSale[s.sale_id]
+        return dataVenda ? new Date(dataVenda).getTime() >= new Date(corte).getTime() : false
+      })
+    }
     const ativas = ts.filter(s => s.status === 'agendada' || s.status === 'pendente').length
     const receita = ts.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
     return { ativas, receita }
@@ -99,7 +128,7 @@ export default function TerapeutasLista() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {terapeutas.map(t => {
-              const { ativas, receita } = statsDoTerapeuta(t.id)
+              const { ativas, receita } = statsDoTerapeuta(t)
               return (
                 <button
                   key={t.id}
