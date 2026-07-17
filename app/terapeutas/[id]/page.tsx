@@ -327,6 +327,7 @@ export default function PainelTerapeuta() {
   // Lançar compromisso pessoal — a partir de um clique em horário livre na Agenda do Dia
   const [compromissoNovoOpen, setCompromissoNovoOpen] = useState(false)
   const [compromissoNovoTitulo, setCompromissoNovoTitulo] = useState('')
+  const [compromissoNovoCategoria, setCompromissoNovoCategoria] = useState<'sessao' | 'compromisso'>('compromisso')
   const [compromissoNovoInicio, setCompromissoNovoInicio] = useState('')
   const [compromissoNovoFim, setCompromissoNovoFim] = useState('')
   const [compromissoNovoErro, setCompromissoNovoErro] = useState('')
@@ -446,7 +447,7 @@ export default function PainelTerapeuta() {
     setSessoes(sessoesData)
 
     const { data: compromissosData } = await client
-      .from('compromissos_terapeuta').select('id,titulo,inicio,fim').eq('terapeuta_id', id).order('inicio')
+      .from('compromissos_terapeuta').select('id,titulo,inicio,fim,categoria').eq('terapeuta_id', id).order('inicio')
     setCompromissos((compromissosData ?? []) as CompromissoDia[])
 
     const saleIdsVisiveis = [...new Set(sessoesData.map(s => s.sale_id))]
@@ -943,8 +944,30 @@ export default function PainelTerapeuta() {
     loadData()
   }
 
+  // Checa se [inicio, fim] esbarra numa sessão real ou noutro compromisso já
+  // lançado — não bloqueia (o usuário pode ter um motivo legítimo pra
+  // sobrepor), só avisa antes de deixar prosseguir pra senha.
+  function haConflitoDeHorario(inicio: Date, fim: Date): boolean {
+    const iMs = inicio.getTime()
+    const fMs = fim.getTime()
+    const duracaoMs = (terapeuta?.duracao_sessao_minutos ?? 60) * 60000
+    const conflitaSessao = sessoes.some(s => {
+      if (!s.data_agendada || s.status === 'cancelada') return false
+      const sIni = new Date(s.data_agendada).getTime()
+      const sFim = sIni + duracaoMs
+      return iMs < sFim && fMs > sIni
+    })
+    if (conflitaSessao) return true
+    return compromissos.some(c => {
+      const cIni = new Date(c.inicio).getTime()
+      const cFim = new Date(c.fim).getTime()
+      return iMs < cFim && fMs > cIni
+    })
+  }
+
   function abrirLancarCompromisso(inicio: Date, fim: Date) {
     setCompromissoNovoTitulo('')
+    setCompromissoNovoCategoria('compromisso')
     setCompromissoNovoInicio(dateToDatetimeLocal(inicio))
     // Default de 1h em vez do buraco livre inteiro — evita forçar o usuário a
     // encurtar manualmente o campo "Fim" toda vez que clica num vão grande
@@ -963,6 +986,7 @@ export default function PainelTerapeuta() {
       body: JSON.stringify({
         terapeuta_id: id,
         titulo: compromissoNovoTitulo,
+        categoria: compromissoNovoCategoria,
         inicio: compromissoNovoInicio,
         fim: compromissoNovoFim,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
@@ -975,7 +999,8 @@ export default function PainelTerapeuta() {
     setCompromissoNovoLoading(false)
     if (!res.ok) { setCompromissoNovoErro(json.error ?? 'Erro'); return }
     setCompromissoNovoSenhaOpen(false); setCompromissoNovoOpen(false)
-    setCompromissoNovoTitulo(''); setCompromissoNovoInicio(''); setCompromissoNovoFim('')
+    setCompromissoNovoTitulo(''); setCompromissoNovoCategoria('compromisso')
+    setCompromissoNovoInicio(''); setCompromissoNovoFim('')
     loadData()
   }
 
@@ -2288,6 +2313,27 @@ export default function PainelTerapeuta() {
                   placeholder="Ex: Almoço, Gravação de conteúdo"
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Categoria (cor na agenda)</label>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setCompromissoNovoCategoria('compromisso')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
+                      compromissoNovoCategoria === 'compromisso'
+                        ? 'border-stone-400 bg-stone-400/10 text-stone-300'
+                        : 'border-white/10 bg-gray-800 text-gray-500 hover:text-gray-300'
+                    }`}>
+                    <i className="w-[3px] h-2.5 rounded-sm bg-stone-400 inline-block" /> Compromisso
+                  </button>
+                  <button type="button" onClick={() => setCompromissoNovoCategoria('sessao')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
+                      compromissoNovoCategoria === 'sessao'
+                        ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200'
+                        : 'border-white/10 bg-gray-800 text-gray-500 hover:text-gray-300'
+                    }`}>
+                    <i className="w-[3px] h-2.5 rounded-sm bg-indigo-500 inline-block" /> Sessão
+                  </button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">Início <span className="text-red-400">*</span></label>
@@ -2307,6 +2353,8 @@ export default function PainelTerapeuta() {
                 className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
               <button onClick={() => {
                 if (!compromissoNovoValido) { setCompromissoNovoErro('Preencha o título e um intervalo válido'); return }
+                const conflito = haConflitoDeHorario(new Date(compromissoNovoInicio), new Date(compromissoNovoFim))
+                if (conflito && !window.confirm('Já existe uma sessão ou compromisso nesse horário. Deseja continuar mesmo assim?')) return
                 setCompromissoNovoErro(''); setCompromissoNovoSenhaOpen(true)
               }} disabled={!compromissoNovoValido}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors">

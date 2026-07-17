@@ -9,15 +9,19 @@ export async function POST(req: NextRequest) {
       titulo: string
       inicio: string
       fim: string
+      categoria?: string
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
       senha: string
     }
-    const { terapeuta_id, titulo, inicio, fim, usuario_nome, usuario_tipo, usuario_email, senha } = body
+    const { terapeuta_id, titulo, inicio, fim, categoria, usuario_nome, usuario_tipo, usuario_email, senha } = body
 
     if (!terapeuta_id || !titulo?.trim() || !inicio || !fim || !usuario_email || !senha) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
+    }
+    if (categoria && categoria !== 'sessao' && categoria !== 'compromisso') {
+      return NextResponse.json({ error: 'Categoria inválida' }, { status: 400 })
     }
 
     const inicioISO = brasiliaLocalToISO(inicio)
@@ -37,6 +41,7 @@ export async function POST(req: NextRequest) {
         titulo: titulo.trim(),
         inicio: inicioISO,
         fim: fimISO,
+        categoria: categoria ?? 'compromisso',
         criado_por_nome: usuario_nome,
         criado_por_tipo: usuario_tipo,
         criado_por_email: usuario_email,
