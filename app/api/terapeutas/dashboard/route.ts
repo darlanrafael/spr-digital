@@ -212,9 +212,20 @@ export async function GET(req: NextRequest) {
     const pendentesPorTerapeuta = new Map<string, { sessoes: number; comissao: number; bruto: number; saleIds: string[] }>()
     for (const t of terapeutas) {
       const primeiroNome = t.nome.trim().split(' ')[0].toLowerCase()
-      const pendentes = vendasRaw.filter(v =>
-        v.status === 'aprovada' && !saleIdsComSessao.has(v.id) && v.produto.toLowerCase().includes(primeiroNome) && saleAposCorte(v)
-      )
+      // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado)
+      // só reconhece produto que é exclusivamente dele — nunca um produto
+      // conjunto (ex: "Mentoria Particular - Pedro | Denise") que bate com o
+      // nome de mais de um terapeuta ativo. Esse produto conjunto sempre foi
+      // na prática de outro terapeuta; deixá-lo aparecer aqui é exatamente o
+      // tipo de reconciliação manual que o corte existe pra evitar.
+      const pendentes = vendasRaw.filter(v => {
+        if (v.status !== 'aprovada' || saleIdsComSessao.has(v.id) || !v.produto.toLowerCase().includes(primeiroNome) || !saleAposCorte(v)) return false
+        if (t.vendas_a_partir_de) {
+          const outrosQueTambemBatem = nomesTerapeutas.filter(n => n !== primeiroNome && v.produto.toLowerCase().includes(n))
+          if (outrosQueTambemBatem.length > 0) return false
+        }
+        return true
+      })
       let sessoesExtra = 0, comissaoExtra = 0, brutoExtra = 0
       for (const v of pendentes) {
         sessoesExtra += inferirSessoesPorValor(v, vendasRaw)

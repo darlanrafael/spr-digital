@@ -449,7 +449,17 @@ export default function PainelTerapeuta() {
         candidatasQuery = candidatasQuery.gte('data_hora', terapeutaResp.vendas_a_partir_de)
       }
       const { data: candidatas } = await candidatasQuery
-      const pendentes = ((candidatas ?? []) as SaleInfo[]).filter(v => !saleIds.includes(v.id))
+      let pendentes = ((candidatas ?? []) as SaleInfo[]).filter(v => !saleIds.includes(v.id))
+      // Terapeuta em modo "começar do zero" só reconhece produto exclusivo
+      // dele — nunca um produto conjunto (ex: "Mentoria Particular - Pedro |
+      // Denise") que bate com o nome de outro terapeuta ativo também. Esse
+      // produto conjunto sempre foi na prática de outro terapeuta.
+      if (terapeutaResp?.vendas_a_partir_de) {
+        const outrosNomes = ((todasResp.data ?? []) as { id: string; nome: string }[])
+          .filter(t => t.id !== id)
+          .map(t => t.nome.trim().split(' ')[0].toLowerCase())
+        pendentes = pendentes.filter(v => !outrosNomes.some(n => v.produto.toLowerCase().includes(n)))
+      }
       setVendasPendentes(pendentes)
     }
 
