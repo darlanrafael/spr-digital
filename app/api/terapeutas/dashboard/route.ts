@@ -10,6 +10,8 @@ type SaleRow = {
   produto: string
   data_hora: string
   status: string | null
+  plataforma: string | null
+  valor_com_juros: number | null
 }
 
 type SessaoRow = {
@@ -22,6 +24,20 @@ type SessaoRow = {
   data_agendada: string | null
   paciente_nome: string
   link_meet: string | null
+  total_sessoes: number
+}
+
+// Mesma convenção de app/dre/page.tsx e app/page.tsx (lib/formatters.ts) —
+// bruto/imposto variam por plataforma e por valor com juros, então não dá
+// pra simplesmente somar valor_pago_cliente pra tudo.
+function saleBruto(v: SaleRow): number {
+  return v.plataforma === 'hubla' ? v.valor_pago_cliente : v.preco_base
+}
+function saleImpostoBase(v: SaleRow): number {
+  return v.valor_com_juros ?? v.valor_pago_cliente
+}
+function saleAliquota(v: SaleRow): number {
+  return v.preco_base <= 167 ? 3 : 12.85
 }
 
 type SessaoHojeRow = {
@@ -104,7 +120,7 @@ export async function GET(req: NextRequest) {
     while (true) {
       let q = supabase
         .from('sales')
-        .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status')
+        .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros')
         .ilike('produto', '%Pedro | Denise%')
       if (primeiroNomeFiltro) q = q.ilike('produto', `%${primeiroNomeFiltro}%`)
       if (from) q = q.gte('data_hora', from)
@@ -130,7 +146,7 @@ export async function GET(req: NextRequest) {
         const batch = saleIds.slice(i, i + BATCH)
         const { data } = await supabase
           .from('sessoes')
-          .select('id,sale_id,terapeuta_id,status,comissao_valor,comissao_paga,data_agendada,paciente_nome,link_meet')
+          .select('id,sale_id,terapeuta_id,status,comissao_valor,comissao_paga,data_agendada,paciente_nome,link_meet,total_sessoes')
           .in('sale_id', batch)
         if (data) sessoes.push(...(data as SessaoRow[]))
       }
@@ -186,10 +202,10 @@ export async function GET(req: NextRequest) {
     const sessoes_futuras = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesFiltrado.sessoes
     const sessoes_vendidas = sessoesFiltradas.length + pendentesFiltrado.sessoes
 
-    const faturamento_bruto = vendasRaw.reduce((a, v) => a + (v.valor_pago_cliente || 0), 0)
-    const total_impostos = vendasRaw.reduce((a, v) => a + (v.valor_pago_cliente || 0) * 0.1285, 0)
+    const faturamento_bruto = vendasRaw.reduce((a, v) => a + saleBruto(v), 0)
+    const total_impostos = vendasRaw.reduce((a, v) => a + saleImpostoBase(v) * (saleAliquota(v) / 100), 0)
     const faturamento_liquido_total = vendasRaw.reduce((a, v) => {
-      return a + (v.valor_liquido || 0) - (v.valor_pago_cliente || 0) * 0.1285
+      return a + (v.valor_liquido || 0) - saleImpostoBase(v) * (saleAliquota(v) / 100)
     }, 0)
     const faturamento_liquido_spr = faturamento_liquido_total * 0.70
     const faturamento_liquido_terapeutas = faturamento_liquido_total * 0.30
@@ -199,6 +215,36 @@ export async function GET(req: NextRequest) {
     // Comissão total sobre todas as sessões vendidas no período (entregues + futuras + ainda sem sessão criada), independente de já ter sido paga —
     // usado no card "Faturamento Líquido" da visão do próprio terapeuta.
     const comissao_total_vendida = sessoesFiltradas.reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesFiltrado.comissao
+
+    // Ticket médio por sessão entregue — específico pra terapeutas sem
+    // divisão de comissão (ex: Pedro, sócio, 0%): valor médio por sessão =
+    // 65% do líquido da venda dividido pela quantidade de sessões do pacote,
+    // com a média sendo tirada sobre todas as sessões efetivamente entregues
+    // no período. Não usa vendasRaw (que já veio filtrado por data_hora da
+    // compra) porque uma sessão entregue agora pode vir de uma venda de meses
+    // atrás — busca à parte, direto pelas vendas referenciadas.
+    const sessoesEntreguesFiltradas = sessoesFiltradas.filter(s => s.status === 'entregue' && s.total_sessoes > 0)
+    const saleIdsEntregues = [...new Set(sessoesEntreguesFiltradas.map(s => s.sale_id))]
+    const liquidoPorSale = new Map<string, number>()
+    if (saleIdsEntregues.length > 0) {
+      const BATCH = 200
+      for (let i = 0; i < saleIdsEntregues.length; i += BATCH) {
+        const batch = saleIdsEntregues.slice(i, i + BATCH)
+        const { data } = await supabase.from('sales').select('id,valor_liquido').in('id', batch)
+        for (const v of (data ?? []) as { id: string; valor_liquido: number }[]) {
+          liquidoPorSale.set(v.id, v.valor_liquido || 0)
+        }
+      }
+    }
+    const valoresPorSessaoEntregue = sessoesEntreguesFiltradas
+      .map(s => {
+        const liquido = liquidoPorSale.get(s.sale_id)
+        return liquido != null ? (liquido * 0.65) / s.total_sessoes : null
+      })
+      .filter((v): v is number => v != null)
+    const ticket_medio_sessao_entregue = valoresPorSessaoEntregue.length > 0
+      ? valoresPorSessaoEntregue.reduce((a, v) => a + v, 0) / valoresPorSessaoEntregue.length
+      : 0
 
     // 6. Stats por terapeuta
     const now = new Date()
@@ -291,9 +337,11 @@ export async function GET(req: NextRequest) {
         sessoes_entregues,
         sessoes_futuras,
         faturamento_bruto,
+        faturamento_liquido_total,
         faturamento_liquido_spr,
         total_impostos,
         ticket_medio,
+        ticket_medio_sessao_entregue,
         comissao_gerada,
         comissao_futura,
         faturamento_liquido_terapeutas,

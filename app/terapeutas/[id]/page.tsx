@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X, AlertTriangle,
   Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download,
+  DollarSign, Receipt, Percent,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -126,11 +127,19 @@ type Metricas = {
   sessoes_futuras: number
   comissao_gerada: number
   comissao_total_vendida: number
+  // Só usados na visão de terapeutas sem divisão de comissão (0%, ex: Pedro)
+  faturamento_bruto: number
+  faturamento_liquido_total: number
+  total_impostos: number
+  ticket_medio: number
+  ticket_medio_sessao_entregue: number
 }
 
 const METRICAS_VAZIA: Metricas = {
   sessoes_vendidas: 0, sessoes_entregues: 0, sessoes_futuras: 0,
   comissao_gerada: 0, comissao_total_vendida: 0,
+  faturamento_bruto: 0, faturamento_liquido_total: 0, total_impostos: 0,
+  ticket_medio: 0, ticket_medio_sessao_entregue: 0,
 }
 
 type ConsultaHoje = {
@@ -913,15 +922,25 @@ export default function PainelTerapeuta() {
                   </div>
                 ) : (
                   <>
-                    {/* 5 cards */}
+                    {/* Cards — terapeutas com comissão (%) veem o resumo de comissão;
+                        terapeutas sem divisão (0%, ex: Pedro) veem faturamento e ticket médio direto. */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                      {[
+                      {(terapeuta?.percentual_comissao === 0 ? [
+                        { label: 'Sessões vendidas', sub: 'Total de sessões vendidas', value: ovMetricas.sessoes_vendidas, icon: Users, color: 'text-white' },
+                        { label: 'Sessões entregues', sub: 'Confirmadas', value: ovMetricas.sessoes_entregues, icon: CheckCircle, color: 'text-green-500' },
+                        { label: 'Sessões futuras', sub: 'Serão entregues', value: ovMetricas.sessoes_futuras, icon: Clock, color: 'text-yellow-400' },
+                        { label: 'Faturamento bruto', sub: 'Total de vendas no período', value: fmtBRL(ovMetricas.faturamento_bruto), icon: DollarSign, color: 'text-white' },
+                        { label: 'Líquido (100%)', sub: 'Faturamento líquido total, sem divisão de comissão', value: fmtBRL(ovMetricas.faturamento_liquido_total), icon: TrendingUp, color: 'text-blue-400' },
+                        { label: 'Total de impostos', sub: 'Impostos sobre as vendas do período', value: fmtBRL(ovMetricas.total_impostos), icon: Receipt, color: 'text-red-400' },
+                        { label: 'Ticket médio por venda', sub: 'Faturamento bruto ÷ número de vendas', value: fmtBRL(ovMetricas.ticket_medio), icon: Percent, color: 'text-yellow-400' },
+                        { label: 'Ticket médio por sessão entregue', sub: '65% do líquido da venda ÷ sessões do pacote', value: fmtBRL(ovMetricas.ticket_medio_sessao_entregue), icon: Award, color: 'text-green-500' },
+                      ] : [
                         { label: 'Sessões vendidas', sub: 'Total de sessões vendidas para o terapeuta', value: ovMetricas.sessoes_vendidas, icon: Users, color: 'text-white' },
                         { label: 'Sessões entregues', sub: 'Confirmadas pelo terapeuta', value: ovMetricas.sessoes_entregues, icon: CheckCircle, color: 'text-green-500' },
                         { label: 'Sessões futuras', sub: 'Serão entregues', value: ovMetricas.sessoes_futuras, icon: Clock, color: 'text-yellow-400' },
                         { label: 'Faturamento líquido', sub: 'Total de sessões vendidas × comissão do terapeuta', value: fmtBRL(ovMetricas.comissao_total_vendida), icon: TrendingUp, color: 'text-blue-400' },
                         { label: 'Comissão gerada', sub: 'Sessões entregues — a pagar', value: fmtBRL(ovMetricas.comissao_gerada), icon: Award, color: 'text-yellow-400' },
-                      ].map(({ label, sub, value, icon: Icon, color }) => (
+                      ]).map(({ label, sub, value, icon: Icon, color }) => (
                         <div key={label} className="bg-gray-900 border border-white/10 rounded-xl p-4">
                           <div className="flex items-center gap-2 mb-1">
                             <Icon className={`w-4 h-4 ${color} shrink-0`} />
