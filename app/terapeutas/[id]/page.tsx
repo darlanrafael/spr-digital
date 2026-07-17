@@ -196,6 +196,11 @@ function nowForDatetimeLocal(): string {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
   return d.toISOString().slice(0, 16)
 }
+function dateToDatetimeLocal(date: Date): string {
+  const d = new Date(date)
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 16)
+}
 
 // data_agendada vem do banco em UTC. Pra pré-preencher um <input
 // type="datetime-local"> mostrando o horário real de Brasília, precisa
@@ -320,6 +325,21 @@ export default function PainelTerapeuta() {
   const [agendaDetalhe, setAgendaDetalhe] = useState<Sessao | null>(null)
   const [agendaDiaSelecionado, setAgendaDiaSelecionado] = useState<Date | null>(null)
   const [compromissos, setCompromissos] = useState<CompromissoDia[]>([])
+
+  // Lançar compromisso pessoal — a partir de um clique em horário livre na Agenda do Dia
+  const [compromissoNovoOpen, setCompromissoNovoOpen] = useState(false)
+  const [compromissoNovoTitulo, setCompromissoNovoTitulo] = useState('')
+  const [compromissoNovoInicio, setCompromissoNovoInicio] = useState('')
+  const [compromissoNovoFim, setCompromissoNovoFim] = useState('')
+  const [compromissoNovoErro, setCompromissoNovoErro] = useState('')
+  const [compromissoNovoLoading, setCompromissoNovoLoading] = useState(false)
+  const [compromissoNovoSenhaOpen, setCompromissoNovoSenhaOpen] = useState(false)
+
+  // Apagar compromisso — a partir de um clique num bloco de compromisso na Agenda do Dia
+  const [compromissoApagar, setCompromissoApagar] = useState<CompromissoDia | null>(null)
+  const [compromissoApagarErro, setCompromissoApagarErro] = useState('')
+  const [compromissoApagarLoading, setCompromissoApagarLoading] = useState(false)
+  const [compromissoApagarSenhaOpen, setCompromissoApagarSenhaOpen] = useState(false)
 
   // Fechamentos de comissão (histórico, somente leitura)
   const [fechamentos, setFechamentos] = useState<FechamentoHistorico[]>([])
@@ -925,6 +945,63 @@ export default function PainelTerapeuta() {
     loadData()
   }
 
+  function abrirLancarCompromisso(inicio: Date, fim: Date) {
+    setCompromissoNovoTitulo('')
+    setCompromissoNovoInicio(dateToDatetimeLocal(inicio))
+    setCompromissoNovoFim(dateToDatetimeLocal(fim))
+    setCompromissoNovoErro('')
+    setCompromissoNovoOpen(true)
+  }
+
+  async function handleLancarCompromisso(senha: string) {
+    setCompromissoNovoLoading(true); setCompromissoNovoErro('')
+    const res = await fetch('/api/terapeutas/compromissos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        terapeuta_id: id,
+        titulo: compromissoNovoTitulo,
+        inicio: compromissoNovoInicio,
+        fim: compromissoNovoFim,
+        usuario_nome: sessionNome || adminEmail.split('@')[0],
+        usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
+        usuario_email: adminEmail,
+        senha,
+      }),
+    })
+    const json = await res.json()
+    setCompromissoNovoLoading(false)
+    if (!res.ok) { setCompromissoNovoErro(json.error ?? 'Erro'); return }
+    setCompromissoNovoSenhaOpen(false); setCompromissoNovoOpen(false)
+    setCompromissoNovoTitulo(''); setCompromissoNovoInicio(''); setCompromissoNovoFim('')
+    loadData()
+  }
+
+  async function handleApagarCompromisso(senha: string) {
+    if (!compromissoApagar) return
+    setCompromissoApagarLoading(true); setCompromissoApagarErro('')
+    const res = await fetch('/api/terapeutas/compromissos', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: compromissoApagar.id,
+        usuario_nome: sessionNome || adminEmail.split('@')[0],
+        usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
+        usuario_email: adminEmail,
+        senha,
+      }),
+    })
+    const json = await res.json()
+    setCompromissoApagarLoading(false)
+    if (!res.ok) { setCompromissoApagarErro(json.error ?? 'Erro'); return }
+    setCompromissoApagarSenhaOpen(false); setCompromissoApagar(null)
+    loadData()
+  }
+
+  const compromissoNovoValido = compromissoNovoTitulo.trim().length > 0
+    && compromissoNovoInicio && compromissoNovoFim
+    && new Date(compromissoNovoFim) > new Date(compromissoNovoInicio)
+
   function renderPresetFiltro(preset: Preset, setPreset: (p: Preset) => void, dateStart: string, setDateStart: (v: string) => void, dateEnd: string, setDateEnd: (v: string) => void) {
     return (
       <div className="flex flex-wrap items-center gap-2">
@@ -1374,8 +1451,8 @@ export default function PainelTerapeuta() {
                     const sessaoCompleta = sessoes.find(s => s.id === sessaoDia.id)
                     if (sessaoCompleta) setAgendaDetalhe(sessaoCompleta)
                   }}
-                  onClickCompromisso={() => { /* wired in Task 5 */ }}
-                  onClickLivre={() => { /* wired in Task 5 */ }}
+                  onClickCompromisso={(compromisso) => { setCompromissoApagar(compromisso); setCompromissoApagarErro('') }}
+                  onClickLivre={(inicio, fim) => abrirLancarCompromisso(inicio, fim)}
                   onNavegarDia={(dir) => setAgendaDiaSelecionado(d => {
                     if (!d) return d
                     const novo = new Date(d)
@@ -2193,6 +2270,91 @@ export default function PainelTerapeuta() {
           </div>
         </div>
       )}
+
+      {/* Modal: Lançar compromisso pessoal */}
+      {compromissoNovoOpen && !compromissoNovoSenhaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white">Lançar compromisso</h3>
+              <button onClick={() => setCompromissoNovoOpen(false)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Título <span className="text-red-400">*</span></label>
+                <input type="text" value={compromissoNovoTitulo} onChange={e => setCompromissoNovoTitulo(e.target.value)}
+                  placeholder="Ex: Almoço, Gravação de conteúdo"
+                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Início <span className="text-red-400">*</span></label>
+                  <input type="datetime-local" value={compromissoNovoInicio} onChange={e => setCompromissoNovoInicio(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Fim <span className="text-red-400">*</span></label>
+                  <input type="datetime-local" value={compromissoNovoFim} onChange={e => setCompromissoNovoFim(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                </div>
+              </div>
+              {compromissoNovoErro && <p className="text-xs text-red-400">{compromissoNovoErro}</p>}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setCompromissoNovoOpen(false)}
+                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => {
+                if (!compromissoNovoValido) { setCompromissoNovoErro('Preencha o título e um intervalo válido'); return }
+                setCompromissoNovoErro(''); setCompromissoNovoSenhaOpen(true)
+              }} disabled={!compromissoNovoValido}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors">
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SenhaModal
+        isOpen={compromissoNovoSenhaOpen}
+        onClose={() => { setCompromissoNovoSenhaOpen(false); setCompromissoNovoErro('') }}
+        onConfirm={handleLancarCompromisso}
+        titulo="Confirmar compromisso"
+        descricao="Digite sua senha para travar esse horário na agenda"
+        loading={compromissoNovoLoading}
+        erro={compromissoNovoErro}
+      />
+
+      {/* Modal: apagar compromisso pessoal */}
+      {compromissoApagar && !compromissoApagarSenhaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Apagar compromisso</h3>
+            <p className="text-xs text-gray-400 mb-4">
+              &quot;{compromissoApagar.titulo}&quot; será removido da agenda. Essa ação não pode ser desfeita.
+            </p>
+            {compromissoApagarErro && <p className="text-xs text-red-400 mb-3">{compromissoApagarErro}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => setCompromissoApagar(null)}
+                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
+              <button onClick={() => setCompromissoApagarSenhaOpen(true)}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg transition-colors">
+                Apagar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SenhaModal
+        isOpen={compromissoApagarSenhaOpen}
+        onClose={() => { setCompromissoApagarSenhaOpen(false); setCompromissoApagarErro('') }}
+        onConfirm={handleApagarCompromisso}
+        titulo="Confirmar exclusão"
+        descricao="Digite sua senha para apagar o compromisso"
+        loading={compromissoApagarLoading}
+        erro={compromissoApagarErro}
+      />
 
       <MobileNav />
     </div>
