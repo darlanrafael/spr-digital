@@ -69,6 +69,12 @@ export default function Header() {
 
   function handleLogout() {
     logout()
+    // Sem isso, uma sessão antiga do módulo de terapeutas (login separado,
+    // localStorage['terapeutas_session']) fica presa no navegador mesmo
+    // depois de sair do dashboard principal — e passa a travar qualquer
+    // ação de senha em /terapeutas/* usando o e-mail errado, sem jeito de
+    // resolver pela interface (só esse botão de Sair existia pra admin).
+    localStorage.removeItem('terapeutas_session')
     setUser(null)
     router.replace('/login')
   }
