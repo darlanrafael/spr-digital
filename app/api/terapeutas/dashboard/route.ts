@@ -114,6 +114,16 @@ export async function GET(req: NextRequest) {
     const primeiroNomeFiltro = terapeutaFiltro?.nome.trim().split(' ')[0].toLowerCase()
 
     // 3. Buscar vendas paginadas
+    //
+    // Antes o filtro base era fixo em '%Pedro | Denise%' (o produto conjunto
+    // antigo) — isso deixava de fora qualquer produto individual de um
+    // terapeuta (ex: "Mentoria Particular - Pedro Roncada", "Mentoria -
+    // Individual Pedro Roncada"), zerando as métricas de quem vende sob o
+    // próprio nome em vez do produto conjunto. Filtra dinamicamente pelo
+    // nome de cada terapeuta ativo (ou só o filtrado, se houver).
+    const nomesTerapeutas = primeiroNomeFiltro
+      ? [primeiroNomeFiltro]
+      : terapeutas.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean)
     const vendasRaw: SaleRow[] = []
     const PAGE = 1000
     let offset = 0
@@ -121,8 +131,9 @@ export async function GET(req: NextRequest) {
       let q = supabase
         .from('sales')
         .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros')
-        .ilike('produto', '%Pedro | Denise%')
-      if (primeiroNomeFiltro) q = q.ilike('produto', `%${primeiroNomeFiltro}%`)
+      if (nomesTerapeutas.length > 0) {
+        q = q.or(nomesTerapeutas.map(n => `produto.ilike.%${n}%`).join(','))
+      }
       if (from) q = q.gte('data_hora', from)
       if (to) q = q.lte('data_hora', to)
       q = q
