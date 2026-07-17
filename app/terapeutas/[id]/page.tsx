@@ -192,9 +192,7 @@ function exportFechamentoCSV(f: FechamentoHistorico) {
   URL.revokeObjectURL(url)
 }
 function nowForDatetimeLocal(): string {
-  const d = new Date()
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  return d.toISOString().slice(0, 16)
+  return dateToDatetimeLocal(new Date())
 }
 function dateToDatetimeLocal(date: Date): string {
   const d = new Date(date)
@@ -948,7 +946,11 @@ export default function PainelTerapeuta() {
   function abrirLancarCompromisso(inicio: Date, fim: Date) {
     setCompromissoNovoTitulo('')
     setCompromissoNovoInicio(dateToDatetimeLocal(inicio))
-    setCompromissoNovoFim(dateToDatetimeLocal(fim))
+    // Default de 1h em vez do buraco livre inteiro — evita forçar o usuário a
+    // encurtar manualmente o campo "Fim" toda vez que clica num vão grande
+    // (ex.: um dia vazio de 13h). Se o buraco for menor que 1h, respeita o fim real.
+    const fimPadrao = new Date(Math.min(inicio.getTime() + 60 * 60 * 1000, fim.getTime()))
+    setCompromissoNovoFim(dateToDatetimeLocal(fimPadrao))
     setCompromissoNovoErro('')
     setCompromissoNovoOpen(true)
   }

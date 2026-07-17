@@ -60,6 +60,13 @@ function fmtDuracao(min: number): string {
 
 type Ocupado = { inicio: number; fim: number }
 
+// Restringe um valor ao intervalo [min, max] — usado pra manter tudo (blocos
+// ocupados e intervalos livres) dentro da janela fixa 08:00–21:00, mesmo
+// quando a sessão/compromisso original começa ou termina fora dela.
+function clamp(min: number, valor: number, max: number): number {
+  return Math.min(Math.max(valor, min), max)
+}
+
 // Calcula os intervalos livres dentro da janela do dia, dado tudo que já
 // ocupa horário (sessões + compromissos, em minutos desde meia-noite). O
 // cursor nunca anda pra trás, então intervalos sobrepostos/aninhados não
@@ -69,8 +76,8 @@ function calcularIntervalosLivres(ocupados: Ocupado[], janelaInicio: number, jan
   const livres: Ocupado[] = []
   let cursor = janelaInicio
   for (const o of ordenados) {
-    const inicio = Math.max(o.inicio, janelaInicio)
-    const fim = Math.min(o.fim, janelaFim)
+    const inicio = clamp(janelaInicio, o.inicio, janelaFim)
+    const fim = clamp(janelaInicio, o.fim, janelaFim)
     if (inicio > cursor) livres.push({ inicio: cursor, fim: inicio })
     cursor = Math.max(cursor, fim)
   }
@@ -158,23 +165,31 @@ export default function AgendaDiaTerapeuta({
             </div>
           ))}
 
-          {sessoesComHorario.map(({ sessao, inicio, fim }) => (
-            <button key={sessao.id} onClick={() => onClickSessao(sessao)}
-              className="absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20 transition-colors px-2.5 py-1 overflow-hidden"
-              style={{ top: (inicio - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fim - inicio) * PX_POR_MIN, 20) }}>
-              <p className="text-[11px] font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
-              <p className="text-[10px] text-indigo-400/80 truncate">{fmtHora(inicio)}–{fmtHora(fim)} · Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
-            </button>
-          ))}
+          {sessoesComHorario.map(({ sessao, inicio, fim }) => {
+            const inicioClamp = clamp(JANELA_INICIO_MIN, inicio, JANELA_FIM_MIN)
+            const fimClamp = clamp(JANELA_INICIO_MIN, fim, JANELA_FIM_MIN)
+            return (
+              <button key={sessao.id} onClick={() => onClickSessao(sessao)}
+                className="absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20 transition-colors px-2.5 py-1 overflow-hidden"
+                style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
+                <p className="text-[11px] font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
+                <p className="text-[10px] text-indigo-400/80 truncate">{fmtHora(inicio)}–{fmtHora(fim)} · Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+              </button>
+            )
+          })}
 
-          {compromissosComHorario.map(({ compromisso, inicio, fim }) => (
-            <button key={compromisso.id} onClick={() => onClickCompromisso(compromisso)}
-              className="absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] border-stone-400 bg-stone-400/10 hover:bg-stone-400/20 transition-colors px-2.5 py-1 overflow-hidden"
-              style={{ top: (inicio - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fim - inicio) * PX_POR_MIN, 20) }}>
-              <p className="text-[11px] font-medium text-stone-300 truncate">🔒 {compromisso.titulo}</p>
-              <p className="text-[10px] text-stone-500 truncate">{fmtHora(inicio)}–{fmtHora(fim)}</p>
-            </button>
-          ))}
+          {compromissosComHorario.map(({ compromisso, inicio, fim }) => {
+            const inicioClamp = clamp(JANELA_INICIO_MIN, inicio, JANELA_FIM_MIN)
+            const fimClamp = clamp(JANELA_INICIO_MIN, fim, JANELA_FIM_MIN)
+            return (
+              <button key={compromisso.id} onClick={() => onClickCompromisso(compromisso)}
+                className="absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] border-stone-400 bg-stone-400/10 hover:bg-stone-400/20 transition-colors px-2.5 py-1 overflow-hidden"
+                style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
+                <p className="text-[11px] font-medium text-stone-300 truncate">🔒 {compromisso.titulo}</p>
+                <p className="text-[10px] text-stone-500 truncate">{fmtHora(inicio)}–{fmtHora(fim)}</p>
+              </button>
+            )
+          })}
 
           {isHoje && agoraMin >= JANELA_INICIO_MIN && agoraMin <= JANELA_FIM_MIN && (
             <div className="absolute left-0 right-0 h-px bg-red-400 z-10"
