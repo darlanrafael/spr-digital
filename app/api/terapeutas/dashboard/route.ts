@@ -124,6 +124,11 @@ export async function GET(req: NextRequest) {
     const nomesTerapeutas = primeiroNomeFiltro
       ? [primeiroNomeFiltro]
       : terapeutas.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean)
+    // Sempre TODOS os terapeutas ativos, mesmo quando terapeutaId filtra um
+    // só — usado abaixo pra detectar produto ambíguo (bate com mais de um
+    // nome), que nomesTerapeutas sozinho não consegue ver quando já veio
+    // restrito a um único terapeuta.
+    const todosNomesTerapeutas = terapeutas.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean)
     // vendas_a_partir_de: corte de data por terapeuta — usado quando o
     // histórico anterior é grande demais pra reconciliar 1:1 (ex: Pedro,
     // calendário que já rodava fora do sistema). Vendas anteriores ao corte
@@ -221,7 +226,7 @@ export async function GET(req: NextRequest) {
       const pendentes = vendasRaw.filter(v => {
         if (v.status !== 'aprovada' || saleIdsComSessao.has(v.id) || !v.produto.toLowerCase().includes(primeiroNome) || !saleAposCorte(v)) return false
         if (t.vendas_a_partir_de) {
-          const outrosQueTambemBatem = nomesTerapeutas.filter(n => n !== primeiroNome && v.produto.toLowerCase().includes(n))
+          const outrosQueTambemBatem = todosNomesTerapeutas.filter(n => n !== primeiroNome && v.produto.toLowerCase().includes(n))
           if (outrosQueTambemBatem.length > 0) return false
         }
         return true
