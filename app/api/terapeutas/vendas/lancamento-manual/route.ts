@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     project_id: 'proj_1',
     nome,
     email,
-    telefone: telefone ?? null,
+    telefone: telefone ?? '',
     produto,
     plataforma,
     valor_pago_cliente,
