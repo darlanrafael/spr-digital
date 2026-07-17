@@ -176,9 +176,9 @@ export default function AgendaDiaTerapeuta({
           {livres.map((l, i) => (
             <div key={`livre-${i}`}
               onClick={() => onClickLivre(horaParaData(data, l.inicio), horaParaData(data, l.fim))}
-              className="absolute left-0 right-0 group cursor-pointer hover:bg-white/[0.03] rounded-lg transition-colors flex items-center px-3"
+              className="absolute left-0 right-0 group cursor-pointer bg-green-500/[0.04] hover:bg-green-500/10 rounded-lg transition-colors flex items-center px-3"
               style={{ top: (l.inicio - JANELA_INICIO_MIN) * PX_POR_MIN, height: (l.fim - l.inicio) * PX_POR_MIN }}>
-              <span className="text-[11px] text-transparent group-hover:text-green-400 transition-colors">
+              <span className="text-[11px] text-green-500/40 group-hover:text-green-400 transition-colors">
                 + {fmtDuracao(l.fim - l.inicio)} livre
               </span>
             </div>
