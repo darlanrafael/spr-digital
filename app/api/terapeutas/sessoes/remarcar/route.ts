@@ -62,12 +62,16 @@ export async function POST(req: NextRequest) {
     inicioISO: novaDataISO,
     fimISO: new Date(new Date(novaDataISO).getTime() + 60 * 60 * 1000).toISOString(),
   })
-  await client.from('sessoes')
+  const { error: linkErr } = await client.from('sessoes')
     .update({
       link_meet: evento?.meetLink ?? null,
       google_event_id: evento?.eventId ?? null,
     })
     .eq('id', sessao_id)
+  // Evento novo já foi criado no Google nesse ponto — se salvar falhar, o
+  // evento fica órfão (existe no Calendar mas sem referência no banco).
+  // Loga pra dar pra achar/limpar depois; não trava a remarcação.
+  if (linkErr) console.error('[remarcar] falha ao salvar link_meet:', linkErr)
 
   const dataAnteriorFmt = sessao.data_agendada
     ? new Date(sessao.data_agendada as string).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })

@@ -97,9 +97,13 @@ export async function POST(req: NextRequest) {
       fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
     })
     if (evento) {
-      await client.from('sessoes')
+      const { error: linkErr } = await client.from('sessoes')
         .update({ link_meet: evento.meetLink, google_event_id: evento.eventId })
         .eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao)
+      // Evento já foi criado no Google nesse ponto — se salvar falhar, o
+      // evento fica órfão (existe no Calendar mas sem referência no banco).
+      // Loga pra dar pra achar/limpar depois; não trava o agendamento.
+      if (linkErr) console.error('[agendar] falha ao salvar link_meet:', linkErr)
     }
   }
 
