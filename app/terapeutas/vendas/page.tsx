@@ -118,6 +118,11 @@ function nowForDatetimeLocal(): string {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
   return d.toISOString().slice(0, 16)
 }
+function dateToDatetimeLocal(date: Date): string {
+  const d = new Date(date)
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 16)
+}
 
 // data_agendada vem do banco em UTC (ex.: "2026-07-13T18:00:00+00:00"). Pra
 // pré-preencher um <input type="datetime-local"> mostrando o horário real de
@@ -259,6 +264,7 @@ export default function TerapeutasVendas() {
   const [agendarTerapeutaId, setAgendarTerapeutaId] = useState('')
   const [agendarDataPrimeira, setAgendarDataPrimeira] = useState('')
   const [agendarNumSessoesInput, setAgendarNumSessoesInput] = useState('')
+  const [agendarDatasEditadas, setAgendarDatasEditadas] = useState<string[]>([])
   const [agendarSenhaOpen, setAgendarSenhaOpen] = useState(false)
   const [agendarLoading, setAgendarLoading] = useState(false)
   const [agendarErro, setAgendarErro] = useState('')
@@ -412,13 +418,16 @@ export default function TerapeutasVendas() {
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId)
     : null
   const agendarNumSessoes = parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
-  const agendarPreviewDatas = agendarDataPrimeira && agendarVenda
-    ? Array.from({ length: agendarNumSessoes }, (_, i) => {
-        const d = new Date(agendarDataPrimeira)
-        d.setDate(d.getDate() + i * 7)
-        return d
-      })
-    : []
+
+  useEffect(() => {
+    if (!agendarDataPrimeira || !agendarVenda) { setAgendarDatasEditadas([]); return }
+    setAgendarDatasEditadas(Array.from({ length: agendarNumSessoes }, (_, i) => {
+      const d = new Date(agendarDataPrimeira)
+      d.setDate(d.getDate() + i * 7)
+      return dateToDatetimeLocal(d)
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agendarDataPrimeira, agendarNumSessoes, agendarVendaId])
 
   const prontuarioSale = prontuarioVendaId
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos, ...pageData.vendas_reembolsos].find(v => v.id === prontuarioVendaId)
@@ -465,6 +474,7 @@ export default function TerapeutasVendas() {
         sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaId,
         data_primeira_sessao: agendarDataPrimeira,
         numero_sessoes: agendarNumSessoes,
+        datas_sessoes: agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined,
         usuario_email: adminEmail, senha,
       }),
     })
@@ -897,14 +907,16 @@ export default function TerapeutasVendas() {
                   Sugerido a partir do nome do produto — confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
                 </p>
               </div>
-              {agendarPreviewDatas.length > 0 && (
+              {agendarDatasEditadas.length > 0 && (
                 <div className="bg-gray-800/60 rounded-lg p-3">
-                  <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {agendarNumSessoes} sessões (intervalo de 7 dias):</p>
-                  <div className="space-y-1">
-                    {agendarPreviewDatas.map((d, i) => (
+                  <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {agendarNumSessoes} sessões (intervalo de 7 dias — edite se alguma sessão real sair da regra):</p>
+                  <div className="space-y-1.5">
+                    {agendarDatasEditadas.map((valor, i) => (
                       <div key={i} className="flex items-center gap-3 text-xs">
                         <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
-                        <span className="text-white">{d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        <input type="datetime-local" value={valor}
+                          onChange={e => setAgendarDatasEditadas(prev => prev.map((v, idx) => idx === i ? e.target.value : v))}
+                          className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
                       </div>
                     ))}
                   </div>

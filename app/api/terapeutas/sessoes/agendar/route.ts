@@ -8,11 +8,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, usuario_email, senha } = body as {
+  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, datas_sessoes, usuario_email, senha } = body as {
     sale_id: string
     terapeuta_id: string
     data_primeira_sessao: string
     numero_sessoes?: number
+    datas_sessoes?: string[]
     usuario_email: string
     senha: string
   }
@@ -54,8 +55,14 @@ export async function POST(req: NextRequest) {
   // brasiliaLocalToISO trata o input como horário de Brasília (UTC-3, sem
   // horário de verão) — new Date(string sem timezone) direto é ambíguo e
   // depende do TZ do runtime do servidor, causando horários errados.
+  // Regra padrão: 7 em 7 dias a partir da primeira. `datas_sessoes` (opcional,
+  // um datetime-local por sessão) deixa o comercial corrigir pontualmente uma
+  // sessão que sai da regra — sem mudar como as demais são calculadas.
   const primeiraDataMs = new Date(brasiliaLocalToISO(data_primeira_sessao)).getTime()
   const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
+  const datasExplicitas = datas_sessoes && datas_sessoes.length === numSessoes
+    ? datas_sessoes.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
+    : null
   const sessoes = Array.from({ length: numSessoes }, (_, i) => {
     return {
       sale_id,
@@ -64,7 +71,7 @@ export async function POST(req: NextRequest) {
       total_sessoes: numSessoes,
       status: 'agendada',
       status_consulta: 'aguardando',
-      data_agendada: new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString(),
+      data_agendada: datasExplicitas ? datasExplicitas[i] : new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString(),
       link_meet: null,
       comissao_valor: comissao_por_sessao,
       comissao_paga: false,
