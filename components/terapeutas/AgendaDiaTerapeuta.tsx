@@ -32,7 +32,7 @@ interface AgendaDiaTerapeutaProps {
 }
 
 export const JANELA_INICIO_MIN = 8 * 60   // 08:00
-export const JANELA_FIM_MIN = 21 * 60     // 21:00
+export const JANELA_FIM_MIN = 22 * 60     // 22:00 — o último horário fixo do Pedro (21:10, 50min) termina às 22:00; 21:00 cortava esse slot fora da área visível
 const PX_POR_MIN = 1
 
 function minutosDoDia(iso: string): number {
