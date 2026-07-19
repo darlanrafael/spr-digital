@@ -156,9 +156,20 @@ export default function AgendaDiaTerapeuta({
     : calcularIntervalosLivres(ocupados, JANELA_INICIO_MIN, JANELA_FIM_MIN).flatMap(fatiarLivrePorHora)
 
   const alturaTotal = (JANELA_FIM_MIN - JANELA_INICIO_MIN) * PX_POR_MIN
-  const primeiraHora = Math.ceil(JANELA_INICIO_MIN / 60)
-  const ultimaHora = Math.floor(JANELA_FIM_MIN / 60)
-  const horasMarcadas = Array.from({ length: ultimaHora - primeiraHora + 1 }, (_, i) => primeiraHora + i)
+  // Terapeuta de horário fixo: a régua lateral mostra os horários exatos da
+  // grade dele (ex: 09:40, 10:30...), não a hora cheia genérica — senão a
+  // régua não bate com onde os blocos de fato aparecem na tela.
+  const marcas = horariosFixos.length > 0
+    ? horariosFixos
+        .map(h => ({ minuto: horarioParaMinutos(h), label: h }))
+        .sort((a, b) => a.minuto - b.minuto)
+    : Array.from(
+        { length: Math.floor(JANELA_FIM_MIN / 60) - Math.ceil(JANELA_INICIO_MIN / 60) + 1 },
+        (_, i) => {
+          const h = Math.ceil(JANELA_INICIO_MIN / 60) + i
+          return { minuto: h * 60, label: `${h.toString().padStart(2, '0')}:00` }
+        },
+      )
 
   return (
     <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden">
@@ -184,18 +195,18 @@ export default function AgendaDiaTerapeuta({
 
       <div className="flex px-5 py-4">
         <div className="w-12 shrink-0 relative" style={{ height: alturaTotal }}>
-          {horasMarcadas.map(h => (
-            <div key={h} className="absolute right-2 text-[10px] text-gray-600 -translate-y-1/2"
-              style={{ top: (h * 60 - JANELA_INICIO_MIN) * PX_POR_MIN }}>
-              {h.toString().padStart(2, '0')}:00
+          {marcas.map(m => (
+            <div key={m.minuto} className="absolute right-2 text-[10px] text-gray-600 -translate-y-1/2"
+              style={{ top: (m.minuto - JANELA_INICIO_MIN) * PX_POR_MIN }}>
+              {m.label}
             </div>
           ))}
         </div>
 
         <div className="relative flex-1 border-l border-white/5" style={{ height: alturaTotal }}>
-          {horasMarcadas.map(h => (
-            <div key={h} className="absolute left-0 right-0 border-t border-white/5"
-              style={{ top: (h * 60 - JANELA_INICIO_MIN) * PX_POR_MIN }} />
+          {marcas.map(m => (
+            <div key={m.minuto} className="absolute left-0 right-0 border-t border-white/5"
+              style={{ top: (m.minuto - JANELA_INICIO_MIN) * PX_POR_MIN }} />
           ))}
 
           {livres.map((l, i) => (
