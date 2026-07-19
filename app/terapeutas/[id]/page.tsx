@@ -1855,6 +1855,13 @@ export default function PainelTerapeuta() {
                             <p className="text-gray-500">Comissão</p>
                             <p className="text-green-500">{fmtBRL(s.comissao_valor)}</p>
                           </div>
+                          {s.link_meet && (
+                            <div>
+                              <p className="text-gray-500">Link Meet</p>
+                              <a href={s.link_meet} target="_blank" rel="noopener noreferrer"
+                                className="text-indigo-400 hover:underline">Abrir</a>
+                            </div>
+                          )}
                         </div>
 
                         {remarcacoesSessao.length > 0 && (
