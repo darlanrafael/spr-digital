@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle } from 'lucide-react'
+import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle, Copy, Check } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
@@ -100,6 +100,18 @@ type PageData = {
   remarcacoes_por_sessao: Record<string, Remarcacao[]>
   terapeutas: Terapeuta[]
   formatos: string[]
+}
+
+function LinkMeetCell({ id, link, copiadoId, onCopy }: { id: string; link: string | null; copiadoId: string | null; onCopy: (id: string, link: string) => void }) {
+  if (!link) return <span className="text-gray-600">—</span>
+  return (
+    <div className="flex items-center gap-2">
+      <a href={link} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">Abrir</a>
+      <button onClick={() => onCopy(id, link)} className="text-gray-500 hover:text-white transition-colors" title="Copiar link">
+        {copiadoId === id ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  )
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -257,6 +269,13 @@ export default function TerapeutasVendas() {
     setToast(msg)
     if (toastRef.current) clearTimeout(toastRef.current)
     toastRef.current = setTimeout(() => setToast(''), 3500)
+  }
+
+  const [linkCopiadoId, setLinkCopiadoId] = useState<string | null>(null)
+  async function copiarLinkMeet(id: string, link: string) {
+    await navigator.clipboard.writeText(link)
+    setLinkCopiadoId(id)
+    setTimeout(() => setLinkCopiadoId(prev => prev === id ? null : prev), 1500)
   }
 
   // Modal agendar
@@ -1041,8 +1060,7 @@ export default function TerapeutasVendas() {
                           {s.link_meet && (
                             <div>
                               <p className="text-gray-500">Meet</p>
-                              <a href={s.link_meet} target="_blank" rel="noopener noreferrer"
-                                className="text-indigo-400 hover:underline">Abrir link</a>
+                              <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
                             </div>
                           )}
                           {s.agendado_por && (

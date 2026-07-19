@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Users, CheckCircle, Clock, DollarSign, TrendingUp,
-  BarChart2, Award, Calendar, CalendarDays,
+  BarChart2, Award, Calendar, CalendarDays, Copy, Check,
 } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -60,6 +60,18 @@ const STATUS_CONSULTA_BADGE: Record<string, { label: string; cls: string }> = {
 
 type TerapeutaFiltro = { id: string; nome: string }
 
+function LinkMeetCell({ id, link, copiadoId, onCopy }: { id: string; link: string | null; copiadoId: string | null; onCopy: (id: string, link: string) => void }) {
+  if (!link) return <span className="text-gray-600">—</span>
+  return (
+    <div className="flex items-center gap-2">
+      <a href={link} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">Abrir</a>
+      <button onClick={() => onCopy(id, link)} className="text-gray-500 hover:text-white transition-colors" title="Copiar link">
+        {copiadoId === id ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  )
+}
+
 // ─── Formatação ─────────────────────────────────────────────────────────────
 function fmtBRL(n: number) {
   return 'R$ ' + new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -97,6 +109,13 @@ export default function TerapeutasDashboard() {
   const [porTerapeuta, setPorTerapeuta] = useState<PorTerapeuta[]>([])
   const [consultasHoje, setConsultasHoje] = useState<ConsultaHoje[]>([])
   const [terapeutasFiltro, setTerapeutasFiltro] = useState<TerapeutaFiltro[]>([])
+  const [linkCopiadoId, setLinkCopiadoId] = useState<string | null>(null)
+
+  async function copiarLinkMeet(id: string, link: string) {
+    await navigator.clipboard.writeText(link)
+    setLinkCopiadoId(id)
+    setTimeout(() => setLinkCopiadoId(prev => prev === id ? null : prev), 1500)
+  }
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState('')
 
@@ -364,7 +383,7 @@ export default function TerapeutasDashboard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/5">
-                        {['Horário', 'Paciente', 'Terapeuta', 'Status Consulta'].map(h => (
+                        {['Horário', 'Paciente', 'Terapeuta', 'Link Meet', 'Status Consulta'].map(h => (
                           <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
                         ))}
                       </tr>
@@ -377,6 +396,9 @@ export default function TerapeutasDashboard() {
                             <td className="px-4 py-3 text-indigo-400 font-medium">{s.horario}</td>
                             <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
                             <td className="px-4 py-3 text-gray-300">{s.terapeuta_nome}</td>
+                            <td className="px-4 py-3">
+                              <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
+                            </td>
                             <td className="px-4 py-3">
                               <span className={`text-xs px-2 py-0.5 rounded-full ${scBadge.cls}`}>{scBadge.label}</span>
                             </td>

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X, AlertTriangle,
   Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download,
-  DollarSign, Receipt, Percent,
+  DollarSign, Receipt, Percent, Copy, Check,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -155,6 +155,7 @@ type ConsultaHoje = {
   horario: string
   data?: string
   paciente_nome: string
+  link_meet: string | null
   status: string
   status_consulta: string
 }
@@ -172,6 +173,18 @@ const STATUS_CONSULTA_BADGE: Record<string, { label: string; cls: string }> = {
   concluida:      { label: 'Concluída',     cls: 'text-green-500 bg-green-500/10' },
   cancelada:      { label: 'Cancelada',     cls: 'text-red-400 bg-red-400/10' },
   remarcada:      { label: 'Remarcada',     cls: 'text-purple-400 bg-purple-400/10' },
+}
+
+function LinkMeetCell({ id, link, copiadoId, onCopy }: { id: string; link: string | null; copiadoId: string | null; onCopy: (id: string, link: string) => void }) {
+  if (!link) return <span className="text-gray-600">—</span>
+  return (
+    <div className="flex items-center gap-2">
+      <a href={link} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">Abrir</a>
+      <button onClick={() => onCopy(id, link)} className="text-gray-500 hover:text-white transition-colors" title="Copiar link">
+        {copiadoId === id ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  )
 }
 
 function fmtBRL(n: number) {
@@ -301,6 +314,13 @@ export default function PainelTerapeuta() {
   const [adminEmail, setAdminEmail] = useState('')
   const [isTerapeutaSession, setIsTerapeutaSession] = useState(false)
   const [sessionNome, setSessionNome] = useState('')
+  const [linkCopiadoId, setLinkCopiadoId] = useState<string | null>(null)
+
+  async function copiarLinkMeet(id: string, link: string) {
+    await navigator.clipboard.writeText(link)
+    setLinkCopiadoId(id)
+    setTimeout(() => setLinkCopiadoId(prev => prev === id ? null : prev), 1500)
+  }
 
   // Modal status_consulta (iniciar / concluir / anular) — usado tanto na visão admin quanto na do terapeuta
   const [statusSessaoId, setStatusSessaoId] = useState<string | null>(null)
@@ -1223,7 +1243,7 @@ export default function PainelTerapeuta() {
                           <table className="w-full text-sm">
                             <thead>
                               <tr className="border-b border-white/5">
-                                {['Horário', 'Paciente', 'Status Consulta', 'Ações'].map(h => (
+                                {['Horário', 'Paciente', 'Link Meet', 'Status Consulta', 'Ações'].map(h => (
                                   <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
                                 ))}
                               </tr>
@@ -1235,6 +1255,9 @@ export default function PainelTerapeuta() {
                                   <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
                                     <td className="px-4 py-3 text-indigo-400 font-medium">{s.horario}</td>
                                     <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                                    <td className="px-4 py-3">
+                                      <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
+                                    </td>
                                     <td className="px-4 py-3">
                                       <span className={`text-xs px-2 py-0.5 rounded-full ${scBadge.cls}`}>{scBadge.label}</span>
                                     </td>
@@ -1284,7 +1307,7 @@ export default function PainelTerapeuta() {
                           <table className="w-full text-sm">
                             <thead>
                               <tr className="border-b border-white/5">
-                                {['Data', 'Horário', 'Paciente', 'Status Consulta'].map(h => (
+                                {['Data', 'Horário', 'Paciente', 'Link Meet', 'Status Consulta'].map(h => (
                                   <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
                                 ))}
                               </tr>
@@ -1297,6 +1320,9 @@ export default function PainelTerapeuta() {
                                     <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{s.data}</td>
                                     <td className="px-4 py-3 text-purple-400 font-medium">{s.horario}</td>
                                     <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                                    <td className="px-4 py-3">
+                                      <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
+                                    </td>
                                     <td className="px-4 py-3">
                                       <span className={`text-xs px-2 py-0.5 rounded-full ${scBadge.cls}`}>{scBadge.label}</span>
                                     </td>
@@ -1858,8 +1884,7 @@ export default function PainelTerapeuta() {
                           {s.link_meet && (
                             <div>
                               <p className="text-gray-500">Link Meet</p>
-                              <a href={s.link_meet} target="_blank" rel="noopener noreferrer"
-                                className="text-indigo-400 hover:underline">Abrir</a>
+                              <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
                             </div>
                           )}
                         </div>
@@ -2319,7 +2344,7 @@ export default function PainelTerapeuta() {
               {agendaDetalhe.link_meet && (
                 <div className="flex justify-between items-center gap-4">
                   <span className="text-gray-500 shrink-0">Link Meet</span>
-                  <a href={agendaDetalhe.link_meet} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline text-xs truncate max-w-[180px]">Abrir</a>
+                  <LinkMeetCell id={agendaDetalhe.id} link={agendaDetalhe.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
                 </div>
               )}
             </div>
