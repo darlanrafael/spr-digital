@@ -193,75 +193,133 @@ export default function AgendaDiaTerapeuta({
         <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-sm bg-green-400/60 inline-block" /> Livre — clique pra bloquear</span>
       </div>
 
-      <div className="flex px-5 py-4">
-        <div className="w-12 shrink-0 relative" style={{ height: alturaTotal }}>
-          {marcas.map(m => (
-            <div key={m.minuto} className="absolute right-2 text-[10px] text-gray-600 -translate-y-1/2"
-              style={{ top: (m.minuto - JANELA_INICIO_MIN) * PX_POR_MIN }}>
-              {m.label}
-            </div>
-          ))}
-        </div>
+      {horariosFixos.length > 0 ? (
+        // Terapeuta de horário fixo: lista compacta, uma linha por horário da
+        // grade dele, sem espaço proporcional ao relógio — a régua de tempo
+        // contínua criava "buracos" visuais nos intervalos entre horários
+        // (ex: janela de almoço), que não fazem sentido pra quem só atende
+        // nesses horários exatos, não numa agenda de horário livre.
+        <div className="divide-y divide-white/5">
+          {marcas.map(m => {
+            const fimSlot = m.minuto + duracaoSessaoMinutos
+            const sessaoAqui = sessoesComHorario.find(s => m.minuto < s.fim && fimSlot > s.inicio)
+            const compromissoAqui = !sessaoAqui
+              ? compromissosComHorario.find(c => m.minuto < c.fim && fimSlot > c.inicio)
+              : undefined
 
-        <div className="relative flex-1 border-l border-white/5" style={{ height: alturaTotal }}>
-          {marcas.map(m => (
-            <div key={m.minuto} className="absolute left-0 right-0 border-t border-white/5"
-              style={{ top: (m.minuto - JANELA_INICIO_MIN) * PX_POR_MIN }} />
-          ))}
+            if (sessaoAqui) {
+              const { sessao, inicio, fim } = sessaoAqui
+              return (
+                <button key={m.minuto} onClick={() => onClickSessao(sessao)}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
+                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{m.label}</span>
+                  <span className="w-[3px] h-8 rounded-sm bg-indigo-500 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
+                    <p className="text-[11px] text-indigo-400/80 truncate">{fmtHora(inicio)}–{fmtHora(fim)} · Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+                  </span>
+                </button>
+              )
+            }
 
-          {livres.map((l, i) => (
-            <div key={`livre-${i}`}
-              onClick={() => onClickLivre(horaParaData(data, l.inicio), horaParaData(data, l.fim))}
-              className="absolute left-0 right-0 group cursor-pointer bg-green-500/[0.04] hover:bg-green-500/10 rounded-lg transition-colors flex items-center px-3"
-              style={{ top: (l.inicio - JANELA_INICIO_MIN) * PX_POR_MIN, height: (l.fim - l.inicio) * PX_POR_MIN }}>
-              <span className="text-[11px] text-green-500/40 group-hover:text-green-400 transition-colors">
-                + {fmtDuracao(l.fim - l.inicio)} livre
-              </span>
-            </div>
-          ))}
+            if (compromissoAqui) {
+              const { compromisso, inicio, fim } = compromissoAqui
+              const isSessao = compromisso.categoria === 'sessao'
+              return (
+                <button key={m.minuto} onClick={() => onClickCompromisso(compromisso)}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
+                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{m.label}</span>
+                  <span className={`w-[3px] h-8 rounded-sm shrink-0 ${isSessao ? 'bg-indigo-500' : 'bg-stone-400'}`} />
+                  <span className="min-w-0 flex-1">
+                    <p className={`text-sm font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
+                    <p className={`text-[11px] truncate ${isSessao ? 'text-indigo-400/80' : 'text-stone-500'}`}>{fmtHora(inicio)}–{fmtHora(fim)}</p>
+                  </span>
+                </button>
+              )
+            }
 
-          {sessoesComHorario.map(({ sessao, inicio, fim }) => {
-            const inicioClamp = clamp(JANELA_INICIO_MIN, inicio, JANELA_FIM_MIN)
-            const fimClamp = clamp(JANELA_INICIO_MIN, fim, JANELA_FIM_MIN)
             return (
-              <button key={sessao.id} onClick={() => onClickSessao(sessao)}
-                className="absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20 transition-colors px-2.5 py-1 overflow-hidden"
-                style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
-                <p className="text-[11px] font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
-                <p className="text-[10px] text-indigo-400/80 truncate">{fmtHora(inicio)}–{fmtHora(fim)} · Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+              <button key={m.minuto}
+                onClick={() => onClickLivre(horaParaData(data, m.minuto), horaParaData(data, fimSlot))}
+                className="w-full flex items-center gap-3 px-5 py-3 text-left bg-green-500/[0.04] hover:bg-green-500/10 transition-colors">
+                <span className="w-12 shrink-0 text-[11px] text-gray-500">{m.label}</span>
+                <span className="w-[3px] h-8 rounded-sm bg-green-500/40 shrink-0" />
+                <span className="text-[11px] text-green-500/70">Livre — clique pra bloquear</span>
               </button>
             )
           })}
-
-          {compromissosComHorario.map(({ compromisso, inicio, fim }) => {
-            const inicioClamp = clamp(JANELA_INICIO_MIN, inicio, JANELA_FIM_MIN)
-            const fimClamp = clamp(JANELA_INICIO_MIN, fim, JANELA_FIM_MIN)
-            // Categoria escolhida no lançamento manual decide a cor do bloco —
-            // "sessao" usa a mesma cor indigo das sessões reais, "compromisso"
-            // usa o cinza-pedra padrão.
-            const isSessao = compromisso.categoria === 'sessao'
-            return (
-              <button key={compromisso.id} onClick={() => onClickCompromisso(compromisso)}
-                className={`absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] transition-colors px-2.5 py-1 overflow-hidden ${
-                  isSessao
-                    ? 'border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20'
-                    : 'border-stone-400 bg-stone-400/10 hover:bg-stone-400/20'
-                }`}
-                style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
-                <p className={`text-[11px] font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
-                <p className={`text-[10px] truncate ${isSessao ? 'text-indigo-400/80' : 'text-stone-500'}`}>{fmtHora(inicio)}–{fmtHora(fim)}</p>
-              </button>
-            )
-          })}
-
-          {isHoje && agoraMin >= JANELA_INICIO_MIN && agoraMin <= JANELA_FIM_MIN && (
-            <div className="absolute left-0 right-0 h-px bg-red-400 z-10"
-              style={{ top: (agoraMin - JANELA_INICIO_MIN) * PX_POR_MIN }}>
-              <span className="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-red-400" />
-            </div>
-          )}
         </div>
-      </div>
+      ) : (
+        <div className="flex px-5 py-4">
+          <div className="w-12 shrink-0 relative" style={{ height: alturaTotal }}>
+            {marcas.map(m => (
+              <div key={m.minuto} className="absolute right-2 text-[10px] text-gray-600 -translate-y-1/2"
+                style={{ top: (m.minuto - JANELA_INICIO_MIN) * PX_POR_MIN }}>
+                {m.label}
+              </div>
+            ))}
+          </div>
+
+          <div className="relative flex-1 border-l border-white/5" style={{ height: alturaTotal }}>
+            {marcas.map(m => (
+              <div key={m.minuto} className="absolute left-0 right-0 border-t border-white/5"
+                style={{ top: (m.minuto - JANELA_INICIO_MIN) * PX_POR_MIN }} />
+            ))}
+
+            {livres.map((l, i) => (
+              <div key={`livre-${i}`}
+                onClick={() => onClickLivre(horaParaData(data, l.inicio), horaParaData(data, l.fim))}
+                className="absolute left-0 right-0 group cursor-pointer bg-green-500/[0.04] hover:bg-green-500/10 rounded-lg transition-colors flex items-center px-3"
+                style={{ top: (l.inicio - JANELA_INICIO_MIN) * PX_POR_MIN, height: (l.fim - l.inicio) * PX_POR_MIN }}>
+                <span className="text-[11px] text-green-500/40 group-hover:text-green-400 transition-colors">
+                  + {fmtDuracao(l.fim - l.inicio)} livre
+                </span>
+              </div>
+            ))}
+
+            {sessoesComHorario.map(({ sessao, inicio, fim }) => {
+              const inicioClamp = clamp(JANELA_INICIO_MIN, inicio, JANELA_FIM_MIN)
+              const fimClamp = clamp(JANELA_INICIO_MIN, fim, JANELA_FIM_MIN)
+              return (
+                <button key={sessao.id} onClick={() => onClickSessao(sessao)}
+                  className="absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20 transition-colors px-2.5 py-1 overflow-hidden"
+                  style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
+                  <p className="text-[11px] font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
+                  <p className="text-[10px] text-indigo-400/80 truncate">{fmtHora(inicio)}–{fmtHora(fim)} · Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+                </button>
+              )
+            })}
+
+            {compromissosComHorario.map(({ compromisso, inicio, fim }) => {
+              const inicioClamp = clamp(JANELA_INICIO_MIN, inicio, JANELA_FIM_MIN)
+              const fimClamp = clamp(JANELA_INICIO_MIN, fim, JANELA_FIM_MIN)
+              // Categoria escolhida no lançamento manual decide a cor do bloco —
+              // "sessao" usa a mesma cor indigo das sessões reais, "compromisso"
+              // usa o cinza-pedra padrão.
+              const isSessao = compromisso.categoria === 'sessao'
+              return (
+                <button key={compromisso.id} onClick={() => onClickCompromisso(compromisso)}
+                  className={`absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] transition-colors px-2.5 py-1 overflow-hidden ${
+                    isSessao
+                      ? 'border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20'
+                      : 'border-stone-400 bg-stone-400/10 hover:bg-stone-400/20'
+                  }`}
+                  style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
+                  <p className={`text-[11px] font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
+                  <p className={`text-[10px] truncate ${isSessao ? 'text-indigo-400/80' : 'text-stone-500'}`}>{fmtHora(inicio)}–{fmtHora(fim)}</p>
+                </button>
+              )
+            })}
+
+            {isHoje && agoraMin >= JANELA_INICIO_MIN && agoraMin <= JANELA_FIM_MIN && (
+              <div className="absolute left-0 right-0 h-px bg-red-400 z-10"
+                style={{ top: (agoraMin - JANELA_INICIO_MIN) * PX_POR_MIN }}>
+                <span className="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-red-400" />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
