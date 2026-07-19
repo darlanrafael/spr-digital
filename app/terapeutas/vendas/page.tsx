@@ -381,6 +381,7 @@ export default function TerapeutasVendas() {
     setAbaAtiva('aprovadas')
     setSubAba('pendentes')
     setAgendarVendaId(saleId)
+    setAgendarDataPrimeira(''); setAgendarErro('')
     setAgendarNumSessoesInput(String(inferirNumeroSessoesPorValor(venda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])))
     const terapeutaParam = searchParams.get('terapeuta')
     if (terapeutaParam && pageData.terapeutas.some(t => t.id === terapeutaParam)) {
