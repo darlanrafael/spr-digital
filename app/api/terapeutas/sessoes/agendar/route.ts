@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
   }
 
+  try {
   const { valido, usuario } = await verificarSenhaUsuario(usuario_email, senha)
   if (!valido) return NextResponse.json({ error: 'Senha inválida' }, { status: 401 })
 
@@ -96,4 +97,7 @@ export async function POST(req: NextRequest) {
   })
 
   return NextResponse.json({ success: true, sessoes_criadas: numSessoes })
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }
