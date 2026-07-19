@@ -12,7 +12,11 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import Pagination from '@/components/Pagination'
-import AgendaDiaTerapeuta, { SessaoDia, CompromissoDia } from '@/components/terapeutas/AgendaDiaTerapeuta'
+import AgendaDiaTerapeuta, {
+  SessaoDia, CompromissoDia, Ocupado,
+  contarSlotsLivres, calcularIntervalosLivres, fmtDuracao,
+  JANELA_INICIO_MIN, JANELA_FIM_MIN,
+} from '@/components/terapeutas/AgendaDiaTerapeuta'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 
@@ -27,6 +31,7 @@ type Terapeuta = {
   percentual_comissao: number
   vendas_a_partir_de: string | null
   duracao_sessao_minutos: number
+  horarios_fixos: string[]
 }
 
 type Sessao = {
@@ -414,7 +419,7 @@ export default function PainelTerapeuta() {
     if (!client) return
     setLoading(true)
     const [tResp, sResp, todasResp] = await Promise.all([
-      client.from('terapeutas').select('id,nome,email,percentual_comissao,vendas_a_partir_de,duracao_sessao_minutos').eq('id', id).single(),
+      client.from('terapeutas').select('id,nome,email,percentual_comissao,vendas_a_partir_de,duracao_sessao_minutos,horarios_fixos').eq('id', id).single(),
       client.from('sessoes').select('id,sale_id,numero_sessao,total_sessoes,status,status_consulta,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,entregue_confirmado_por,iniciado_em,concluido_em,vendedor_nome,agendado_por')
         .eq('terapeuta_id', id).order('sale_id').order('numero_sessao', { ascending: true }),
       client.from('terapeutas').select('id,nome').eq('ativo', true).order('nome'),
@@ -640,6 +645,38 @@ export default function PainelTerapeuta() {
     }).sort((a, b) => (a.data_agendada ?? '') < (b.data_agendada ?? '') ? -1 : 1)
   }
   const agendaHojeCell = hoje.getFullYear() === agendaAno && hoje.getMonth() === agendaMes ? hoje.getDate() : null
+
+  function ocupadosNoDia(dia: number): Ocupado[] {
+    const inicioDia = new Date(agendaAno, agendaMes, dia)
+    const sessoesDoDia = sessoes.filter(s => {
+      if (!s.data_agendada || s.status === 'cancelada') return false
+      return new Date(s.data_agendada).toDateString() === inicioDia.toDateString()
+    })
+    const compromissosDoDia = compromissos.filter(c =>
+      new Date(c.inicio).toDateString() === inicioDia.toDateString())
+    function minutosDoDia(iso: string): number {
+      const d = new Date(iso)
+      return d.getHours() * 60 + d.getMinutes()
+    }
+    return [
+      ...sessoesDoDia.map(s => ({
+        inicio: minutosDoDia(s.data_agendada as string),
+        fim: minutosDoDia(s.data_agendada as string) + (terapeuta?.duracao_sessao_minutos ?? 60),
+      })),
+      ...compromissosDoDia.map(c => ({ inicio: minutosDoDia(c.inicio), fim: minutosDoDia(c.fim) })),
+    ]
+  }
+
+  function previewVagosNoDia(dia: number): string {
+    const ocupados = ocupadosNoDia(dia)
+    if ((terapeuta?.horarios_fixos ?? []).length > 0) {
+      const livres = contarSlotsLivres(terapeuta!.horarios_fixos, ocupados, terapeuta?.duracao_sessao_minutos ?? 60)
+      return `${livres} vago${livres === 1 ? '' : 's'} de ${terapeuta!.horarios_fixos.length}`
+    }
+    const minutosLivres = calcularIntervalosLivres(ocupados, JANELA_INICIO_MIN, JANELA_FIM_MIN)
+      .reduce((total, l) => total + (l.fim - l.inicio), 0)
+    return minutosLivres > 0 ? `${fmtDuracao(minutosLivres)} livre` : 'sem vaga'
+  }
 
   // ── Agrupamento por paciente (visão terapeuta) ──
   const pacientes = useMemo(() => {
@@ -1474,6 +1511,7 @@ export default function PainelTerapeuta() {
                   compromissos={compromissos.filter(c =>
                     new Date(c.inicio).toDateString() === agendaDiaSelecionado.toDateString())}
                   duracaoSessaoMinutos={terapeuta?.duracao_sessao_minutos ?? 60}
+                  horariosFixos={terapeuta?.horarios_fixos ?? []}
                   onClickSessao={(sessaoDia) => {
                     const sessaoCompleta = sessoes.find(s => s.id === sessaoDia.id)
                     if (sessaoCompleta) setAgendaDetalhe(sessaoCompleta)
@@ -1531,6 +1569,7 @@ export default function PainelTerapeuta() {
                                   {ss.length > 3 && (
                                     <span className="text-[10px] text-gray-500">+{ss.length - 3} mais</span>
                                   )}
+                                  <p className="text-[10px] text-green-500/70 mt-0.5">{previewVagosNoDia(dia)}</p>
                                 </div>
                               </>
                             )}
