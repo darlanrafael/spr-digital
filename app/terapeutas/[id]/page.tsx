@@ -338,6 +338,9 @@ export default function PainelTerapeuta() {
   const [compromissoNovoErro, setCompromissoNovoErro] = useState('')
   const [compromissoNovoLoading, setCompromissoNovoLoading] = useState(false)
   const [compromissoNovoSenhaOpen, setCompromissoNovoSenhaOpen] = useState(false)
+  const [compromissoNovoRepetir, setCompromissoNovoRepetir] = useState(false)
+  const [compromissoNovoSemanas, setCompromissoNovoSemanas] = useState('8')
+  const [compromissoNovoSucesso, setCompromissoNovoSucesso] = useState<number | null>(null)
 
   // Apagar compromisso — a partir de um clique num bloco de compromisso na Agenda do Dia
   const [compromissoApagar, setCompromissoApagar] = useState<CompromissoDia | null>(null)
@@ -1005,6 +1008,8 @@ export default function PainelTerapeuta() {
   function abrirLancarCompromisso(inicio: Date, fim: Date) {
     setCompromissoNovoTitulo('')
     setCompromissoNovoCategoria('compromisso')
+    setCompromissoNovoRepetir(false)
+    setCompromissoNovoSemanas('8')
     setCompromissoNovoInicio(dateToDatetimeLocal(inicio))
     // Default de 1h em vez do buraco livre inteiro — evita forçar o usuário a
     // encurtar manualmente o campo "Fim" toda vez que clica num vão grande
@@ -1026,6 +1031,7 @@ export default function PainelTerapeuta() {
         categoria: compromissoNovoCategoria,
         inicio: compromissoNovoInicio,
         fim: compromissoNovoFim,
+        repetir_semanas: compromissoNovoRepetir ? (parseInt(compromissoNovoSemanas, 10) || 1) : undefined,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
@@ -1038,6 +1044,9 @@ export default function PainelTerapeuta() {
     setCompromissoNovoSenhaOpen(false); setCompromissoNovoOpen(false)
     setCompromissoNovoTitulo(''); setCompromissoNovoCategoria('compromisso')
     setCompromissoNovoInicio(''); setCompromissoNovoFim('')
+    const criados = (json.ids as string[])?.length ?? 1
+    if (compromissoNovoRepetir && criados > 1) setCompromissoNovoSucesso(criados)
+    setCompromissoNovoRepetir(false); setCompromissoNovoSemanas('8')
     loadData()
   }
 
@@ -2385,6 +2394,21 @@ export default function PainelTerapeuta() {
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                 </div>
               </div>
+              <div>
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input type="checkbox" checked={compromissoNovoRepetir} onChange={e => setCompromissoNovoRepetir(e.target.checked)}
+                    className="rounded border-white/10 bg-gray-800" />
+                  Repetir semanalmente
+                </label>
+                {compromissoNovoRepetir && (
+                  <div className="mt-2">
+                    <label className="text-xs text-gray-400 block mb-1">Por quantas semanas</label>
+                    <input type="number" min={2} max={52} value={compromissoNovoSemanas}
+                      onChange={e => setCompromissoNovoSemanas(e.target.value)}
+                      className="w-24 bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                  </div>
+                )}
+              </div>
               {compromissoNovoErro && <p className="text-xs text-red-400">{compromissoNovoErro}</p>}
             </div>
             <div className="flex gap-3 mt-5">
@@ -2413,6 +2437,22 @@ export default function PainelTerapeuta() {
         loading={compromissoNovoLoading}
         erro={compromissoNovoErro}
       />
+
+      {compromissoNovoSucesso && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setCompromissoNovoSucesso(null)}>
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-7 h-7 text-green-500" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1">Compromissos criados!</h3>
+            <p className="text-sm text-gray-400 mb-5">{compromissoNovoSucesso} compromissos lançados, um por semana.</p>
+            <button onClick={() => setCompromissoNovoSucesso(null)}
+              className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal: apagar compromisso pessoal */}
       {compromissoApagar && !compromissoApagarSenhaOpen && (

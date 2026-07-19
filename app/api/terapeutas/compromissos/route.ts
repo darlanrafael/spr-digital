@@ -10,12 +10,13 @@ export async function POST(req: NextRequest) {
       inicio: string
       fim: string
       categoria?: string
+      repetir_semanas?: number
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
       senha: string
     }
-    const { terapeuta_id, titulo, inicio, fim, categoria, usuario_nome, usuario_tipo, usuario_email, senha } = body
+    const { terapeuta_id, titulo, inicio, fim, categoria, repetir_semanas, usuario_nome, usuario_tipo, usuario_email, senha } = body
 
     if (!terapeuta_id || !titulo?.trim() || !inicio || !fim || !usuario_email || !senha) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
@@ -34,31 +35,38 @@ export async function POST(req: NextRequest) {
     if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
 
     const supabase = getSupabaseAdmin()
+    const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
+    const inicioMs = new Date(inicioISO).getTime()
+    const fimMs = new Date(fimISO).getTime()
+    const repeticoes = repetir_semanas && repetir_semanas > 1 ? Math.min(Math.floor(repetir_semanas), 52) : 1
+    const linhas = Array.from({ length: repeticoes }, (_, i) => ({
+      terapeuta_id,
+      titulo: titulo.trim(),
+      inicio: new Date(inicioMs + i * SETE_DIAS_MS).toISOString(),
+      fim: new Date(fimMs + i * SETE_DIAS_MS).toISOString(),
+      categoria: categoria ?? 'compromisso',
+      criado_por_nome: usuario_nome,
+      criado_por_tipo: usuario_tipo,
+      criado_por_email: usuario_email,
+    }))
+
     const { data, error } = await supabase
       .from('compromissos_terapeuta')
-      .insert({
-        terapeuta_id,
-        titulo: titulo.trim(),
-        inicio: inicioISO,
-        fim: fimISO,
-        categoria: categoria ?? 'compromisso',
-        criado_por_nome: usuario_nome,
-        criado_por_tipo: usuario_tipo,
-        criado_por_email: usuario_email,
-      })
+      .insert(linhas)
       .select('id')
-      .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     await registrarAtividade({
       usuario_nome,
       usuario_tipo: usuario_tipo || ((usuario as Record<string, unknown>)?.tipo as string) || 'admin',
       tipo_acao: 'compromisso_criado',
-      descricao: `Compromisso "${titulo.trim()}" lançado na agenda (${new Date(inicioISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} – ${new Date(fimISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`,
-      dados_novos: { terapeuta_id, titulo: titulo.trim(), inicio: inicioISO, fim: fimISO },
+      descricao: repeticoes > 1
+        ? `Compromisso "${titulo.trim()}" lançado ${repeticoes}x, semanalmente a partir de ${new Date(inicioISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+        : `Compromisso "${titulo.trim()}" lançado na agenda (${new Date(inicioISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} – ${new Date(fimISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`,
+      dados_novos: { terapeuta_id, titulo: titulo.trim(), inicio: inicioISO, fim: fimISO, repeticoes },
     })
 
-    return NextResponse.json({ success: true, id: data.id })
+    return NextResponse.json({ success: true, ids: data.map(d => d.id) })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
