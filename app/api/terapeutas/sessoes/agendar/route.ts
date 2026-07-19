@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { criarEventoComMeet } from '@/lib/google-meet'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -86,6 +87,21 @@ export async function POST(req: NextRequest) {
 
   const { error: insertErr } = await client.from('sessoes').insert(sessoes)
   if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
+
+  // Link do Meet — não trava o agendamento se a API do Google falhar (ver
+  // lib/google-meet.ts: sem credenciais configuradas, isso é um no-op).
+  for (const s of sessoes) {
+    const evento = await criarEventoComMeet({
+      titulo: `Sessão — ${s.paciente_nome}`,
+      inicioISO: s.data_agendada,
+      fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
+    })
+    if (evento) {
+      await client.from('sessoes')
+        .update({ link_meet: evento.meetLink, google_event_id: evento.eventId })
+        .eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao)
+    }
+  }
 
   await registrarAtividade({
     usuario_nome: (usuario as Record<string, unknown>)?.nome as string ?? usuario_email,

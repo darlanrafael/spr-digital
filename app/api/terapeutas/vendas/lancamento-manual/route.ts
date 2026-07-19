@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade, calcularComissao, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { criarEventoComMeet } from '@/lib/google-meet'
 
 // Cadastro manual de paciente — cria a venda E as sessões numa tacada só,
 // pro admin lançar quem já está em atendimento fora do sistema (ex: Pedro,
@@ -119,6 +120,24 @@ export async function POST(req: NextRequest) {
     // do que deixar um registro de faturamento sem paciente/sessão associada.
     await client.from('sales').delete().eq('id', saleId)
     return NextResponse.json({ error: insertErr.message }, { status: 500 })
+  }
+
+  // Link do Meet — não trava o lançamento se a API do Google falhar (ver
+  // lib/google-meet.ts: sem credenciais configuradas, isso é um no-op).
+  // Só faz sentido para sessões futuras (agendadas) — sessões já entregues
+  // não precisam de link de reunião.
+  for (const s of sessoes) {
+    if (s.status !== 'agendada') continue
+    const evento = await criarEventoComMeet({
+      titulo: `Sessão — ${s.paciente_nome}`,
+      inicioISO: s.data_agendada,
+      fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
+    })
+    if (evento) {
+      await client.from('sessoes')
+        .update({ link_meet: evento.meetLink, google_event_id: evento.eventId })
+        .eq('sale_id', saleId).eq('numero_sessao', s.numero_sessao)
+    }
   }
 
   const puladas = total_sessoes - ultima_sessao_numero

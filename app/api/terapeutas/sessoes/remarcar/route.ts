@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -49,6 +50,24 @@ export async function POST(req: NextRequest) {
   }).eq('id', sessao_id)
 
   if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
+
+  // Remarcação cancela o evento antigo e cria um novo — não só atualiza o
+  // horário do existente (link continuar "válido" com o horário errado
+  // seria pior que não ter link).
+  if (sessao.google_event_id) {
+    await cancelarEvento(sessao.google_event_id as string)
+  }
+  const evento = await criarEventoComMeet({
+    titulo: `Sessão — ${sessao.paciente_nome}`,
+    inicioISO: novaDataISO,
+    fimISO: new Date(new Date(novaDataISO).getTime() + 60 * 60 * 1000).toISOString(),
+  })
+  await client.from('sessoes')
+    .update({
+      link_meet: evento?.meetLink ?? null,
+      google_event_id: evento?.eventId ?? null,
+    })
+    .eq('id', sessao_id)
 
   const dataAnteriorFmt = sessao.data_agendada
     ? new Date(sessao.data_agendada as string).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
