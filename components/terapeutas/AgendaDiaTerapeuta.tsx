@@ -23,6 +23,7 @@ interface AgendaDiaTerapeutaProps {
   sessoes: SessaoDia[]
   compromissos: CompromissoDia[]
   duracaoSessaoMinutos: number
+  horariosFixos?: string[]
   onClickSessao: (sessao: SessaoDia) => void
   onClickCompromisso: (compromisso: CompromissoDia) => void
   onClickLivre: (inicio: Date, fim: Date) => void
@@ -30,8 +31,8 @@ interface AgendaDiaTerapeutaProps {
   onVoltarMes: () => void
 }
 
-const JANELA_INICIO_MIN = 8 * 60   // 08:00
-const JANELA_FIM_MIN = 21 * 60     // 21:00
+export const JANELA_INICIO_MIN = 8 * 60   // 08:00
+export const JANELA_FIM_MIN = 21 * 60     // 21:00
 const PX_POR_MIN = 1
 
 function minutosDoDia(iso: string): number {
@@ -51,7 +52,7 @@ function fmtHora(min: number): string {
   return `${h}:${m}`
 }
 
-function fmtDuracao(min: number): string {
+export function fmtDuracao(min: number): string {
   const h = Math.floor(min / 60)
   const m = min % 60
   if (h === 0) return `${m}min`
@@ -59,7 +60,7 @@ function fmtDuracao(min: number): string {
   return `${h}h${m}min`
 }
 
-type Ocupado = { inicio: number; fim: number }
+export type Ocupado = { inicio: number; fim: number }
 
 // Restringe um valor ao intervalo [min, max] — usado pra manter tudo (blocos
 // ocupados e intervalos livres) dentro da janela fixa 08:00–21:00, mesmo
@@ -72,7 +73,7 @@ function clamp(min: number, valor: number, max: number): number {
 // ocupa horário (sessões + compromissos, em minutos desde meia-noite). O
 // cursor nunca anda pra trás, então intervalos sobrepostos/aninhados não
 // geram um "livre" fantasma no meio deles.
-function calcularIntervalosLivres(ocupados: Ocupado[], janelaInicio: number, janelaFim: number): Ocupado[] {
+export function calcularIntervalosLivres(ocupados: Ocupado[], janelaInicio: number, janelaFim: number): Ocupado[] {
   const ordenados = [...ocupados].sort((a, b) => a.inicio - b.inicio)
   const livres: Ocupado[] = []
   let cursor = janelaInicio
@@ -84,6 +85,22 @@ function calcularIntervalosLivres(ocupados: Ocupado[], janelaInicio: number, jan
   }
   if (cursor < janelaFim) livres.push({ inicio: cursor, fim: janelaFim })
   return livres
+}
+
+function horarioParaMinutos(horario: string): number {
+  const [h, m] = horario.split(':').map(Number)
+  return h * 60 + m
+}
+
+// Conta quantos horários fixos (ex: os 14 do Pedro) NÃO batem com nada em
+// `ocupados` (sessão ou compromisso já ocupando aquele intervalo) — usado
+// pelo preview do card de mês pra terapeuta de horário fixo.
+export function contarSlotsLivres(horariosFixos: string[], ocupados: Ocupado[], duracaoMinutos: number): number {
+  return horariosFixos.filter(h => {
+    const inicio = horarioParaMinutos(h)
+    const fim = inicio + duracaoMinutos
+    return !ocupados.some(o => inicio < o.fim && fim > o.inicio)
+  }).length
 }
 
 // Corta um intervalo livre em pedaços de no máximo 1h, alinhados às linhas
@@ -104,7 +121,7 @@ function fatiarLivrePorHora(intervalo: Ocupado): Ocupado[] {
 }
 
 export default function AgendaDiaTerapeuta({
-  data, sessoes, compromissos, duracaoSessaoMinutos,
+  data, sessoes, compromissos, duracaoSessaoMinutos, horariosFixos = [],
   onClickSessao, onClickCompromisso, onClickLivre, onNavegarDia, onVoltarMes,
 }: AgendaDiaTerapeutaProps) {
   const isHoje = data.toDateString() === new Date().toDateString()
@@ -127,8 +144,16 @@ export default function AgendaDiaTerapeuta({
     ...sessoesComHorario.map(s => ({ inicio: s.inicio, fim: s.fim })),
     ...compromissosComHorario.map(c => ({ inicio: c.inicio, fim: c.fim })),
   ]
-  const livres = calcularIntervalosLivres(ocupados, JANELA_INICIO_MIN, JANELA_FIM_MIN)
-    .flatMap(fatiarLivrePorHora)
+  // Terapeuta de horário fixo (ex: Pedro): só os horários da lista contam
+  // como "livre" — cada um vira um bloco do tamanho exato da duração da
+  // sessão, não uma faixa contínua. Terapeuta sem lista (padrão) mantém o
+  // comportamento de sempre: qualquer vão vira livre, picado em pedaços de
+  // até 1h pro hover não destacar tudo de uma vez.
+  const livres = horariosFixos.length > 0
+    ? horariosFixos
+        .map(h => ({ inicio: horarioParaMinutos(h), fim: horarioParaMinutos(h) + duracaoSessaoMinutos }))
+        .filter(slot => !ocupados.some(o => slot.inicio < o.fim && slot.fim > o.inicio))
+    : calcularIntervalosLivres(ocupados, JANELA_INICIO_MIN, JANELA_FIM_MIN).flatMap(fatiarLivrePorHora)
 
   const alturaTotal = (JANELA_FIM_MIN - JANELA_INICIO_MIN) * PX_POR_MIN
   const primeiraHora = Math.ceil(JANELA_INICIO_MIN / 60)
