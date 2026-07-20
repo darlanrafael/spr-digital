@@ -39,7 +39,7 @@ export async function buscarPendentes(
 ): Promise<TerapeutaPendente[]> {
   const { data: terapeutas, error: terapErr } = await client
     .from('terapeutas')
-    .select('id,grupo_whatsapp_id')
+    .select('id,grupo_whatsapp_id,vendas_a_partir_de')
     .not('grupo_whatsapp_id', 'is', null)
   if (terapErr) throw new Error(terapErr.message)
   if (!terapeutas || terapeutas.length === 0) return []
@@ -72,17 +72,38 @@ export async function buscarPendentes(
 
   const saleIds = [...new Set(linhas.map(s => s.sale_id))]
   const telefonePorSale: Record<string, string | null> = {}
+  const dataHoraPorSale: Record<string, string> = {}
   if (saleIds.length > 0) {
-    const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone').in('id', saleIds)
+    const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora').in('id', saleIds)
     if (salesErr) throw new Error(salesErr.message)
-    for (const s of sales ?? []) telefonePorSale[s.id as string] = s.telefone as string | null
+    for (const s of sales ?? []) {
+      telefonePorSale[s.id as string] = s.telefone as string | null
+      dataHoraPorSale[s.id as string] = s.data_hora as string
+    }
   }
 
   const grupoIdPorTerapeuta: Record<string, string> = {}
-  for (const t of terapeutas) grupoIdPorTerapeuta[t.id as string] = t.grupo_whatsapp_id as string
+  const cortePorTerapeuta: Record<string, string | null> = {}
+  for (const t of terapeutas) {
+    grupoIdPorTerapeuta[t.id as string] = t.grupo_whatsapp_id as string
+    cortePorTerapeuta[t.id as string] = t.vendas_a_partir_de as string | null
+  }
+
+  // Sessões de vendas anteriores ao corte configurado pro terapeuta (dado
+  // retroativo, lançado em massa) não entram nos lembretes automáticos —
+  // mesma regra do resto do sistema (Agenda/Consultas), senão a automação
+  // manda mensagem real sobre paciente que nem deveria aparecer aqui.
+  function saleAposCorte(s: SessaoRow): boolean {
+    const corte = cortePorTerapeuta[s.terapeuta_id]
+    if (!corte) return true
+    const dataHora = dataHoraPorSale[s.sale_id]
+    if (!dataHora) return true
+    return new Date(dataHora).getTime() >= new Date(corte).getTime()
+  }
 
   const porTerapeuta: Record<string, TerapeutaPendente> = {}
   for (const s of linhas) {
+    if (!saleAposCorte(s)) continue
     if (!porTerapeuta[s.terapeuta_id]) {
       porTerapeuta[s.terapeuta_id] = {
         terapeuta_id: s.terapeuta_id,
