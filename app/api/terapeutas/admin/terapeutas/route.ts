@@ -49,19 +49,22 @@ export async function PUT(req: NextRequest) {
 
   const { id, nome, email, percentual_comissao, ativo } = body as {
     id: string
-    nome: string
-    email: string
-    percentual_comissao: number
-    ativo: boolean
+    nome?: string
+    email?: string
+    percentual_comissao?: number
+    ativo?: boolean
   }
 
   if (!id) return NextResponse.json({ error: 'ID obrigatório' }, { status: 400 })
 
   const client = getSupabaseAdmin()
-  const { data, error } = await client.from('terapeutas').update({
-    nome, email, percentual_comissao, ativo,
-    updated_at: new Date().toISOString(),
-  }).eq('id', id).select().single()
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (nome !== undefined) updates.nome = nome
+  if (email !== undefined) updates.email = email
+  if (percentual_comissao !== undefined) updates.percentual_comissao = percentual_comissao
+  if (ativo !== undefined) updates.ativo = ativo
+
+  const { data, error } = await client.from('terapeutas').update(updates).eq('id', id).select().single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Plus, User, Users, Activity, Eye, EyeOff, CheckCircle, Key, X, Shield } from 'lucide-react'
+import { Plus, User, Users, Activity, Eye, EyeOff, CheckCircle, Key, X, Shield, Mail } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import { useApp } from '@/contexts/AppContext'
@@ -93,6 +93,14 @@ export default function AdminPage() {
   const [showNovaSenha, setShowNovaSenha] = useState(false)
   const [senhaLoading, setSenhaLoading] = useState(false)
   const [senhaErro, setSenhaErro] = useState('')
+
+  // Alterar e-mail
+  type EmailTarget = { tipo: 'terapeuta' | 'usuario' | 'dashboard'; id: string; nome: string }
+  const [emailTarget, setEmailTarget] = useState<EmailTarget | null>(null)
+  const [novoEmail, setNovoEmail] = useState('')
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [emailErro, setEmailErro] = useState('')
+
   const [toast, setToast] = useState('')
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -155,6 +163,32 @@ export default function AdminPage() {
     if (!res.ok) { setSenhaErro(json.error ?? 'Erro ao alterar senha'); return }
     setSenhaTarget(null); setNovaSenha(''); setConfirmarSenha('')
     showToast(`✓ Senha de ${senhaTarget.nome} alterada com sucesso!`)
+  }
+
+  async function handleAlterarEmail() {
+    if (!emailTarget) return
+    setEmailErro('')
+    const email = novoEmail.trim()
+    if (!email || !email.includes('@')) { setEmailErro('E-mail inválido'); return }
+    setEmailLoading(true)
+    const endpoint = emailTarget.tipo === 'terapeuta'
+      ? '/api/terapeutas/admin/terapeutas'
+      : emailTarget.tipo === 'dashboard'
+      ? '/api/dashboard-usuarios'
+      : '/api/terapeutas/admin/usuarios'
+    const res = await fetch(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: emailTarget.id, email }),
+    })
+    const json = await res.json()
+    setEmailLoading(false)
+    if (!res.ok) { setEmailErro(json.error ?? 'Erro ao alterar e-mail'); return }
+    setEmailTarget(null); setNovoEmail('')
+    showToast(`✓ E-mail de ${emailTarget.nome} alterado com sucesso!`)
+    if (emailTarget.tipo === 'terapeuta') loadTerapeutas()
+    else if (emailTarget.tipo === 'usuario') loadUsuarios()
+    else loadUsuariosDashboard()
   }
 
   useEffect(() => { loadTerapeutas() }, [])
@@ -367,6 +401,10 @@ export default function AdminPage() {
                               className={`text-xs ${t.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
                               {t.ativo ? 'Desativar' : 'Ativar'}
                             </button>
+                            <button onClick={() => { setEmailTarget({ tipo: 'terapeuta', id: t.id, nome: t.nome }); setNovoEmail(t.email); setEmailErro('') }}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+                              <Mail className="w-3 h-3" /> E-mail
+                            </button>
                             <button onClick={() => { setSenhaTarget({ tipo: 'terapeuta', id: t.id, nome: t.nome }); setNovaSenha(''); setConfirmarSenha(''); setSenhaErro('') }}
                               className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
                               <Key className="w-3 h-3" /> Senha
@@ -491,6 +529,10 @@ export default function AdminPage() {
                               className={`text-xs ${u.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
                               {u.ativo ? 'Desativar' : 'Ativar'}
                             </button>
+                            <button onClick={() => { setEmailTarget({ tipo: 'usuario', id: u.id, nome: u.nome }); setNovoEmail(u.email); setEmailErro('') }}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+                              <Mail className="w-3 h-3" /> E-mail
+                            </button>
                             <button onClick={() => { setSenhaTarget({ tipo: 'usuario', id: u.id, nome: u.nome }); setNovaSenha(''); setConfirmarSenha(''); setSenhaErro('') }}
                               className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
                               <Key className="w-3 h-3" /> Senha
@@ -608,6 +650,10 @@ export default function AdminPage() {
                               className={`text-xs ${u.ativo ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-green-400'} transition-colors`}>
                               {u.ativo ? 'Desativar' : 'Ativar'}
                             </button>
+                            <button onClick={() => { setEmailTarget({ tipo: 'dashboard', id: u.id, nome: u.nome }); setNovoEmail(u.email); setEmailErro('') }}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+                              <Mail className="w-3 h-3" /> E-mail
+                            </button>
                             <button onClick={() => { setSenhaTarget({ tipo: 'dashboard', id: u.id, nome: u.nome }); setNovaSenha(''); setConfirmarSenha(''); setSenhaErro('') }}
                               className="flex items-center gap-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
                               <Key className="w-3 h-3" /> Senha
@@ -717,6 +763,45 @@ export default function AdminPage() {
               <button onClick={handleAlterarSenha} disabled={senhaLoading}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg transition-colors">
                 {senhaLoading ? 'Salvando...' : 'Salvar senha'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal alterar e-mail */}
+      {emailTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Mail className="w-4 h-4 text-indigo-400" /> Alterar e-mail — {emailTarget.nome}
+              </h3>
+              <button onClick={() => setEmailTarget(null)} className="text-gray-500 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Novo e-mail <span className="text-red-400">*</span></label>
+                <input
+                  type="email"
+                  value={novoEmail}
+                  onChange={e => setNovoEmail(e.target.value)}
+                  placeholder="email@exemplo.com"
+                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50"
+                />
+              </div>
+              {emailErro && <p className="text-xs text-red-400">{emailErro}</p>}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setEmailTarget(null)}
+                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">
+                Cancelar
+              </button>
+              <button onClick={handleAlterarEmail} disabled={emailLoading}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg transition-colors">
+                {emailLoading ? 'Salvando...' : 'Salvar e-mail'}
               </button>
             </div>
           </div>
