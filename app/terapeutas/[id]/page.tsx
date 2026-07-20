@@ -405,8 +405,9 @@ export default function PainelTerapeuta() {
   const [manualValorLiquido, setManualValorLiquido] = useState('')
   const [manualDataCompra, setManualDataCompra] = useState('')
   const [manualTotalSessoes, setManualTotalSessoes] = useState('')
-  const [manualUltimaNumero, setManualUltimaNumero] = useState('')
-  const [manualUltimaData, setManualUltimaData] = useState('')
+  const [manualEntreguesNumero, setManualEntreguesNumero] = useState('')
+  const [manualProximaSessaoData, setManualProximaSessaoData] = useState('')
+  const [manualDatasEditadas, setManualDatasEditadas] = useState<string[]>([])
   const [manualErro, setManualErro] = useState('')
   const [manualLoading, setManualLoading] = useState(false)
   const [manualSenhaOpen, setManualSenhaOpen] = useState(false)
@@ -966,14 +967,22 @@ export default function PainelTerapeuta() {
     loadData()
   }
 
-  const manualValido = manualNome.trim() && manualEmail.trim() && manualProduto.trim()
-    && (parseFloat(manualValorBruto.replace(',', '.')) || 0) > 0
-    && (parseFloat(manualValorLiquido.replace(',', '.')) || 0) > 0
-    && manualDataCompra
-    && (parseInt(manualTotalSessoes, 10) || 0) > 0
-    && (parseInt(manualUltimaNumero, 10) || 0) >= 1
-    && (parseInt(manualUltimaNumero, 10) || 0) <= (parseInt(manualTotalSessoes, 10) || 0)
-    && manualUltimaData
+  // Não exigimos mais nenhum campo pra lançar — o essencial (nome, valores,
+  // etc.) pode ser completado depois pelo prontuário. A única coisa que
+  // trava é a senha, pedida no SenhaModal na hora de confirmar.
+  const manualTotalNum = parseInt(manualTotalSessoes, 10) || 1
+  const manualEntreguesNum = Math.min(Math.max(parseInt(manualEntreguesNumero, 10) || 0, 0), manualTotalNum)
+  const manualFuturasNum = manualTotalNum - manualEntreguesNum
+
+  useEffect(() => {
+    if (!manualProximaSessaoData || manualFuturasNum <= 0) { setManualDatasEditadas([]); return }
+    setManualDatasEditadas(Array.from({ length: manualFuturasNum }, (_, i) => {
+      const d = new Date(manualProximaSessaoData)
+      d.setDate(d.getDate() + i * 7)
+      return dateToDatetimeLocal(d)
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualProximaSessaoData, manualFuturasNum])
 
   async function handleLancamentoManual(senha: string) {
     setManualLoading(true); setManualErro('')
@@ -986,10 +995,11 @@ export default function PainelTerapeuta() {
         produto: manualProduto, plataforma: manualPlataforma,
         valor_pago_cliente: parseFloat(manualValorBruto.replace(',', '.')) || 0,
         valor_liquido: parseFloat(manualValorLiquido.replace(',', '.')) || 0,
-        data_hora: manualDataCompra,
-        total_sessoes: parseInt(manualTotalSessoes, 10) || 0,
-        ultima_sessao_numero: parseInt(manualUltimaNumero, 10) || 0,
-        ultima_sessao_data: manualUltimaData,
+        data_hora: manualDataCompra || undefined,
+        total_sessoes: manualTotalNum,
+        sessoes_entregues: manualEntreguesNum,
+        proxima_sessao_data: manualProximaSessaoData || undefined,
+        datas_futuras: manualDatasEditadas.length === manualFuturasNum ? manualDatasEditadas : undefined,
         usuario_email: adminEmail, senha,
       }),
     })
@@ -997,10 +1007,10 @@ export default function PainelTerapeuta() {
     setManualLoading(false)
     if (!res.ok) { setManualErro(json.error ?? 'Erro'); return }
     setManualSenhaOpen(false); setManualOpen(false)
-    setManualSucesso({ nome: manualNome, criadas: json.sessoes_criadas, puladas: json.sessoes_puladas })
+    setManualSucesso({ nome: manualNome || 'Paciente', criadas: json.sessoes_criadas, puladas: json.sessoes_puladas })
     setManualNome(''); setManualEmail(''); setManualTelefone(''); setManualProduto('')
     setManualValorBruto(''); setManualValorLiquido(''); setManualDataCompra('')
-    setManualTotalSessoes(''); setManualUltimaNumero(''); setManualUltimaData('')
+    setManualTotalSessoes(''); setManualEntreguesNumero(''); setManualProximaSessaoData('')
     loadData()
   }
 
@@ -2188,12 +2198,12 @@ export default function PainelTerapeuta() {
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Nome do paciente <span className="text-red-400">*</span></label>
+                  <label className="text-xs text-gray-400 block mb-1">Nome do paciente</label>
                   <input type="text" value={manualNome} onChange={e => setManualNome(e.target.value)}
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">E-mail <span className="text-red-400">*</span></label>
+                  <label className="text-xs text-gray-400 block mb-1">E-mail</label>
                   <input type="email" value={manualEmail} onChange={e => setManualEmail(e.target.value)}
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                 </div>
@@ -2205,7 +2215,7 @@ export default function PainelTerapeuta() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Produto <span className="text-red-400">*</span></label>
+                  <label className="text-xs text-gray-400 block mb-1">Produto</label>
                   <input type="text" value={manualProduto} onChange={e => setManualProduto(e.target.value)}
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                 </div>
@@ -2221,20 +2231,20 @@ export default function PainelTerapeuta() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Valor bruto (R$) <span className="text-red-400">*</span></label>
+                  <label className="text-xs text-gray-400 block mb-1">Valor bruto (R$)</label>
                   <input type="text" inputMode="decimal" value={manualValorBruto} onChange={e => setManualValorBruto(e.target.value)}
                     placeholder="0,00"
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Valor líquido (R$) <span className="text-red-400">*</span></label>
+                  <label className="text-xs text-gray-400 block mb-1">Valor líquido (R$)</label>
                   <input type="text" inputMode="decimal" value={manualValorLiquido} onChange={e => setManualValorLiquido(e.target.value)}
                     placeholder="0,00"
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                 </div>
               </div>
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Data da compra <span className="text-red-400">*</span></label>
+                <label className="text-xs text-gray-400 block mb-1">Data da compra</label>
                 <input type="datetime-local" value={manualDataCompra} onChange={e => setManualDataCompra(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
@@ -2242,35 +2252,47 @@ export default function PainelTerapeuta() {
                 <p className="text-xs text-gray-400 font-medium mb-2">Sessões</p>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="text-[10px] text-gray-500 block mb-1">Total do pacote <span className="text-red-400">*</span></label>
+                    <label className="text-[10px] text-gray-500 block mb-1">Total de sessões vendidas</label>
                     <input type="number" min={1} value={manualTotalSessoes} onChange={e => setManualTotalSessoes(e.target.value)}
                       className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500 block mb-1">Última sessão feita (nº) <span className="text-red-400">*</span></label>
-                    <input type="number" min={1} value={manualUltimaNumero} onChange={e => setManualUltimaNumero(e.target.value)}
+                    <label className="text-[10px] text-gray-500 block mb-1">Sessões entregues (quando houver)</label>
+                    <input type="number" min={0} value={manualEntreguesNumero} onChange={e => setManualEntreguesNumero(e.target.value)}
                       className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500 block mb-1">Data dela <span className="text-red-400">*</span></label>
-                    <input type="datetime-local" value={manualUltimaData} onChange={e => setManualUltimaData(e.target.value)}
+                    <label className="text-[10px] text-gray-500 block mb-1">Próxima sessão</label>
+                    <input type="datetime-local" value={manualProximaSessaoData} onChange={e => setManualProximaSessaoData(e.target.value)}
                       className="w-full bg-gray-800 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
                   </div>
                 </div>
                 <p className="text-[10px] text-gray-600 mt-2">
-                  As sessões anteriores à informada são preenchidas automaticamente de 7 em 7 dias como entregues. Sessões depois dela só entram quando você tiver a data real.
+                  As sessões entregues são preenchidas automaticamente de 7 em 7 dias pra trás a partir da próxima sessão. As sessões futuras (total − entregues) são agendadas de 7 em 7 dias pra frente a partir dela.
                 </p>
+                {manualFuturasNum > 1 && manualDatasEditadas.length > 0 && (
+                  <div className="bg-gray-800/60 rounded-lg p-3 mt-3">
+                    <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {manualFuturasNum} sessões futuras (intervalo de 7 dias — edite se alguma sair da regra):</p>
+                    <div className="space-y-1.5">
+                      {manualDatasEditadas.map((valor, i) => (
+                        <div key={i} className="flex items-center gap-3 text-xs">
+                          <span className="text-gray-500 w-16 shrink-0">Sessão {manualEntreguesNum + i + 1}:</span>
+                          <input type="datetime-local" value={valor}
+                            onChange={e => setManualDatasEditadas(prev => prev.map((v, idx) => idx === i ? e.target.value : v))}
+                            className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               {manualErro && <p className="text-xs text-red-400">{manualErro}</p>}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setManualOpen(false)}
                 className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
-              <button onClick={() => {
-                if (!manualValido) { setManualErro('Preencha todos os campos obrigatórios corretamente'); return }
-                setManualErro(''); setManualSenhaOpen(true)
-              }} disabled={!manualValido}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors">
+              <button onClick={() => { setManualErro(''); setManualSenhaOpen(true) }}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
                 Confirmar lançamento
               </button>
             </div>
