@@ -1,4 +1,5 @@
 import { google } from 'googleapis'
+import { notificarAdmin } from './notificar-admin'
 
 const CALENDARIO_NOME = 'Atendimentos SPR Digital'
 
@@ -75,6 +76,7 @@ export async function criarEventoComMeet(params: {
     return { eventId: data.id, meetLink }
   } catch (err) {
     console.error('[google-meet] falha ao criar evento:', err)
+    await notificarAdmin(`Falha ao gerar link do Meet para "${params.titulo}" (início: ${params.inicioISO}). Erro: ${String(err)}`)
     return null
   }
 }
