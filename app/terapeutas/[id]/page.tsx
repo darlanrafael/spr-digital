@@ -359,6 +359,7 @@ export default function PainelTerapeuta() {
   const [compromissoNovoLoading, setCompromissoNovoLoading] = useState(false)
   const [compromissoNovoSenhaOpen, setCompromissoNovoSenhaOpen] = useState(false)
   const [compromissoNovoRepetir, setCompromissoNovoRepetir] = useState(false)
+  const [compromissoNovoFrequencia, setCompromissoNovoFrequencia] = useState<'semanal' | 'diaria'>('semanal')
   const [compromissoNovoSemanas, setCompromissoNovoSemanas] = useState('8')
   const [compromissoNovoSucesso, setCompromissoNovoSucesso] = useState<number | null>(null)
 
@@ -1039,6 +1040,7 @@ export default function PainelTerapeuta() {
     setCompromissoNovoTitulo('')
     setCompromissoNovoCategoria('compromisso')
     setCompromissoNovoRepetir(false)
+    setCompromissoNovoFrequencia('semanal')
     setCompromissoNovoSemanas('8')
     setCompromissoNovoInicio(dateToDatetimeLocal(inicio))
     // Default de 1h em vez do buraco livre inteiro — evita forçar o usuário a
@@ -1061,7 +1063,8 @@ export default function PainelTerapeuta() {
         categoria: compromissoNovoCategoria,
         inicio: compromissoNovoInicio,
         fim: compromissoNovoFim,
-        repetir_semanas: compromissoNovoRepetir ? (parseInt(compromissoNovoSemanas, 10) || 1) : undefined,
+        repetir_frequencia: compromissoNovoFrequencia,
+        repetir_vezes: compromissoNovoRepetir ? (parseInt(compromissoNovoSemanas, 10) || 1) : undefined,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
@@ -1076,7 +1079,7 @@ export default function PainelTerapeuta() {
     setCompromissoNovoInicio(''); setCompromissoNovoFim('')
     const criados = (json.ids as string[])?.length ?? 1
     if (compromissoNovoRepetir && criados > 1) setCompromissoNovoSucesso(criados)
-    setCompromissoNovoRepetir(false); setCompromissoNovoSemanas('8')
+    setCompromissoNovoRepetir(false); setCompromissoNovoFrequencia('semanal'); setCompromissoNovoSemanas('8')
     loadData()
   }
 
@@ -2452,14 +2455,24 @@ export default function PainelTerapeuta() {
                 <label className="flex items-center gap-2 text-xs text-gray-400">
                   <input type="checkbox" checked={compromissoNovoRepetir} onChange={e => setCompromissoNovoRepetir(e.target.checked)}
                     className="rounded border-white/10 bg-gray-800" />
-                  Repetir semanalmente
+                  Repetir
                 </label>
                 {compromissoNovoRepetir && (
-                  <div className="mt-2">
-                    <label className="text-xs text-gray-400 block mb-1">Por quantas semanas</label>
-                    <input type="number" min={2} max={52} value={compromissoNovoSemanas}
-                      onChange={e => setCompromissoNovoSemanas(e.target.value)}
-                      className="w-24 bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                  <div className="mt-2 flex items-end gap-3">
+                    <div>
+                      <label className="text-xs text-gray-400 block mb-1">Frequência</label>
+                      <select value={compromissoNovoFrequencia} onChange={e => setCompromissoNovoFrequencia(e.target.value as 'semanal' | 'diaria')}
+                        className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
+                        <option value="semanal">Semanalmente</option>
+                        <option value="diaria">Diariamente</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-400 block mb-1">Por quantas {compromissoNovoFrequencia === 'diaria' ? 'vezes' : 'semanas'}</label>
+                      <input type="number" min={2} max={compromissoNovoFrequencia === 'diaria' ? 90 : 52} value={compromissoNovoSemanas}
+                        onChange={e => setCompromissoNovoSemanas(e.target.value)}
+                        className="w-24 bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                    </div>
                   </div>
                 )}
               </div>

@@ -10,13 +10,14 @@ export async function POST(req: NextRequest) {
       inicio: string
       fim: string
       categoria?: string
-      repetir_semanas?: number
+      repetir_frequencia?: 'semanal' | 'diaria'
+      repetir_vezes?: number
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
       senha: string
     }
-    const { terapeuta_id, titulo, inicio, fim, categoria, repetir_semanas, usuario_nome, usuario_tipo, usuario_email, senha } = body
+    const { terapeuta_id, titulo, inicio, fim, categoria, repetir_frequencia, repetir_vezes, usuario_nome, usuario_tipo, usuario_email, senha } = body
 
     if (!terapeuta_id || !titulo?.trim() || !inicio || !fim || !usuario_email || !senha) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
@@ -35,15 +36,20 @@ export async function POST(req: NextRequest) {
     if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
 
     const supabase = getSupabaseAdmin()
-    const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
+    const frequencia = repetir_frequencia === 'diaria' ? 'diaria' : 'semanal'
+    const INTERVALO_MS = frequencia === 'diaria' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+    // Diário permite mais repetições que semanal pro mesmo horizonte de tempo
+    // (90 dias ~ 12 semanas) — sem isso, o limite de 52 ficaria curto demais
+    // pra uma rotina diária.
+    const LIMITE_REPETICOES = frequencia === 'diaria' ? 90 : 52
     const inicioMs = new Date(inicioISO).getTime()
     const fimMs = new Date(fimISO).getTime()
-    const repeticoes = repetir_semanas && repetir_semanas > 1 ? Math.min(Math.floor(repetir_semanas), 52) : 1
+    const repeticoes = repetir_vezes && repetir_vezes > 1 ? Math.min(Math.floor(repetir_vezes), LIMITE_REPETICOES) : 1
     const linhas = Array.from({ length: repeticoes }, (_, i) => ({
       terapeuta_id,
       titulo: titulo.trim(),
-      inicio: new Date(inicioMs + i * SETE_DIAS_MS).toISOString(),
-      fim: new Date(fimMs + i * SETE_DIAS_MS).toISOString(),
+      inicio: new Date(inicioMs + i * INTERVALO_MS).toISOString(),
+      fim: new Date(fimMs + i * INTERVALO_MS).toISOString(),
       categoria: categoria ?? 'compromisso',
       criado_por_nome: usuario_nome,
       criado_por_tipo: usuario_tipo,
@@ -61,7 +67,7 @@ export async function POST(req: NextRequest) {
       usuario_tipo: usuario_tipo || ((usuario as Record<string, unknown>)?.tipo as string) || 'admin',
       tipo_acao: 'compromisso_criado',
       descricao: repeticoes > 1
-        ? `Compromisso "${titulo.trim()}" lançado ${repeticoes}x, semanalmente a partir de ${new Date(inicioISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+        ? `Compromisso "${titulo.trim()}" lançado ${repeticoes}x, ${frequencia === 'diaria' ? 'diariamente' : 'semanalmente'} a partir de ${new Date(inicioISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
         : `Compromisso "${titulo.trim()}" lançado na agenda (${new Date(inicioISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} – ${new Date(fimISO).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`,
       dados_novos: { terapeuta_id, titulo: titulo.trim(), inicio: inicioISO, fim: fimISO, repeticoes },
     })
