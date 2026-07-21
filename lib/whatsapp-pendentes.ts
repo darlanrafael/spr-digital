@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { normalizarTelefoneBR } from './terapeutas-auth'
 
 export type SessaoPendenteWhatsapp = {
   sessao_id: string
@@ -77,7 +78,7 @@ export async function buscarPendentes(
     const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora').in('id', saleIds)
     if (salesErr) throw new Error(salesErr.message)
     for (const s of sales ?? []) {
-      telefonePorSale[s.id as string] = s.telefone as string | null
+      telefonePorSale[s.id as string] = normalizarTelefoneBR(s.telefone as string | null)
       dataHoraPorSale[s.id as string] = s.data_hora as string
     }
   }

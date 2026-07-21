@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO, isHojeBrasilia } from '@/lib/terapeutas-auth'
+import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
       terapeuta_id: sessao.terapeuta_id as string,
       grupo_whatsapp_id: terapeutaEncaixe?.grupo_whatsapp_id ?? null,
       paciente_nome: sessao.paciente_nome as string,
-      paciente_telefone: saleEncaixe?.telefone ?? null,
+      paciente_telefone: normalizarTelefoneBR(saleEncaixe?.telefone ?? null),
       numero_sessao: sessao.numero_sessao as number,
       total_sessoes: sessao.total_sessoes as number,
       data_agendada: novaDataISO,
