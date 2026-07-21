@@ -2250,6 +2250,11 @@ export default function PainelTerapeuta() {
                 <label className="text-xs text-gray-400 block mb-1">Data da compra</label>
                 <input type="datetime-local" value={manualDataCompra} onChange={e => setManualDataCompra(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                {terapeuta?.vendas_a_partir_de && manualDataCompra && new Date(manualDataCompra) < new Date(terapeuta.vendas_a_partir_de) && (
+                  <p className="text-[10px] text-amber-400 mt-1">
+                    ⚠️ Essa data é anterior ao corte configurado pra {terapeuta.nome} — esse paciente vai ser salvo, mas NÃO vai aparecer em Pacientes Ativos, Agenda nem lembretes de WhatsApp (tratado como venda retroativa).
+                  </p>
+                )}
               </div>
               <div className="border-t border-white/10 pt-3">
                 <p className="text-xs text-gray-400 font-medium mb-2">Sessões</p>
