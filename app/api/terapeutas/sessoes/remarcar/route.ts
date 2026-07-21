@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO, isHojeBrasilia } from '@/lib/terapeutas-auth'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
+import { notificarEncaixe } from '@/lib/notificar-encaixe'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -72,6 +73,26 @@ export async function POST(req: NextRequest) {
   // evento fica órfão (existe no Calendar mas sem referência no banco).
   // Loga pra dar pra achar/limpar depois; não trava a remarcação.
   if (linkErr) console.error('[remarcar] falha ao salvar link_meet:', linkErr)
+
+  // Remarcada pro mesmo dia — "venda de encaixe": alguém preencheu um
+  // horário vago de última hora. O fluxo normal de véspera não pega isso.
+  if (isHojeBrasilia(novaDataISO)) {
+    const { data: terapeutaEncaixe } = await client.from('terapeutas')
+      .select('grupo_whatsapp_id').eq('id', sessao.terapeuta_id).single()
+    const { data: saleEncaixe } = await client.from('sales')
+      .select('telefone').eq('id', sessao.sale_id).single()
+    await notificarEncaixe({
+      sessao_id,
+      terapeuta_id: sessao.terapeuta_id as string,
+      grupo_whatsapp_id: terapeutaEncaixe?.grupo_whatsapp_id ?? null,
+      paciente_nome: sessao.paciente_nome as string,
+      paciente_telefone: saleEncaixe?.telefone ?? null,
+      numero_sessao: sessao.numero_sessao as number,
+      total_sessoes: sessao.total_sessoes as number,
+      data_agendada: novaDataISO,
+      link_meet: evento?.meetLink ?? null,
+    })
+  }
 
   const dataAnteriorFmt = sessao.data_agendada
     ? new Date(sessao.data_agendada as string).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })

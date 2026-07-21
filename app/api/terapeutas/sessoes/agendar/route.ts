@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { verificarSenhaUsuario, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia } from '@/lib/terapeutas-auth'
 import { criarEventoComMeet } from '@/lib/google-meet'
+import { notificarEncaixe } from '@/lib/notificar-encaixe'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -30,11 +31,11 @@ export async function POST(req: NextRequest) {
   const client = getSupabaseAdmin()
 
   const { data: sale, error: saleErr } = await client
-    .from('sales').select('id,nome,email,produto,valor_liquido').eq('id', sale_id).single()
+    .from('sales').select('id,nome,email,telefone,produto,valor_liquido').eq('id', sale_id).single()
   if (saleErr || !sale) return NextResponse.json({ error: 'Venda não encontrada' }, { status: 404 })
 
   const { data: terapeuta, error: terapErr } = await client
-    .from('terapeutas').select('id,percentual_comissao').eq('id', terapeuta_id).single()
+    .from('terapeutas').select('id,percentual_comissao,grupo_whatsapp_id').eq('id', terapeuta_id).single()
   if (terapErr || !terapeuta) return NextResponse.json({ error: 'Terapeuta não encontrado' }, { status: 404 })
 
   // O nome do produto nem sempre indica o pacote real (ex: "Mentoria Particular -
@@ -104,6 +105,24 @@ export async function POST(req: NextRequest) {
       // evento fica órfão (existe no Calendar mas sem referência no banco).
       // Loga pra dar pra achar/limpar depois; não trava o agendamento.
       if (linkErr) console.error('[agendar] falha ao salvar link_meet:', linkErr)
+    }
+    // Sessão marcada pro mesmo dia — "venda de encaixe": o fluxo normal de
+    // véspera (só olha "amanhã") nunca ia pegar essa. Avisa na hora, fora do
+    // cron, com o link do Meet já embutido (evento acabou de ser criado acima).
+    if (isHojeBrasilia(s.data_agendada)) {
+      const { data: sessaoCriada } = await client.from('sessoes')
+        .select('id,link_meet').eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao).single()
+      await notificarEncaixe({
+        sessao_id: sessaoCriada?.id ?? '',
+        terapeuta_id,
+        grupo_whatsapp_id: terapeuta.grupo_whatsapp_id as string | null,
+        paciente_nome: s.paciente_nome,
+        paciente_telefone: sale.telefone as string | null,
+        numero_sessao: s.numero_sessao,
+        total_sessoes: s.total_sessoes,
+        data_agendada: s.data_agendada,
+        link_meet: sessaoCriada?.link_meet ?? evento?.meetLink ?? null,
+      })
     }
   }
 

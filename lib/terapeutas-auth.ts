@@ -16,6 +16,15 @@ export function brasiliaLocalToISO(datetimeLocal: string): string {
   return new Date(`${datetimeLocal}:00-03:00`).toISOString()
 }
 
+// Verifica se uma data cai no dia de hoje em Brasília (UTC-3, fixo) — usado
+// pra detectar "venda de encaixe" (sessão marcada pro mesmo dia, sem tempo
+// do fluxo normal de véspera pegar).
+export function isHojeBrasilia(dataISO: string): boolean {
+  const hojeBR = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const dataBR = new Date(new Date(dataISO).getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  return hojeBR === dataBR
+}
+
 export async function verificarSenhaUsuario(
   email: string,
   senha: string
