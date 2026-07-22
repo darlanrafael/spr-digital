@@ -338,16 +338,15 @@ export async function GET(req: NextRequest) {
       // linhas sem nada a fazer além de "Anular". Fica só o que ainda está
       // aguardando ou em atendimento.
       .in('status', ['agendada', 'pendente'])
+      // saleIds já veio filtrado por saleAposCorte acima — aplica sempre,
+      // "Todos" incluso, senão sessão real antiga (pré-corte) reaparece
+      // aqui mesmo sumindo de Overview/Ativos quando um terapeuta
+      // específico está selecionado.
+      .in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
       .order('data_agendada', { ascending: true })
 
-    // Terapeuta com corte configurado: consulta de hoje/futura só conta se a
-    // venda que a originou é depois do corte — mesma regra do resto da
-    // página, senão sessão real antiga (pré-corte) reaparece aqui mesmo
-    // sumindo de Overview/Ativos.
-    const corteAtivoNoFiltro = terapeutaId !== 'all' && !!terapeutaFiltro?.vendas_a_partir_de
     if (terapeutaId !== 'all') {
       hojeQ = hojeQ.eq('terapeuta_id', terapeutaId)
-      if (corteAtivoNoFiltro) hojeQ = hojeQ.in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
     }
 
     // Próximas consultas — depois de hoje, ainda não entregues. Um segundo
@@ -357,12 +356,12 @@ export async function GET(req: NextRequest) {
       .select('id,data_agendada,paciente_nome,link_meet,status,status_consulta,terapeuta_id,terapeutas(nome)')
       .gt('data_agendada', hojeEnd)
       .in('status', ['agendada', 'pendente'])
+      .in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
       .order('data_agendada', { ascending: true })
       .limit(20)
 
     if (terapeutaId !== 'all') {
       proximasQ = proximasQ.eq('terapeuta_id', terapeutaId)
-      if (corteAtivoNoFiltro) proximasQ = proximasQ.in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
     }
 
     const [{ data: hojeData }, { data: proximasData }] = await Promise.all([hojeQ, proximasQ])
