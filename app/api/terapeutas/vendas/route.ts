@@ -419,3 +419,69 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// ─── PUT — editar ocorrência do tipo orientacao_sessao ────────────────────────
+// Único tipo editável — os demais (nota, remarcação, reembolso) continuam
+// sendo histórico imutável, só inserção.
+export async function PUT(req: NextRequest) {
+  try {
+    const body = await req.json() as {
+      id: string
+      descricao: string
+      senha: string
+      usuario_nome: string
+      usuario_tipo: string
+      usuario_email: string
+    }
+    const { id, descricao, senha, usuario_nome, usuario_tipo, usuario_email } = body
+
+    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
+    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+
+    const supabase = getSupabaseAdmin()
+
+    const { data: existente, error: fetchErr } = await supabase
+      .from('ocorrencias_prontuario').select('id,tipo,sessao_id').eq('id', id).single()
+    if (fetchErr || !existente) {
+      return NextResponse.json({ error: 'Ocorrência não encontrada' }, { status: 404 })
+    }
+    if (existente.tipo !== 'orientacao_sessao') {
+      return NextResponse.json({ error: 'Esse tipo de ocorrência não pode ser editado' }, { status: 400 })
+    }
+
+    if (existente.sessao_id) {
+      const { data: sessaoRow } = await supabase
+        .from('sessoes').select('data_agendada').eq('id', existente.sessao_id).single()
+      if (sessaoRow?.data_agendada) {
+        const faltamMs = new Date(sessaoRow.data_agendada).getTime() - Date.now()
+        if (faltamMs < 40 * 60 * 1000) {
+          return NextResponse.json(
+            { error: 'Faltam menos de 40 minutos para a sessão — não é mais possível editar a orientação.' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
+    const { data: ocorrencia, error: updErr } = await supabase
+      .from('ocorrencias_prontuario')
+      .update({ titulo: 'ORIENTAÇÃO DA SESSÃO:', descricao })
+      .eq('id', id)
+      .select()
+      .single()
+    if (updErr) throw new Error(updErr.message)
+
+    await registrarAtividade({
+      usuario_nome,
+      usuario_tipo,
+      tipo_acao: 'orientacao_sessao_editada',
+      sessao_id: existente.sessao_id ?? undefined,
+      descricao,
+    })
+
+    return NextResponse.json({ success: true, ocorrencia })
+  } catch (err) {
+    console.error('[terapeutas/vendas PUT]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
