@@ -14,7 +14,7 @@ import SenhaModal from '@/components/SenhaModal'
 import Pagination from '@/components/Pagination'
 import AgendaDiaTerapeuta, {
   SessaoDia, CompromissoDia, Ocupado,
-  contarSlotsLivres, calcularIntervalosLivres, fmtDuracao,
+  contarSlotsLivres, calcularIntervalosLivres, fmtDuracao, minutosDoDia,
   JANELA_INICIO_MIN, JANELA_FIM_MIN,
 } from '@/components/terapeutas/AgendaDiaTerapeuta'
 import { getSupabaseClient } from '@/lib/supabase'
@@ -679,10 +679,6 @@ export default function PainelTerapeuta() {
     })
     const compromissosDoDia = compromissos.filter(c =>
       new Date(c.inicio).toDateString() === inicioDia.toDateString())
-    function minutosDoDia(iso: string): number {
-      const d = new Date(iso)
-      return d.getHours() * 60 + d.getMinutes()
-    }
     return [
       ...sessoesDoDia.map(s => ({
         inicio: minutosDoDia(s.data_agendada as string),

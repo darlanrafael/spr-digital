@@ -39,7 +39,7 @@ const PX_POR_MIN = 1
 // direto pega o fuso local do dispositivo que está vendo a tela, não o do
 // negócio. Se o computador estiver com relógio em outro fuso, os blocos da
 // agenda saem na hora errada mesmo com o dado certo no banco.
-function minutosDoDia(iso: string): number {
+export function minutosDoDia(iso: string): number {
   const d = new Date(iso)
   const partes = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
