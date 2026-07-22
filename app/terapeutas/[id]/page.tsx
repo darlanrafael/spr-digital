@@ -419,7 +419,7 @@ export default function PainelTerapeuta() {
   // Pacientes e prontuário — Ocorrências (Nota / Remarcar / Reembolso), igual
   // ao módulo original em vendas/page.tsx
   const [prontuarioEmail, setProntuarioEmail] = useState<string | null>(null)
-  const [ocorrenciaTipo, setOcorrenciaTipo] = useState<'select' | 'nota' | 'remarcacao' | 'reembolso' | null>(null)
+  const [ocorrenciaTipo, setOcorrenciaTipo] = useState<'select' | 'nota' | 'remarcacao' | 'reembolso' | 'orientacao' | null>(null)
   // Nota
   const [notaTitulo, setNotaTitulo] = useState('')
   const [notaDesc, setNotaDesc] = useState('')
@@ -441,6 +441,13 @@ export default function PainelTerapeuta() {
   const [reeErro, setReeErro] = useState('')
   const [reeLoading, setReeLoading] = useState(false)
   const [reeSenhaOpen, setReeSenhaOpen] = useState(false)
+
+  const [orientSessaoId, setOrientSessaoId] = useState('')
+  const [orientDesc, setOrientDesc] = useState('')
+  const [orientEditandoId, setOrientEditandoId] = useState<string | null>(null)
+  const [orientErro, setOrientErro] = useState('')
+  const [orientLoading, setOrientLoading] = useState(false)
+  const [orientSenhaOpen, setOrientSenhaOpen] = useState(false)
 
   async function loadData() {
     const client = getSupabaseClient()
@@ -812,6 +819,13 @@ export default function PainelTerapeuta() {
       .flatMap(sid => ocorrencias[sid] ?? [])
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
   }, [prontuarioPaciente, ocorrencias])
+  const orientacaoExistentePorSessao = useMemo(() => {
+    const map: Record<string, Ocorrencia> = {}
+    for (const o of prontuarioOcorrencias) {
+      if (o.tipo === 'orientacao_sessao' && o.sessao_id) map[o.sessao_id] = o
+    }
+    return map
+  }, [prontuarioOcorrencias])
 
   const sessoesPendentesProntuario = prontuarioSessoesOrdenadas.filter(s => s.status === 'agendada' || s.status === 'pendente')
   const entreguesProntuario = prontuarioPaciente?.entregues ?? 0
@@ -828,6 +842,13 @@ export default function PainelTerapeuta() {
 
   const remValido = remSessaoId && remNovaData && new Date(remNovaData) > new Date() && remSolicitadoPor && remMotivo.length >= 10
   const reeValido = reeSessoes.length > 0 && reeMotivo.length >= 20
+
+  const orientSessaoEscolhida = prontuarioSessoesOrdenadas.find(s => s.id === orientSessaoId)
+  const orientFaltamMs = orientSessaoEscolhida?.data_agendada
+    ? new Date(orientSessaoEscolhida.data_agendada).getTime() - Date.now()
+    : null
+  const orientBloqueadaPorPrazo = orientFaltamMs !== null && orientFaltamMs < 40 * 60 * 1000
+  const orientValida = orientSessaoId.length > 0 && orientDesc.trim().length >= 10 && !orientBloqueadaPorPrazo
 
   async function handleStatusAcao(senha: string) {
     if (!statusSessaoId) return
@@ -965,6 +986,53 @@ export default function PainelTerapeuta() {
     if (!res.ok) { setReeErro(json.error ?? 'Erro'); return }
     setReeSenhaOpen(false); setOcorrenciaTipo(null)
     setReeSessoes([]); setReeMotivo('')
+    loadData()
+  }
+
+  async function handleOrientacao(senha: string) {
+    if (!orientValida) return
+    setOrientLoading(true); setOrientErro('')
+
+    if (orientEditandoId) {
+      const res = await fetch('/api/terapeutas/vendas', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: orientEditandoId,
+          descricao: orientDesc,
+          senha,
+          usuario_nome: sessionNome || adminEmail.split('@')[0],
+          usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
+          usuario_email: adminEmail,
+        }),
+      })
+      const json = await res.json()
+      setOrientLoading(false)
+      if (!res.ok) { setOrientErro(json.error ?? 'Erro'); return }
+    } else {
+      if (!prontuarioSaleMaisRecente) { setOrientLoading(false); return }
+      const res = await fetch('/api/terapeutas/vendas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sale_id: prontuarioSaleMaisRecente.id,
+          sessao_id: orientSessaoId,
+          tipo: 'orientacao_sessao',
+          titulo: 'ORIENTAÇÃO DA SESSÃO:',
+          descricao: orientDesc,
+          senha,
+          usuario_nome: sessionNome || adminEmail.split('@')[0],
+          usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
+          usuario_email: adminEmail,
+        }),
+      })
+      const json = await res.json()
+      setOrientLoading(false)
+      if (!res.ok) { setOrientErro(json.error ?? 'Erro'); return }
+    }
+
+    setOrientSenhaOpen(false); setOcorrenciaTipo(null)
+    setOrientSessaoId(''); setOrientDesc(''); setOrientEditandoId(null)
     loadData()
   }
 
@@ -1940,11 +2008,12 @@ export default function PainelTerapeuta() {
                 {ocorrenciaTipo === 'select' && (
                   <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4">
                     <p className="text-xs text-gray-400 mb-3 font-medium">Selecione o tipo de ocorrência:</p>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                       {[
                         { tipo: 'nota' as const, icon: '📝', title: 'Nota / Observação', desc: 'Registre uma nota ou observação sobre o paciente' },
                         { tipo: 'remarcacao' as const, icon: '📅', title: 'Remarcar Consulta', desc: 'Solicite a remarcação de uma consulta agendada' },
                         { tipo: 'reembolso' as const, icon: '💰', title: 'Solicitação de Reembolso Parcial', desc: 'Reembolso de sessões não realizadas — vai para aprovação do CEO' },
+                        { tipo: 'orientacao' as const, icon: '📣', title: 'Orientação da Sessão', desc: 'Vai automaticamente no lembrete de 30min (grupo do terapeuta e paciente)' },
                       ].map(({ tipo, icon, title, desc }) => (
                         <button key={tipo} onClick={() => setOcorrenciaTipo(tipo)}
                           className="text-left p-3 bg-gray-800 hover:bg-gray-700 border border-white/10 hover:border-white/20 rounded-xl transition-colors">
@@ -2140,6 +2209,67 @@ export default function PainelTerapeuta() {
                   </div>
                 )}
 
+                {/* Formulário: ORIENTAÇÃO DA SESSÃO */}
+                {ocorrenciaTipo === 'orientacao' && (
+                  <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 mb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-white">📣 {orientEditandoId ? 'Editar orientação da sessão' : 'Nova orientação da sessão'}</p>
+                      <button onClick={() => { setOcorrenciaTipo(null); setOrientSessaoId(''); setOrientDesc(''); setOrientEditandoId(null); setOrientErro('') }}
+                        className="text-gray-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Qual sessão? <span className="text-red-400">*</span></label>
+                      <select value={orientSessaoId} disabled={!!orientEditandoId} onChange={e => {
+                        const sid = e.target.value
+                        setOrientSessaoId(sid)
+                        const existente = orientacaoExistentePorSessao[sid]
+                        if (existente) {
+                          setOrientEditandoId(existente.id)
+                          setOrientDesc(existente.descricao)
+                        } else {
+                          setOrientEditandoId(null)
+                          setOrientDesc('')
+                        }
+                      }} className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 disabled:opacity-60">
+                        <option value="">Selecionar sessão...</option>
+                        {sessoesPendentesProntuario.map(s => (
+                          <option key={s.id} value={s.id}>
+                            Sessão {s.numero_sessao} — {fmtDt(s.data_agendada)}{orientacaoExistentePorSessao[s.id] ? ' (já tem orientação — editar)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {orientBloqueadaPorPrazo && (
+                      <p className="text-[11px] text-amber-400">⚠️ Faltam menos de 40 minutos para essa sessão — não dá mais tempo de entrar no lembrete automático de 30min. Não é possível registrar/editar.</p>
+                    )}
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Título</label>
+                      <input type="text" value="ORIENTAÇÃO DA SESSÃO:" disabled
+                        className="w-full bg-gray-700/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-400" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Descrição <span className="text-red-400">*</span> (mín. 10 caracteres)</label>
+                      <textarea value={orientDesc} onChange={e => setOrientDesc(e.target.value)} rows={4}
+                        placeholder="Ex: Hoje nessa sessão será o marido dela que vai fazer, ele questionou..."
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 resize-y" />
+                    </div>
+                    {orientErro && <p className="text-xs text-red-400">{orientErro}</p>}
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => { setOcorrenciaTipo(null); setOrientSessaoId(''); setOrientDesc(''); setOrientEditandoId(null); setOrientErro('') }}
+                        className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
+                      <button onClick={() => {
+                        if (!orientSessaoId) { setOrientErro('Selecione a sessão'); return }
+                        if (orientDesc.trim().length < 10) { setOrientErro('Descreva com pelo menos 10 caracteres'); return }
+                        if (orientBloqueadaPorPrazo) { setOrientErro('Faltam menos de 40 minutos para a sessão'); return }
+                        setOrientErro(''); setOrientSenhaOpen(true)
+                      }} disabled={!orientValida}
+                        className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors">
+                        {orientEditandoId ? 'Salvar edição' : 'Registrar orientação'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Lista de ocorrências */}
                 <div className="space-y-2">
                   {prontuarioOcorrencias.length === 0 ? (
@@ -2189,6 +2319,16 @@ export default function PainelTerapeuta() {
         descricao="Digite sua senha para remarcar a sessão"
         loading={remLoading}
         erro={remErro}
+      />
+
+      <SenhaModal
+        isOpen={orientSenhaOpen}
+        onClose={() => { setOrientSenhaOpen(false); setOrientErro('') }}
+        onConfirm={handleOrientacao}
+        titulo={orientEditandoId ? 'Salvar edição da orientação' : 'Registrar orientação'}
+        descricao="Digite sua senha para confirmar"
+        loading={orientLoading}
+        erro={orientErro}
       />
 
       <SenhaModal
