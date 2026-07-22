@@ -71,6 +71,7 @@ type SaleInfo = {
 type Ocorrencia = {
   id: string
   sale_id: string
+  sessao_id: string | null
   tipo: string
   titulo: string
   descricao: string
@@ -260,6 +261,7 @@ const OCORRENCIA_META: Record<string, { icon: string; label: string; cls: string
   solicitacao_reembolso: { icon: '💰', label: 'Solicitação de Reembolso', cls: 'text-orange-400 bg-orange-400/10 border-orange-400/20' },
   reembolso_aprovado:    { icon: '✅', label: 'Reembolso Aprovado',      cls: 'text-green-500 bg-green-500/10 border-green-500/20' },
   reembolso_rejeitado:   { icon: '❌', label: 'Reembolso Rejeitado',     cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
+  orientacao_sessao:     { icon: '📣', label: 'Orientação da Sessão',    cls: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
 }
 
 function calcularReembolsoLocal(params: {
@@ -424,6 +426,7 @@ export default function PainelTerapeuta() {
   const [notaErro, setNotaErro] = useState('')
   const [notaLoading, setNotaLoading] = useState(false)
   const [notaSenhaOpen, setNotaSenhaOpen] = useState(false)
+  const [notaSessaoId, setNotaSessaoId] = useState('')
   // Remarcar consulta (form do prontuário — distinto do modal rápido da Agenda)
   const [remSessaoId, setRemSessaoId] = useState('')
   const [remNovaData, setRemNovaData] = useState('')
@@ -484,7 +487,7 @@ export default function PainelTerapeuta() {
     const sessaoIds = sessoesData.map(s => s.id)
     if (saleIdsVisiveis.length > 0) {
       const [ocResp, remResp] = await Promise.all([
-        client.from('ocorrencias_prontuario').select('id,sale_id,tipo,titulo,descricao,criado_por_nome,criado_por_tipo,created_at').in('sale_id', saleIdsVisiveis).order('created_at', { ascending: false }),
+        client.from('ocorrencias_prontuario').select('id,sale_id,sessao_id,tipo,titulo,descricao,criado_por_nome,criado_por_tipo,created_at').in('sale_id', saleIdsVisiveis).order('created_at', { ascending: false }),
         sessaoIds.length > 0
           ? client.from('remarcacoes_historico').select('*').in('sessao_id', sessaoIds).order('created_at', { ascending: true })
           : Promise.resolve({ data: [] as Remarcacao[] }),
@@ -884,6 +887,7 @@ export default function PainelTerapeuta() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sale_id: prontuarioSaleMaisRecente.id,
+        sessao_id: notaSessaoId || undefined,
         tipo: 'nota',
         titulo: notaTitulo,
         descricao: notaDesc,
@@ -897,7 +901,7 @@ export default function PainelTerapeuta() {
     setNotaLoading(false)
     if (!res.ok) { setNotaErro(json.error ?? 'Erro'); return }
     setNotaSenhaOpen(false); setOcorrenciaTipo(null)
-    setNotaTitulo(''); setNotaDesc('')
+    setNotaTitulo(''); setNotaDesc(''); setNotaSessaoId('')
     loadData()
   }
 
@@ -1967,6 +1971,18 @@ export default function PainelTerapeuta() {
                       <input type="text" value={notaTitulo} onChange={e => setNotaTitulo(e.target.value)} maxLength={100}
                         placeholder="Ex: Observação após sessão 2..."
                         className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Vincular a uma sessão (opcional)</label>
+                      <select value={notaSessaoId} onChange={e => setNotaSessaoId(e.target.value)}
+                        className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
+                        <option value="">Nota geral (sem sessão específica)</option>
+                        {prontuarioSessoesOrdenadas.map(s => (
+                          <option key={s.id} value={s.id}>
+                            Sessão {s.numero_sessao} — {fmtDt(s.data_agendada)}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="text-[10px] text-gray-500 block mb-1">Descrição <span className="text-red-400">*</span> (mín. 10 caracteres)</label>
