@@ -106,6 +106,7 @@ export async function POST(req: NextRequest) {
   // endpoint, então a sessão nunca era realmente atualizada.
   await client.from('ocorrencias_prontuario').insert({
     sale_id: sessao.sale_id,
+    sessao_id,
     tipo: 'remarcacao',
     titulo: `Remarcação — Sessão ${sessao.numero_sessao}`,
     descricao: descricaoCompleta,

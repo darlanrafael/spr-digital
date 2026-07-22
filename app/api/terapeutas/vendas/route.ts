@@ -270,13 +270,14 @@ export async function POST(req: NextRequest) {
       tipo: string
       titulo: string
       descricao: string
+      sessao_id?: string
       dados_extras?: Record<string, unknown>
       senha: string
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
     }
-    const { sale_id, tipo, titulo, descricao, dados_extras, senha, usuario_nome, usuario_tipo, usuario_email } = body
+    const { sale_id, tipo, titulo, descricao, sessao_id, dados_extras, senha, usuario_nome, usuario_tipo, usuario_email } = body
 
     const { valido } = await verificarSenhaUsuario(usuario_email, senha)
     if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
@@ -335,12 +336,51 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    if (tipo === 'orientacao_sessao') {
+      if (!sessao_id) {
+        return NextResponse.json({ error: 'Selecione a sessão' }, { status: 400 })
+      }
+
+      const { data: sessaoRow, error: sessaoErr } = await supabase
+        .from('sessoes').select('id,data_agendada').eq('id', sessao_id).single()
+      if (sessaoErr || !sessaoRow) {
+        return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
+      }
+
+      if (sessaoRow.data_agendada) {
+        const faltamMs = new Date(sessaoRow.data_agendada).getTime() - Date.now()
+        if (faltamMs < 40 * 60 * 1000) {
+          return NextResponse.json(
+            { error: 'Faltam menos de 40 minutos para a sessão — não dá mais tempo de entrar no lembrete automático.' },
+            { status: 400 }
+          )
+        }
+      }
+
+      const { data: existente } = await supabase
+        .from('ocorrencias_prontuario')
+        .select('id')
+        .eq('sessao_id', sessao_id)
+        .eq('tipo', 'orientacao_sessao')
+        .maybeSingle()
+      if (existente) {
+        return NextResponse.json(
+          { error: 'Já existe uma orientação registrada para essa sessão — edite a existente em vez de criar outra.' },
+          { status: 409 }
+        )
+      }
+    }
+
     const { data: ocorrencia, error: ocErr } = await supabase
       .from('ocorrencias_prontuario')
       .insert({
         sale_id,
+        // Cai pro sessao_id de dentro de dados_extras quando o chamador só
+        // preenche lá (ex: fluxo antigo de remarcação) — mantém a coluna nova
+        // sempre preenchida sem precisar mudar todo caller hoje.
+        sessao_id: sessao_id ?? (dados_extras?.sessao_id as string | undefined) ?? null,
         tipo,
-        titulo,
+        titulo: tipo === 'orientacao_sessao' ? 'ORIENTAÇÃO DA SESSÃO:' : titulo,
         descricao,
         dados_extras: dados_extras ?? null,
         criado_por_nome: usuario_nome,
