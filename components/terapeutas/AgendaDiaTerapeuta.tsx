@@ -35,9 +35,18 @@ export const JANELA_INICIO_MIN = 8 * 60   // 08:00
 export const JANELA_FIM_MIN = 22 * 60     // 22:00 — o último horário fixo do Pedro (21:10, 50min) termina às 22:00; 21:00 cortava esse slot fora da área visível
 const PX_POR_MIN = 1
 
+// Sempre fixa em Brasília (America/Sao_Paulo) — usar d.getHours()/getMinutes()
+// direto pega o fuso local do dispositivo que está vendo a tela, não o do
+// negócio. Se o computador estiver com relógio em outro fuso, os blocos da
+// agenda saem na hora errada mesmo com o dado certo no banco.
 function minutosDoDia(iso: string): number {
   const d = new Date(iso)
-  return d.getHours() * 60 + d.getMinutes()
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d)
+  const hora = Number(partes.find(p => p.type === 'hour')?.value ?? 0)
+  const minuto = Number(partes.find(p => p.type === 'minute')?.value ?? 0)
+  return hora * 60 + minuto
 }
 
 function horaParaData(diaBase: Date, minutos: number): Date {
