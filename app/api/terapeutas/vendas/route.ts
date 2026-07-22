@@ -390,7 +390,20 @@ export async function POST(req: NextRequest) {
       .select()
       .single()
 
-    if (ocErr) throw new Error(ocErr.message)
+    if (ocErr) {
+      // Fast-path check above can miss under a race (two near-simultaneous
+      // requests both pass the SELECT before either INSERT completes); the
+      // partial unique index on ocorrencias_prontuario(sessao_id) WHERE
+      // tipo = 'orientacao_sessao' is the real guard, and Postgres reports a
+      // violation of it as unique_violation (23505) via PostgREST.
+      if (ocErr.code === '23505') {
+        return NextResponse.json(
+          { error: 'Já existe uma orientação registrada para essa sessão — edite a existente em vez de criar outra.' },
+          { status: 409 }
+        )
+      }
+      throw new Error(ocErr.message)
+    }
 
     await registrarAtividade({
       usuario_nome,
