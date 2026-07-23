@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
       fim: emTrintaMin.toISOString(),
       colGrupo: 'lembrete_grupo_30min_enviado_em',
       colPaciente: 'lembrete_paciente_30min_enviado_em',
+      incluirOrientacao: true,
     })
     return NextResponse.json({ terapeutas })
   } catch (err) {

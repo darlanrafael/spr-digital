@@ -11,6 +11,7 @@ export type SessaoPendenteWhatsapp = {
   link_meet: string | null
   grupo_ja_enviado: boolean
   paciente_ja_enviado: boolean
+  orientacao_sessao: string | null
 }
 
 export type TerapeutaPendente = {
@@ -36,7 +37,7 @@ export function verificarSecretCron(req: Request): boolean {
 // de data e quais colunas de controle são checadas.
 export async function buscarPendentes(
   client: SupabaseClient,
-  params: { inicio: string; fim: string; colGrupo: ColunaGrupo; colPaciente: ColunaPaciente }
+  params: { inicio: string; fim: string; colGrupo: ColunaGrupo; colPaciente: ColunaPaciente; incluirOrientacao?: boolean }
 ): Promise<TerapeutaPendente[]> {
   const { data: terapeutas, error: terapErr } = await client
     .from('terapeutas')
@@ -83,6 +84,22 @@ export async function buscarPendentes(
     }
   }
 
+  const orientacaoPorSessao: Record<string, string> = {}
+  if (params.incluirOrientacao) {
+    const sessaoIds = linhas.map(s => s.id)
+    if (sessaoIds.length > 0) {
+      const { data: orientacoes, error: orientErr } = await client
+        .from('ocorrencias_prontuario')
+        .select('sessao_id,descricao')
+        .in('sessao_id', sessaoIds)
+        .eq('tipo', 'orientacao_sessao')
+      if (orientErr) throw new Error(orientErr.message)
+      for (const o of orientacoes ?? []) {
+        if (o.sessao_id) orientacaoPorSessao[o.sessao_id as string] = o.descricao as string
+      }
+    }
+  }
+
   const grupoIdPorTerapeuta: Record<string, string> = {}
   const cortePorTerapeuta: Record<string, string | null> = {}
   for (const t of terapeutas) {
@@ -122,6 +139,7 @@ export async function buscarPendentes(
       link_meet: s.link_meet,
       grupo_ja_enviado: !!s[params.colGrupo],
       paciente_ja_enviado: !!s[params.colPaciente],
+      orientacao_sessao: orientacaoPorSessao[s.id] ?? null,
     })
   }
 
