@@ -82,6 +82,7 @@ export async function PATCH(req: NextRequest) {
 
     await supabase.from('ocorrencias_prontuario').insert({
       sale_id: sessao.sale_id,
+      sessao_id,
       tipo: ocorrenciaTipo,
       titulo: ocorrenciaTitulo,
       descricao: ocorrenciaDesc,
