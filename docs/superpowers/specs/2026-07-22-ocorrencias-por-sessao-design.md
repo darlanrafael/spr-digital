@@ -99,8 +99,10 @@ carregar essa informação.
   📣 *ORIENTAÇÃO DA SESSÃO:*
   <texto>
   ```
-  Vai pras duas mensagens (grupo do terapeuta e privado do paciente, quando
-  houver telefone) — decisão já validada com o usuário.
+  **Correção pós-implementação (2026-07-23):** ao ver o teste real, o usuário
+  reverteu essa decisão — vai **só na mensagem de grupo do terapeuta**. A
+  mensagem privada do paciente volta a ser exatamente a de antes (sem o bloco
+  de orientação), sem alteração nenhuma no fluxo dela.
 
 ## Endpoints
 
