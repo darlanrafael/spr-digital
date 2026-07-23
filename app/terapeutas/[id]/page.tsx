@@ -826,6 +826,19 @@ export default function PainelTerapeuta() {
     }
     return map
   }, [prontuarioOcorrencias])
+  const ocorrenciasAgrupadasPorSessao = useMemo(() => {
+    const porSessao: { sessao: Sessao; ocorrencias: Ocorrencia[] }[] = []
+    for (const s of prontuarioSessoesOrdenadas) {
+      const lista = prontuarioOcorrencias.filter(o => o.sessao_id === s.id)
+      if (lista.length > 0) porSessao.push({ sessao: s, ocorrencias: lista })
+    }
+    // Mais recente primeiro — mesma sessão pode ter data_agendada antiga
+    // se foi remarcada, então ordena pela sessão (numero_sessao desc), não
+    // por data_agendada.
+    porSessao.sort((a, b) => b.sessao.numero_sessao - a.sessao.numero_sessao)
+    const geral = prontuarioOcorrencias.filter(o => !o.sessao_id)
+    return { porSessao, geral }
+  }, [prontuarioSessoesOrdenadas, prontuarioOcorrencias])
 
   const sessoesPendentesProntuario = prontuarioSessoesOrdenadas.filter(s => s.status === 'agendada' || s.status === 'pendente')
   const entreguesProntuario = prontuarioPaciente?.entregues ?? 0
@@ -2270,29 +2283,68 @@ export default function PainelTerapeuta() {
                   </div>
                 )}
 
-                {/* Lista de ocorrências */}
-                <div className="space-y-2">
+                {/* Lista de ocorrências — agrupada por sessão */}
+                <div className="space-y-4">
                   {prontuarioOcorrencias.length === 0 ? (
                     <p className="text-xs text-gray-600 text-center py-4">Nenhuma ocorrência registrada.</p>
-                  ) : prontuarioOcorrencias.map(o => {
-                    const meta = OCORRENCIA_META[o.tipo] ?? { icon: '📌', label: o.tipo, cls: 'text-gray-400 bg-gray-400/10 border-gray-400/20' }
-                    return (
-                      <div key={o.id} className={`border rounded-xl p-3 ${meta.cls}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span>{meta.icon}</span>
-                            <span className="text-[11px] font-medium">{meta.label}</span>
+                  ) : (
+                    <>
+                      {ocorrenciasAgrupadasPorSessao.porSessao.map(({ sessao, ocorrencias: lista }) => (
+                        <div key={sessao.id}>
+                          <p className="text-[11px] font-semibold text-gray-400 mb-2">
+                            Sessão {sessao.numero_sessao} — {fmtDt(sessao.data_agendada)}
+                          </p>
+                          <div className="space-y-2">
+                            {lista.map(o => {
+                              const meta = OCORRENCIA_META[o.tipo] ?? { icon: '📌', label: o.tipo, cls: 'text-gray-400 bg-gray-400/10 border-gray-400/20' }
+                              return (
+                                <div key={o.id} className={`border rounded-xl p-3 ${meta.cls}`}>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <span>{meta.icon}</span>
+                                      <span className="text-[11px] font-medium">{meta.label}</span>
+                                    </div>
+                                    <span className="text-[10px] opacity-60">{fmtDt(o.created_at)}</span>
+                                  </div>
+                                  <p className="text-xs text-white font-medium mb-0.5">{o.titulo}</p>
+                                  <p className="text-xs opacity-80 leading-relaxed">{o.descricao}</p>
+                                  <p className="text-[10px] opacity-50 mt-2">
+                                    Registrado por {o.criado_por_nome} ({o.criado_por_tipo})
+                                  </p>
+                                </div>
+                              )
+                            })}
                           </div>
-                          <span className="text-[10px] opacity-60">{fmtDt(o.created_at)}</span>
                         </div>
-                        <p className="text-xs text-white font-medium mb-0.5">{o.titulo}</p>
-                        <p className="text-xs opacity-80 leading-relaxed">{o.descricao}</p>
-                        <p className="text-[10px] opacity-50 mt-2">
-                          Registrado por {o.criado_por_nome} ({o.criado_por_tipo})
-                        </p>
-                      </div>
-                    )
-                  })}
+                      ))}
+                      {ocorrenciasAgrupadasPorSessao.geral.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-semibold text-gray-400 mb-2">Geral</p>
+                          <div className="space-y-2">
+                            {ocorrenciasAgrupadasPorSessao.geral.map(o => {
+                              const meta = OCORRENCIA_META[o.tipo] ?? { icon: '📌', label: o.tipo, cls: 'text-gray-400 bg-gray-400/10 border-gray-400/20' }
+                              return (
+                                <div key={o.id} className={`border rounded-xl p-3 ${meta.cls}`}>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <span>{meta.icon}</span>
+                                      <span className="text-[11px] font-medium">{meta.label}</span>
+                                    </div>
+                                    <span className="text-[10px] opacity-60">{fmtDt(o.created_at)}</span>
+                                  </div>
+                                  <p className="text-xs text-white font-medium mb-0.5">{o.titulo}</p>
+                                  <p className="text-xs opacity-80 leading-relaxed">{o.descricao}</p>
+                                  <p className="text-[10px] opacity-50 mt-2">
+                                    Registrado por {o.criado_por_nome} ({o.criado_por_tipo})
+                                  </p>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 
