@@ -442,6 +442,15 @@ export default function PainelTerapeuta() {
   const [reeLoading, setReeLoading] = useState(false)
   const [reeSenhaOpen, setReeSenhaOpen] = useState(false)
 
+  // Editar dados do paciente (nome/e-mail/telefone) no cabeçalho do prontuário
+  const [editandoPaciente, setEditandoPaciente] = useState(false)
+  const [editNome, setEditNome] = useState('')
+  const [editEmail, setEditEmail] = useState('')
+  const [editTelefone, setEditTelefone] = useState('')
+  const [editErro, setEditErro] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
+  const [editSenhaOpen, setEditSenhaOpen] = useState(false)
+
   const [orientSessaoId, setOrientSessaoId] = useState('')
   const [orientDesc, setOrientDesc] = useState('')
   const [orientEditandoId, setOrientEditandoId] = useState<string | null>(null)
@@ -855,6 +864,7 @@ export default function PainelTerapeuta() {
 
   const remValido = remSessaoId && remNovaData && new Date(remNovaData) > new Date() && remSolicitadoPor && remMotivo.length >= 10
   const reeValido = reeSessoes.length > 0 && reeMotivo.length >= 20
+  const editValido = editNome.trim().length > 0 && editEmail.trim().length > 0
 
   const orientSessaoEscolhida = prontuarioSessoesOrdenadas.find(s => s.id === orientSessaoId)
   const orientFaltamMs = orientSessaoEscolhida?.data_agendada
@@ -999,6 +1009,30 @@ export default function PainelTerapeuta() {
     if (!res.ok) { setReeErro(json.error ?? 'Erro'); return }
     setReeSenhaOpen(false); setOcorrenciaTipo(null)
     setReeSessoes([]); setReeMotivo('')
+    loadData()
+  }
+
+  async function handleEditarPaciente(senha: string) {
+    if (!prontuarioSaleMaisRecente) return
+    setEditLoading(true); setEditErro('')
+    const res = await fetch('/api/terapeutas/vendas/editar-paciente', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sale_id: prontuarioSaleMaisRecente.id,
+        nome: editNome,
+        email: editEmail,
+        telefone: editTelefone,
+        senha,
+        usuario_nome: sessionNome || adminEmail.split('@')[0],
+        usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
+        usuario_email: adminEmail,
+      }),
+    })
+    const json = await res.json()
+    setEditLoading(false)
+    if (!res.ok) { setEditErro(json.error ?? 'Erro'); return }
+    setEditSenhaOpen(false); setEditandoPaciente(false)
     loadData()
   }
 
@@ -1909,22 +1943,71 @@ export default function PainelTerapeuta() {
               {/* SEÇÃO 1 — Informações do paciente */}
               {prontuarioSaleMaisRecente && (
                 <div>
-                  <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Informações do paciente</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {[
-                      { label: 'Nome', value: prontuarioSaleMaisRecente.nome },
-                      { label: 'E-mail', value: prontuarioSaleMaisRecente.email },
-                      { label: 'Telefone', value: prontuarioSaleMaisRecente.telefone ?? '—' },
-                      { label: 'Formato comprado', value: prontuarioSaleMaisRecente.produto },
-                      { label: 'Data da compra', value: fmtDt(prontuarioSaleMaisRecente.data_hora) },
-                      { label: 'Plataforma', value: prontuarioSaleMaisRecente.plataforma ?? '—' },
-                    ].map(({ label, value }) => (
-                      <div key={label} className="bg-gray-800/40 rounded-lg p-3">
-                        <p className="text-[10px] text-gray-500 mb-0.5">{label}</p>
-                        <p className="text-xs text-white">{value}</p>
-                      </div>
-                    ))}
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Informações do paciente</h4>
+                    {!editandoPaciente && (
+                      <button onClick={() => {
+                        setEditNome(prontuarioSaleMaisRecente.nome)
+                        setEditEmail(prontuarioSaleMaisRecente.email)
+                        setEditTelefone(prontuarioSaleMaisRecente.telefone ?? '')
+                        setEditErro('')
+                        setEditandoPaciente(true)
+                      }} className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">
+                        ✏️ Editar
+                      </button>
+                    )}
                   </div>
+
+                  {editandoPaciente ? (
+                    <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-[10px] text-gray-500 block mb-1">Nome <span className="text-red-400">*</span></label>
+                          <input type="text" value={editNome} onChange={e => setEditNome(e.target.value)}
+                            className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500 block mb-1">E-mail <span className="text-red-400">*</span></label>
+                          <input type="email" value={editEmail} onChange={e => setEditEmail(e.target.value)}
+                            className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500 block mb-1">Telefone</label>
+                          <input type="text" value={editTelefone} onChange={e => setEditTelefone(e.target.value)}
+                            className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-gray-500">Formato comprado, data da compra e plataforma não são editáveis aqui — só nome, e-mail e telefone.</p>
+                      {editErro && <p className="text-xs text-red-400">{editErro}</p>}
+                      <div className="flex gap-2">
+                        <button onClick={() => { setEditandoPaciente(false); setEditErro('') }}
+                          className="px-3 py-1.5 text-xs text-gray-400 bg-gray-700 rounded-lg">Cancelar</button>
+                        <button onClick={() => {
+                          if (!editValido) { setEditErro('Preencha nome e e-mail'); return }
+                          setEditErro(''); setEditSenhaOpen(true)
+                        }} disabled={!editValido}
+                          className="px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors">
+                          Salvar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {[
+                        { label: 'Nome', value: prontuarioSaleMaisRecente.nome },
+                        { label: 'E-mail', value: prontuarioSaleMaisRecente.email },
+                        { label: 'Telefone', value: prontuarioSaleMaisRecente.telefone ?? '—' },
+                        { label: 'Formato comprado', value: prontuarioSaleMaisRecente.produto },
+                        { label: 'Data da compra', value: fmtDt(prontuarioSaleMaisRecente.data_hora) },
+                        { label: 'Plataforma', value: prontuarioSaleMaisRecente.plataforma ?? '—' },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="bg-gray-800/40 rounded-lg p-3">
+                          <p className="text-[10px] text-gray-500 mb-0.5">{label}</p>
+                          <p className="text-xs text-white">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2361,6 +2444,16 @@ export default function PainelTerapeuta() {
         descricao="Digite sua senha para registrar a ocorrência"
         loading={notaLoading}
         erro={notaErro}
+      />
+
+      <SenhaModal
+        isOpen={editSenhaOpen}
+        onClose={() => { setEditSenhaOpen(false); setEditErro('') }}
+        onConfirm={handleEditarPaciente}
+        titulo="Salvar dados do paciente"
+        descricao="Digite sua senha para confirmar a edição"
+        loading={editLoading}
+        erro={editErro}
       />
 
       <SenhaModal
