@@ -22,6 +22,14 @@ function parsePercent(val: string): number {
   return parseFloat(val.replace(',', '.')) || 0
 }
 
+// Valor em reais no formato BR ("2.500,00") tem ponto de milhar E vírgula
+// decimal — trocar só a vírgula por ponto deixa "2.500.00", que o
+// parseFloat lê até o segundo ponto e vira 2.5 (silencioso, sem erro).
+// Precisa tirar os pontos de milhar antes de trocar a vírgula.
+function parseValorBR(val: string): number {
+  return parseFloat(val.replace(/\./g, '').replace(',', '.')) || 0
+}
+
 export default function FechamentosPage() {
   return (
     <ProtectedRoute>
@@ -119,7 +127,7 @@ function FechamentosContent() {
   function removeCustoFunil(id: string) {
     setCustosFunil(prev => prev.filter(c => c.id !== id))
   }
-  const custosFunilTotal = custosFunil.reduce((a, c) => a + (parseFloat(c.valor.replace(',', '.')) || 0), 0)
+  const custosFunilTotal = custosFunil.reduce((a, c) => a + parseValorBR(c.valor), 0)
 
   // Terapeutas cadastradas com comissão — usado pra identificar o repasse
   // devido em produtos que levam o nome delas (ex.: "Mentoria Particular -
@@ -390,8 +398,8 @@ function FechamentosContent() {
       custos_funil_total: custosFunilTotal,
       custos_funil_itens: custosFunilTotal > 0
         ? custosFunil
-            .filter(c => c.descricao.trim() && (parseFloat(c.valor.replace(',', '.')) || 0) > 0)
-            .map(c => ({ descricao: c.descricao.trim(), valor: parseFloat(c.valor.replace(',', '.')) || 0 }))
+            .filter(c => c.descricao.trim() && parseValorBR(c.valor) > 0)
+            .map(c => ({ descricao: c.descricao.trim(), valor: parseValorBR(c.valor) }))
         : undefined,
       produtos_periodos: periodosGrupos.length > 0
         ? periodosGrupos.map(g => ({

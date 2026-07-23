@@ -191,6 +191,13 @@ function LinkMeetCell({ id, link, copiadoId, onCopy }: { id: string; link: strin
 function fmtBRL(n: number) {
   return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+// Valor em reais no formato BR ("2.500,00") tem ponto de milhar E vírgula
+// decimal — trocar só a vírgula por ponto deixa "2.500.00", que o
+// parseFloat lê até o segundo ponto e vira 2.5 (silencioso, sem erro, foi
+// assim que "2500" lançado manualmente virava R$2,50 no prontuário).
+function parseValorBR(val: string): number {
+  return parseFloat(val.replace(/\./g, '').replace(',', '.')) || 0
+}
 function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -1109,8 +1116,8 @@ export default function PainelTerapeuta() {
         terapeuta_id: id,
         nome: manualNome, email: manualEmail, telefone: manualTelefone || undefined,
         produto: manualProduto, plataforma: manualPlataforma,
-        valor_pago_cliente: parseFloat(manualValorBruto.replace(',', '.')) || 0,
-        valor_liquido: parseFloat(manualValorLiquido.replace(',', '.')) || 0,
+        valor_pago_cliente: parseValorBR(manualValorBruto),
+        valor_liquido: parseValorBR(manualValorLiquido),
         data_hora: manualDataCompra || undefined,
         total_sessoes: manualTotalNum,
         sessoes_entregues: manualEntreguesNum,
