@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { ChevronDown, ChevronUp, Download } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -62,6 +63,7 @@ function exportFechamentoCSV(f: FechamentoHistorico) {
 type TerapeutaSession = { nome: string; email: string; tipo: string }
 
 export default function FechamentosTerapeutasPage() {
+  const searchParams = useSearchParams()
   const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])
   const [terapeutaId, setTerapeutaId] = useState('')
   const [adminEmail, setAdminEmail] = useState('')
@@ -119,7 +121,13 @@ export default function FechamentosTerapeutasPage() {
       .then((data: Terapeuta[]) => {
         const ativos = (data ?? []).filter(t => t.ativo)
         setTerapeutas(ativos)
-        if (ativos.length > 0) setTerapeutaId(ativos[0].id)
+        // Prioriza o terapeuta que veio na URL (ex: link "Fechamentos" clicado
+        // de dentro da página de um terapeuta específico) — sem isso sempre
+        // caía no primeiro em ordem alfabética (Denise), mesmo vindo do Pedro.
+        const daUrl = searchParams.get('terapeutaId')
+        const daUrlValido = daUrl && ativos.some(t => t.id === daUrl)
+        if (daUrlValido) setTerapeutaId(daUrl!)
+        else if (ativos.length > 0) setTerapeutaId(ativos[0].id)
       })
       .catch(() => {})
   }, [])

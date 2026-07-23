@@ -25,12 +25,15 @@ export default function MobileNav() {
   const pathname = usePathname()
   const { user } = useApp()
   const isTerapeutas = pathname.startsWith('/terapeutas')
+  const terapeutaIdAtual = pathname.match(/^\/terapeutas\/([0-9a-f-]{36})$/)?.[1]
 
   const navItems = isTerapeutas
     ? [
         ...TERAPEUTAS_NAV,
         ...(user?.role === 'admin' ? [
-          { href: '/terapeutas/fechamentos', label: 'Fechamentos', icon: FileText },
+          // Leva o terapeuta da página atual — sem isso Fechamentos sempre
+          // abre no primeiro em ordem alfabética (Denise).
+          { href: terapeutaIdAtual ? `/terapeutas/fechamentos?terapeutaId=${terapeutaIdAtual}` : '/terapeutas/fechamentos', label: 'Fechamentos', icon: FileText },
           { href: '/terapeutas/admin', label: 'Admin', icon: Heart },
         ] : []),
       ]

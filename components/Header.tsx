@@ -40,6 +40,7 @@ export default function Header() {
   const pathname = usePathname()
   const router = useRouter()
   const isTerapeutas = pathname.startsWith('/terapeutas')
+  const terapeutaIdAtual = pathname.match(/^\/terapeutas\/([0-9a-f-]{36})$/)?.[1]
 
   const lastLoadedLabel = lastLoadedAt
     ? lastLoadedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -139,7 +140,10 @@ export default function Header() {
             {(isTerapeutas ? [
               ...(terapeutaSession?.tipo === 'comercial' ? TERAPEUTAS_NAV_COMERCIAL : TERAPEUTAS_NAV),
               ...(user?.role === 'admin' ? [
-                { href: '/terapeutas/fechamentos', label: 'Fechamentos' },
+                // Leva o terapeuta da página atual pro seletor de Fechamentos —
+                // sem isso ele sempre abre no primeiro terapeuta em ordem
+                // alfabética (Denise), mesmo saindo da página do Pedro.
+                { href: terapeutaIdAtual ? `/terapeutas/fechamentos?terapeutaId=${terapeutaIdAtual}` : '/terapeutas/fechamentos', label: 'Fechamentos' },
                 { href: '/terapeutas/admin', label: 'Admin' },
                 { href: '/terapeutas/aprovacoes', label: 'Aprovações', badge: aprovacoesPendentes },
               ] : []),
