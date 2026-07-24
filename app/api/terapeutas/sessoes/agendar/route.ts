@@ -109,7 +109,13 @@ export async function POST(req: NextRequest) {
     // Sessão marcada pro mesmo dia — "venda de encaixe": o fluxo normal de
     // véspera (só olha "amanhã") nunca ia pegar essa. Avisa na hora, fora do
     // cron, com o link do Meet já embutido (evento acabou de ser criado acima).
-    if (isHojeBrasilia(s.data_agendada)) {
+    // Só dispara quando é agendamento de sessão avulsa (numSessoes === 1) —
+    // agendar um pacote inteiro (numSessoes > 1) é reorganização de agenda,
+    // não "última hora": se algumas datas do lote caírem em hoje (comum ao
+    // recriar histórico ou preencher datas retroativas), isso já disparava
+    // um "Venda de Encaixe" por sessão, alarme falso pra paciente que já
+    // existia — confundiu o terapeuta.
+    if (numSessoes === 1 && isHojeBrasilia(s.data_agendada)) {
       const { data: sessaoCriada } = await client.from('sessoes')
         .select('id,link_meet').eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao).single()
       await notificarEncaixe({
