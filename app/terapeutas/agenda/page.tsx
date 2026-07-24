@@ -25,7 +25,7 @@ type Sessao = {
   terapeutas: { nome: string } | null
 }
 
-type Terapeuta = { id: string; nome: string }
+type Terapeuta = { id: string; nome: string; vendas_a_partir_de: string | null }
 
 const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
@@ -58,10 +58,37 @@ export default function TerapeutasAgenda() {
           // Sessão já entregue não é mais um compromisso futuro — some da
           // agenda pra não confundir com o que ainda precisa acontecer.
           .neq('status', 'entregue'),
-        client.from('terapeutas').select('id,nome').eq('ativo', true).order('nome'),
+        client.from('terapeutas').select('id,nome,vendas_a_partir_de').eq('ativo', true).order('nome'),
       ])
-      setSessoes((sResp.data ?? []) as unknown as Sessao[])
-      setTerapeutas((tResp.data ?? []) as Terapeuta[])
+      const terapeutasData = (tResp.data ?? []) as Terapeuta[]
+      const sessoesData = (sResp.data ?? []) as unknown as Sessao[]
+
+      // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
+      // sessão só conta se a venda que a originou é depois do corte — mesma
+      // regra do resto do sistema. Sem isso, essa agenda (diferente da aba
+      // Agenda dentro do perfil do terapeuta, que já filtrava certo) mostrava
+      // sessão antiga escondida junto com a relançada, parecendo duplicado.
+      const cortePorTerapeuta: Record<string, string | null> = {}
+      for (const t of terapeutasData) cortePorTerapeuta[t.id] = t.vendas_a_partir_de
+      const saleIds = [...new Set(sessoesData.map(s => s.sale_id))]
+      const dataHoraPorSale: Record<string, string> = {}
+      if (saleIds.length > 0) {
+        const BATCH = 200
+        for (let i = 0; i < saleIds.length; i += BATCH) {
+          const batch = saleIds.slice(i, i + BATCH)
+          const { data } = await client.from('sales').select('id,data_hora').in('id', batch)
+          for (const v of (data ?? []) as { id: string; data_hora: string }[]) dataHoraPorSale[v.id] = v.data_hora
+        }
+      }
+      const sessoesFiltradasPorCorte = sessoesData.filter(s => {
+        const corte = cortePorTerapeuta[s.terapeuta_id]
+        if (!corte) return true
+        const dataHora = dataHoraPorSale[s.sale_id]
+        return dataHora ? new Date(dataHora).getTime() >= new Date(corte).getTime() : false
+      })
+
+      setSessoes(sessoesFiltradasPorCorte)
+      setTerapeutas(terapeutasData)
       setLoading(false)
     }
     load()
