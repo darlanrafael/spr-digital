@@ -209,12 +209,26 @@ export default function AgendaDiaTerapeuta({
         // (ex: janela de almoço), que não fazem sentido pra quem só atende
         // nesses horários exatos, não numa agenda de horário livre.
         <div className="divide-y divide-white/5">
-          {marcas.map(m => {
-            const fimSlot = m.minuto + duracaoSessaoMinutos
-            const sessaoAqui = sessoesComHorario.find(s => m.minuto < s.fim && fimSlot > s.inicio)
-            const compromissoAqui = !sessaoAqui
-              ? compromissosComHorario.find(c => m.minuto < c.fim && fimSlot > c.inicio)
-              : undefined
+          {(() => {
+            // Cada sessão/compromisso só pode "ocupar" o primeiro horário fixo
+            // com quem ela sobrepõe (marcas já vêm ordenadas por minuto). Sem
+            // isso, quando dois horários da grade ficam mais próximos entre si
+            // do que a duração da sessão (ex: grade de 45min pra sessão de
+            // 50min), a MESMA sessão real batia na janela de dois horários e
+            // aparecia duplicada na lista — o paciente não tinha 2 sessões,
+            // era a mesma sendo contada duas vezes.
+            const sessoesUsadas = new Set<string>()
+            const compromissosUsados = new Set<string>()
+            return marcas.map(m => {
+              const fimSlot = m.minuto + duracaoSessaoMinutos
+              const sessaoAqui = sessoesComHorario.find(s =>
+                !sessoesUsadas.has(s.sessao.id) && m.minuto < s.fim && fimSlot > s.inicio)
+              if (sessaoAqui) sessoesUsadas.add(sessaoAqui.sessao.id)
+              const compromissoAqui = !sessaoAqui
+                ? compromissosComHorario.find(c =>
+                    !compromissosUsados.has(c.compromisso.id) && m.minuto < c.fim && fimSlot > c.inicio)
+                : undefined
+              if (compromissoAqui) compromissosUsados.add(compromissoAqui.compromisso.id)
 
             if (sessaoAqui) {
               const { sessao, inicio, fim } = sessaoAqui
@@ -256,7 +270,8 @@ export default function AgendaDiaTerapeuta({
                 <span className="text-[11px] text-green-500/70">Livre — clique pra bloquear</span>
               </button>
             )
-          })}
+            })
+          })()}
         </div>
       ) : (
         <div className="flex px-5 py-4">
