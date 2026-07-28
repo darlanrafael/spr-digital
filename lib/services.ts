@@ -110,6 +110,12 @@ export async function getSales(
       .from('sales')
       .select('*')
       .eq('project_id', projectId)
+      // Registros "manual_*" são lançamentos administrativos do módulo de
+      // terapeutas (agenda/sessões de um paciente que já tem venda real
+      // registrada em outro lugar) — não são transações reais de nenhuma
+      // plataforma de pagamento. Contá-los aqui duplicava faturamento real
+      // (o paciente já aparece via a venda real da Hubla/Kiwify).
+      .not('id', 'like', 'manual_%')
 
     // Wide early filter: cobre ambas as plataformas com um único range de banco.
     // Hubla (UTC real): dia D começa em D T03:00:00 UTC.
