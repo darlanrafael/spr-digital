@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X, AlertTriangle,
   Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download,
-  DollarSign, Receipt, Percent, Copy, Check,
+  DollarSign, Receipt, Percent, Copy, Check, Play, Ban, ClipboardList,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/Header'
@@ -1456,33 +1456,33 @@ export default function PainelTerapeuta() {
                                       )}
                                     </td>
                                     <td className="px-4 py-3">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <button onClick={() => setProntuarioEmail(s.paciente_email)}
-                                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors whitespace-nowrap">
-                                          📋 Prontuário
+                                      <div className="flex items-center gap-1">
+                                        <button onClick={() => setProntuarioEmail(s.paciente_email)} title="Ver prontuário"
+                                          className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+                                          <ClipboardList className="w-3.5 h-3.5" />
                                         </button>
                                         {(s.status === 'agendada' || s.status === 'pendente') && (s.status_consulta ?? 'aguardando') === 'aguardando' && (
-                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('iniciar'); setStatusErro('') }}
-                                            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap">
-                                            ▶ Iniciar
+                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('iniciar'); setStatusErro('') }} title="Iniciar consulta"
+                                            className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-blue-400 hover:bg-blue-500/10 transition-colors">
+                                            <Play className="w-3.5 h-3.5" />
                                           </button>
                                         )}
                                         {(s.status === 'agendada' || s.status === 'pendente') && (
-                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setConcluirData(nowForDatetimeLocal()); setStatusErro('') }}
-                                            className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors whitespace-nowrap">
-                                            <CheckCircle className="w-3 h-3" /> Concluir
+                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setConcluirData(nowForDatetimeLocal()); setStatusErro('') }} title="Concluir consulta"
+                                            className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-green-500 hover:bg-green-500/10 transition-colors">
+                                            <CheckCircle className="w-3.5 h-3.5" />
                                           </button>
                                         )}
                                         {(s.status === 'agendada' || s.status === 'pendente') && (
-                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('nao_compareceu'); setStatusErro('') }}
-                                            className="flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300 transition-colors whitespace-nowrap">
-                                            🚫 Não compareceu
+                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('nao_compareceu'); setStatusErro('') }} title="Paciente não compareceu"
+                                            className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-orange-400 hover:bg-orange-500/10 transition-colors">
+                                            <Ban className="w-3.5 h-3.5" />
                                           </button>
                                         )}
                                         {s.status === 'entregue' && (
-                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }}
-                                            className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors whitespace-nowrap">
-                                            Anular
+                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }} title="Anular sessão"
+                                            className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors">
+                                            <X className="w-3.5 h-3.5" />
                                           </button>
                                         )}
                                       </div>
