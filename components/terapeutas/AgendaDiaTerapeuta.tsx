@@ -55,12 +55,6 @@ function horaParaData(diaBase: Date, minutos: number): Date {
   return d
 }
 
-function fmtHora(min: number): string {
-  const h = Math.floor(min / 60).toString().padStart(2, '0')
-  const m = (min % 60).toString().padStart(2, '0')
-  return `${h}:${m}`
-}
-
 export function fmtDuracao(min: number): string {
   const h = Math.floor(min / 60)
   const m = min % 60
@@ -231,7 +225,7 @@ export default function AgendaDiaTerapeuta({
               if (compromissoAqui) compromissosUsados.add(compromissoAqui.compromisso.id)
 
             if (sessaoAqui) {
-              const { sessao, inicio, fim } = sessaoAqui
+              const { sessao } = sessaoAqui
               return (
                 <button key={m.minuto} onClick={() => onClickSessao(sessao)}
                   className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
@@ -239,14 +233,14 @@ export default function AgendaDiaTerapeuta({
                   <span className="w-[3px] h-8 rounded-sm bg-indigo-500 shrink-0" />
                   <span className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
-                    <p className="text-[11px] text-indigo-400/80 truncate">{fmtHora(inicio)}–{fmtHora(fim)} · Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+                    <p className="text-[11px] text-indigo-400/80 truncate">Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
                   </span>
                 </button>
               )
             }
 
             if (compromissoAqui) {
-              const { compromisso, inicio, fim } = compromissoAqui
+              const { compromisso } = compromissoAqui
               const isSessao = compromisso.categoria === 'sessao'
               return (
                 <button key={m.minuto} onClick={() => onClickCompromisso(compromisso)}
@@ -255,7 +249,6 @@ export default function AgendaDiaTerapeuta({
                   <span className={`w-[3px] h-8 rounded-sm shrink-0 ${isSessao ? 'bg-indigo-500' : 'bg-stone-400'}`} />
                   <span className="min-w-0 flex-1">
                     <p className={`text-sm font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
-                    <p className={`text-[11px] truncate ${isSessao ? 'text-indigo-400/80' : 'text-stone-500'}`}>{fmtHora(inicio)}–{fmtHora(fim)}</p>
                   </span>
                 </button>
               )
@@ -309,7 +302,7 @@ export default function AgendaDiaTerapeuta({
                   className="absolute left-0 right-2 text-left rounded-r-lg border-l-[3px] border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20 transition-colors px-2.5 py-1 overflow-hidden"
                   style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
                   <p className="text-[11px] font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
-                  <p className="text-[10px] text-indigo-400/80 truncate">{fmtHora(inicio)}–{fmtHora(fim)} · Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+                  <p className="text-[10px] text-indigo-400/80 truncate">Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
                 </button>
               )
             })}
@@ -330,7 +323,6 @@ export default function AgendaDiaTerapeuta({
                   }`}
                   style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
                   <p className={`text-[11px] font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
-                  <p className={`text-[10px] truncate ${isSessao ? 'text-indigo-400/80' : 'text-stone-500'}`}>{fmtHora(inicio)}–{fmtHora(fim)}</p>
                 </button>
               )
             })}
