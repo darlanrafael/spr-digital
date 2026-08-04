@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, User, Users, Activity, Eye, EyeOff, CheckCircle, Key, X, Shield, Mail } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -36,7 +37,8 @@ type LogEntry = {
   created_at: string
 }
 
-type Tab = 'terapeutas' | 'usuarios' | 'dashboard' | 'log'
+const TABS = ['terapeutas', 'usuarios', 'dashboard', 'log'] as const
+type Tab = typeof TABS[number]
 
 type UsuarioDashboard = {
   id: string
@@ -53,7 +55,19 @@ function fmtDt(iso: string) {
 
 export default function AdminPage() {
   const { user } = useApp()
-  const [tab, setTab] = useState<Tab>('terapeutas')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  // Fica na URL (?tab=) pra sobreviver a um refresh da página.
+  const [tab, setTabState] = useState<Tab>(() => {
+    const t = searchParams.get('tab')
+    return (TABS as readonly string[]).includes(t ?? '') ? (t as Tab) : 'terapeutas'
+  })
+  function setTab(t: Tab) {
+    setTabState(t)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', t)
+    router.replace(`/terapeutas/admin?${next.toString()}`, { scroll: false })
+  }
 
   // Terapeutas
   const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])

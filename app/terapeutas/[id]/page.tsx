@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X, AlertTriangle,
   Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download,
@@ -332,9 +332,15 @@ type TerapeutaSession = {
   terapeuta_id: string | null
 }
 
+const TERAPEUTA_TABS = ['overview', 'vendas', 'agenda', 'fechamentos'] as const
+type TerapeutaTabType = typeof TERAPEUTA_TABS[number]
+const VENDAS_SUBTABS = ['pendentes', 'ativos', 'concluidos', 'reembolsados'] as const
+type VendasSubTabType = typeof VENDAS_SUBTABS[number]
+
 export default function PainelTerapeuta() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const id = params.id as string
 
   const [terapeuta, setTerapeuta] = useState<Terapeuta | null>(null)
@@ -371,8 +377,18 @@ export default function PainelTerapeuta() {
   const [remarcarErro, setRemarcarErro] = useState('')
   const [remarcarLoading, setRemarcarLoading] = useState(false)
 
-  // Visão terapeuta — tabs de página
-  const [terapeutaTab, setTerapeutaTab] = useState<'overview' | 'vendas' | 'agenda' | 'fechamentos'>('overview')
+  // Visão terapeuta — tabs de página. Fica na URL (?tab=) pra sobreviver a
+  // um refresh da página em vez de sempre voltar pra "overview".
+  const [terapeutaTab, setTerapeutaTabState] = useState<TerapeutaTabType>(() => {
+    const t = searchParams.get('tab')
+    return (TERAPEUTA_TABS as readonly string[]).includes(t ?? '') ? (t as TerapeutaTabType) : 'overview'
+  })
+  function setTerapeutaTab(tab: TerapeutaTabType) {
+    setTerapeutaTabState(tab)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', tab)
+    router.replace(`/terapeutas/${id}?${next.toString()}`, { scroll: false })
+  }
 
   // Agenda — calendário do mês
   const hoje = new Date()
@@ -417,8 +433,18 @@ export default function PainelTerapeuta() {
   const [ovProximasConsultas, setOvProximasConsultas] = useState<ConsultaHoje[]>([])
   const [ovLoading, setOvLoading] = useState(false)
 
-  // Vendas
-  const [vendasSubTab, setVendasSubTab] = useState<'pendentes' | 'ativos' | 'concluidos' | 'reembolsados'>('pendentes')
+  // Vendas — sub-aba também fica na URL (?subtab=), mesma regra do
+  // terapeutaTab acima.
+  const [vendasSubTab, setVendasSubTabState] = useState<VendasSubTabType>(() => {
+    const st = searchParams.get('subtab')
+    return (VENDAS_SUBTABS as readonly string[]).includes(st ?? '') ? (st as VendasSubTabType) : 'pendentes'
+  })
+  function setVendasSubTab(sub: VendasSubTabType) {
+    setVendasSubTabState(sub)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('subtab', sub)
+    router.replace(`/terapeutas/${id}?${next.toString()}`, { scroll: false })
+  }
   const [vBusca, setVBusca] = useState('')
   const [vFormato, setVFormato] = useState('all')
   const [vPreset, setVPreset] = useState<Preset>('all')

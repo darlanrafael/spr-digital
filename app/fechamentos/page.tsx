@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Download, Loader2, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -14,7 +15,8 @@ import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcar
 import { getSupabaseClient } from '@/lib/supabase'
 
 type Step = 1 | 2 | 3 | 4
-type PageTab = 'novo' | 'historico'
+const PAGE_TABS = ['novo', 'historico'] as const
+type PageTab = typeof PAGE_TABS[number]
 
 const SOCIO_NAMES = ['SPR DIGITAL LTDA', 'Pedro Roncada']
 
@@ -40,8 +42,20 @@ export default function FechamentosPage() {
 
 function FechamentosContent() {
   const { sales, costs, setCosts, products, closings, setClosings, cashflow, setCashflow, selectedProject, user } = useApp()
+  const router = useRouter()
+  const searchParams = useSearchParams()
 
-  const [pageTab, setPageTab] = useState<PageTab>('novo')
+  // Fica na URL (?tab=) pra sobreviver a um refresh da página.
+  const [pageTab, setPageTabState] = useState<PageTab>(() => {
+    const t = searchParams.get('tab')
+    return (PAGE_TABS as readonly string[]).includes(t ?? '') ? (t as PageTab) : 'novo'
+  })
+  function setPageTab(tab: PageTab) {
+    setPageTabState(tab)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', tab)
+    router.replace(`/fechamentos?${next.toString()}`, { scroll: false })
+  }
   const [activeStep, setActiveStep] = useState<Step>(1)
   const [periodo, setPeriodo] = useState(() => {
     const d = new Date()

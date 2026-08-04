@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Search, Filter, Clock } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -63,9 +64,24 @@ export default function VendasPage() {
   )
 }
 
+const VENDAS_TABS = ['aprovadas', 'reembolsos'] as const
+type VendasTabType = typeof VENDAS_TABS[number]
+
 function VendasContent() {
   const { sales, products, selectedProject } = useApp()
-  const [tab, setTab] = useState<'aprovadas' | 'reembolsos'>('aprovadas')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  // Fica na URL (?tab=) pra sobreviver a um refresh da página.
+  const [tab, setTabState] = useState<VendasTabType>(() => {
+    const t = searchParams.get('tab')
+    return (VENDAS_TABS as readonly string[]).includes(t ?? '') ? (t as VendasTabType) : 'aprovadas'
+  })
+  function setTab(t: VendasTabType) {
+    setTabState(t)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', t)
+    router.replace(`/vendas?${next.toString()}`, { scroll: false })
+  }
   const [search, setSearch] = useState('')
   const [filterProduct, setFilterProduct] = useState('')
   const [filterDate, setFilterDate] = useState('')

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle, Copy, Check } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -21,6 +21,8 @@ export const dynamic = 'force-dynamic'
 type Preset = 'all' | 'today' | 'last_7d' | 'custom'
 type AbaAtiva = 'aprovadas' | 'reembolsos'
 type SubAba = 'pendentes' | 'ativos'
+const ABA_ATIVA_VALUES: readonly AbaAtiva[] = ['aprovadas', 'reembolsos']
+const SUB_ABA_VALUES: readonly SubAba[] = ['pendentes', 'ativos']
 type OcorrenciaTipo = null | 'select' | 'nota' | 'remarcacao' | 'reembolso'
 
 type Sale = {
@@ -243,12 +245,32 @@ const EMPTY_DATA: PageData = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function TerapeutasVendas() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const autoAgendarRef = useRef(false)
 
-  // Filtros
-  const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('aprovadas')
-  const [subAba, setSubAba] = useState<SubAba>('pendentes')
+  // Filtros — aba/sub-aba ficam na URL (?tab=/?subtab=) pra sobreviver a um
+  // refresh da página em vez de sempre voltar pro padrão.
+  const [abaAtiva, setAbaAtivaState] = useState<AbaAtiva>(() => {
+    const t = searchParams.get('tab')
+    return ABA_ATIVA_VALUES.includes(t as AbaAtiva) ? (t as AbaAtiva) : 'aprovadas'
+  })
+  const [subAba, setSubAbaState] = useState<SubAba>(() => {
+    const st = searchParams.get('subtab')
+    return SUB_ABA_VALUES.includes(st as SubAba) ? (st as SubAba) : 'pendentes'
+  })
+  function setAbaAtiva(tab: AbaAtiva) {
+    setAbaAtivaState(tab)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', tab)
+    router.replace(`/terapeutas/vendas?${next.toString()}`, { scroll: false })
+  }
+  function setSubAba(sub: SubAba) {
+    setSubAbaState(sub)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('subtab', sub)
+    router.replace(`/terapeutas/vendas?${next.toString()}`, { scroll: false })
+  }
   const [preset, setPreset] = useState<Preset>('all')
   const [dateStart, setDateStart] = useState('')
   const [dateEnd, setDateEnd] = useState('')

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts'
@@ -15,7 +16,8 @@ import { formatCurrency, formatDate, getMonthLabel } from '@/lib/formatters'
 import { addCashflowEntry as svcAddCashflow } from '@/lib/services'
 import { CashflowType } from '@/types'
 
-type CashTab = 'extrato' | 'entradas' | 'saidas'
+const CASH_TABS = ['extrato', 'entradas', 'saidas'] as const
+type CashTab = typeof CASH_TABS[number]
 
 const TYPE_CONFIG: Record<CashflowType, { label: string; colorClass: string; bg: string }> = {
   entrada_manual: { label: 'Entrada manual', colorClass: 'text-emerald-400', bg: 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' },
@@ -34,7 +36,19 @@ export default function CaixaPage() {
 
 function CaixaContent() {
   const { cashflow, setCashflow, user } = useApp()
-  const [tab, setTab] = useState<CashTab>('extrato')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  // Fica na URL (?tab=) pra sobreviver a um refresh da página.
+  const [tab, setTabState] = useState<CashTab>(() => {
+    const t = searchParams.get('tab')
+    return (CASH_TABS as readonly string[]).includes(t ?? '') ? (t as CashTab) : 'extrato'
+  })
+  function setTab(t: CashTab) {
+    setTabState(t)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', t)
+    router.replace(`/caixa?${next.toString()}`, { scroll: false })
+  }
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState({ tipo: 'entrada_manual' as CashflowType, descricao: '', valor: '', data: '' })
 

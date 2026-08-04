@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, RotateCcw } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -188,8 +189,13 @@ export default function DashboardPage() {
   )
 }
 
+const DASH_TABS = ['visao_geral', 'melhores_horarios'] as const
+type DashTabType = typeof DASH_TABS[number]
+
 function DashboardContent() {
   const { sales, costs, setCosts, products, selectedProject, user } = useApp()
+  const router = useRouter()
+  const searchParams = useSearchParams()
 
   const [period, setPeriod] = useState<PeriodFilter>('today')
   const [customStart, setCustomStart] = useState('')
@@ -225,7 +231,17 @@ function DashboardContent() {
   const [periodSales, setPeriodSales] = useState<Sale[]>([])
   const [salesLoading, setSalesLoading] = useState(false)
 
-  const [dashTab, setDashTab] = useState<'visao_geral' | 'melhores_horarios'>('visao_geral')
+  // Fica na URL (?tab=) pra sobreviver a um refresh da página.
+  const [dashTab, setDashTabState] = useState<DashTabType>(() => {
+    const t = searchParams.get('tab')
+    return (DASH_TABS as readonly string[]).includes(t ?? '') ? (t as DashTabType) : 'visao_geral'
+  })
+  function setDashTab(tab: DashTabType) {
+    setDashTabState(tab)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', tab)
+    router.replace(`/?${next.toString()}`, { scroll: false })
+  }
 
   const canEdit = user?.role === 'admin'
 

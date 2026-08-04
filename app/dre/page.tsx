@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Pencil, Check, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
@@ -9,7 +10,8 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import { formatCurrency, getMonthLabel, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 import { getDreAjustes, upsertDreAjuste } from '@/lib/services'
 
-type DREToggle = 'dre' | 'fluxo'
+const DRE_TOGGLES = ['dre', 'fluxo'] as const
+type DREToggle = typeof DRE_TOGGLES[number]
 
 const MONTHS_6 = (() => {
   const result: string[] = []
@@ -31,7 +33,19 @@ export default function DREPage() {
 
 function DREContent() {
   const { sales, costs, products, selectedProject, user } = useApp()
-  const [toggle, setToggle] = useState<DREToggle>('dre')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  // Fica na URL (?tab=) pra sobreviver a um refresh da página.
+  const [toggle, setToggleState] = useState<DREToggle>(() => {
+    const t = searchParams.get('tab')
+    return (DRE_TOGGLES as readonly string[]).includes(t ?? '') ? (t as DREToggle) : 'dre'
+  })
+  function setToggle(t: DREToggle) {
+    setToggleState(t)
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('tab', t)
+    router.replace(`/dre?${next.toString()}`, { scroll: false })
+  }
   const [editingOther, setEditingOther] = useState<string | null>(null)
   // Persistido em dre_ajustes (antes só existia em estado local e sumia ao
   // dar refresh na página).
