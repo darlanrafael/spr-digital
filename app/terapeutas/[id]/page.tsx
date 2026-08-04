@@ -243,6 +243,14 @@ function exportFechamentoCSV(f: FechamentoHistorico) {
 function nowForDatetimeLocal(): string {
   return dateToDatetimeLocal(new Date())
 }
+function agendaDiaParam(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function parseAgendaDiaParam(v: string | null): Date | null {
+  if (!v) return null
+  const d = new Date(v + 'T00:00:00')
+  return isNaN(d.getTime()) ? null : d
+}
 function dateToDatetimeLocal(date: Date): string {
   const d = new Date(date)
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
@@ -390,12 +398,43 @@ export default function PainelTerapeuta() {
     router.replace(`/terapeutas/${id}?${next.toString()}`, { scroll: false })
   }
 
-  // Agenda — calendário do mês
+  // Agenda — calendário do mês. Mês/ano e o dia aberto (drill-down) ficam
+  // na URL (?mes=&ano=&dia=) — sem isso um refresh na visão do dia sempre
+  // voltava pro grid do mês atual.
   const hoje = new Date()
-  const [agendaMes, setAgendaMes] = useState(hoje.getMonth())
-  const [agendaAno, setAgendaAno] = useState(hoje.getFullYear())
+  const [agendaMes, setAgendaMes] = useState(() => {
+    const diaParam = parseAgendaDiaParam(searchParams.get('dia'))
+    if (diaParam) return diaParam.getMonth()
+    const m = Number(searchParams.get('mes'))
+    return searchParams.get('mes') !== null && !isNaN(m) ? m : hoje.getMonth()
+  })
+  const [agendaAno, setAgendaAno] = useState(() => {
+    const diaParam = parseAgendaDiaParam(searchParams.get('dia'))
+    if (diaParam) return diaParam.getFullYear()
+    const a = Number(searchParams.get('ano'))
+    return searchParams.get('ano') !== null && !isNaN(a) ? a : hoje.getFullYear()
+  })
   const [agendaDetalhe, setAgendaDetalhe] = useState<Sessao | null>(null)
-  const [agendaDiaSelecionado, setAgendaDiaSelecionado] = useState<Date | null>(null)
+  const [agendaDiaSelecionado, setAgendaDiaSelecionadoState] = useState<Date | null>(
+    () => parseAgendaDiaParam(searchParams.get('dia'))
+  )
+  function syncAgendaUrl(params: { dia?: string | null; mes?: number; ano?: number }) {
+    const next = new URLSearchParams(searchParams.toString())
+    if ('dia' in params) {
+      if (params.dia) next.set('dia', params.dia)
+      else next.delete('dia')
+    }
+    if (params.mes !== undefined) next.set('mes', String(params.mes))
+    if (params.ano !== undefined) next.set('ano', String(params.ano))
+    router.replace(`/terapeutas/${id}?${next.toString()}`, { scroll: false })
+  }
+  function setAgendaDiaSelecionado(value: Date | null | ((prev: Date | null) => Date | null)) {
+    setAgendaDiaSelecionadoState(prev => {
+      const next = typeof value === 'function' ? (value as (p: Date | null) => Date | null)(prev) : value
+      syncAgendaUrl({ dia: next ? agendaDiaParam(next) : null, mes: agendaMes, ano: agendaAno })
+      return next
+    })
+  }
   const [compromissos, setCompromissos] = useState<CompromissoDia[]>([])
 
   // Lançar compromisso pessoal — a partir de um clique em horário livre na Agenda do Dia
@@ -727,6 +766,7 @@ export default function PainelTerapeuta() {
     const d = new Date(agendaAno, agendaMes + dir, 1)
     setAgendaAno(d.getFullYear())
     setAgendaMes(d.getMonth())
+    syncAgendaUrl({ mes: d.getMonth(), ano: d.getFullYear() })
   }
   const agendaCells = useMemo(() => {
     const primeiroDia = new Date(agendaAno, agendaMes, 1).getDay()
