@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { logWebhookEvent } from '@/lib/webhook-log'
 
 const PROJECT_ID = 'proj_1'
 
@@ -88,6 +89,7 @@ export async function POST(req: NextRequest) {
           .limit(1)
         if (existingRows && existingRows.length > 0) {
           console.log('[Kiwify Webhook] duplicata ignorada por order_id:', orderId)
+          await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'duplicate_ignored', saleId: existingRows[0].id as string, detalhe: orderId, payload: body })
           return NextResponse.json({ success: true, event: 'duplicate_ignored' })
         }
       } else {
@@ -99,7 +101,12 @@ export async function POST(req: NextRequest) {
           .eq('produto', sale.produto)
           .limit(1)
         if (existingRows && existingRows.length > 0) {
-          console.log('[Kiwify Webhook] duplicata ignorada por email+produto:', sale.email, sale.produto)
+          // Caminho de risco: sem order_id no payload pra desempatar, cai pra
+          // email+produto — se o mesmo cliente comprar o mesmo produto DUAS
+          // VEZES de verdade, a segunda venda é descartada aqui como se fosse
+          // duplicata. Resultado marcado à parte pra dar pra auditar depois.
+          console.log('[Kiwify Webhook] duplicata ignorada por email+produto (sem order_id):', sale.email, sale.produto)
+          await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'duplicate_ignored_email_produto_fallback', saleId: existingRows[0].id as string, detalhe: `${sale.email} / ${sale.produto}`, payload: body })
           return NextResponse.json({ success: true, event: 'duplicate_ignored' })
         }
       }
@@ -125,14 +132,17 @@ export async function POST(req: NextRequest) {
 
       if (error) {
         console.error('[Kiwify Webhook] erro no insert:', error)
+        await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'insert_error', detalhe: error.message, payload: body })
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
       console.log('[Kiwify Webhook] venda salva com sucesso:', sale.id)
+      await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'sale_created', saleId: sale.id, payload: body })
       return NextResponse.json({ success: true, event: 'sale_created', id: sale.id })
 
     } catch (err) {
       console.error('[Kiwify Webhook] exceção ao processar venda:', err)
+      await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'exception', detalhe: String(err), payload: body })
       return NextResponse.json({ error: String(err) }, { status: 500 })
     }
   }
@@ -148,6 +158,7 @@ export async function POST(req: NextRequest) {
 
       if (!email) {
         console.warn('[Kiwify Webhook] reembolso sem email — ignorado')
+        await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'refund_no_email', payload: body })
         return NextResponse.json({ success: true, event: 'ignored' })
       }
 
@@ -164,18 +175,22 @@ export async function POST(req: NextRequest) {
 
       if (error) {
         console.error('[Kiwify Webhook] erro ao atualizar reembolso:', error)
+        await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'refund_update_error', detalhe: `${email}: ${error.message}`, payload: body })
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
       console.log('[Kiwify Webhook] reembolso processado para:', email)
+      await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'sale_refunded', detalhe: email, payload: body })
       return NextResponse.json({ success: true, event: 'sale_refunded' })
 
     } catch (err) {
       console.error('[Kiwify Webhook] exceção ao processar reembolso:', err)
+      await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'exception', detalhe: String(err), payload: body })
       return NextResponse.json({ error: String(err) }, { status: 500 })
     }
   }
 
   console.log('[Kiwify Webhook] evento ignorado:', eventType)
+  await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType || 'unknown', resultado: 'ignored_unknown_type', payload: body })
   return NextResponse.json({ success: true, event: 'ignored', type: eventType })
 }

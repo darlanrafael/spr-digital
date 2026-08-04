@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { logWebhookEvent } from '@/lib/webhook-log'
 
 const PROJECT_ID = 'proj_1'
 
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
 
   if (!event) {
     console.warn('[Hubla Webhook] payload sem campo event — ignorado')
+    await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type ?? 'unknown', resultado: 'no_event_field', payload: body })
     return NextResponse.json({ success: true, event: 'ignored' })
   }
 
@@ -44,6 +46,7 @@ export async function POST(req: NextRequest) {
       const hasChildInvoices = ((invoice?.childInvoiceIds as unknown[]) ?? []).length > 0
       if (hasChildInvoices && !hasParentInvoice) {
         console.log('[Hubla Webhook] fatura pai ignorada — aguardando webhooks dos produtos filhos')
+        await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'parent_invoice_ignored', payload: body })
         return NextResponse.json({ success: true, event: 'parent_invoice_ignored' })
       }
 
@@ -126,12 +129,15 @@ export async function POST(req: NextRequest) {
               .eq('order_id', orderId)
             if (updateError) {
               console.error('[Hubla Webhook] erro ao corrigir valor (offer priority):', updateError)
+              await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'update_error', detalhe: `${orderId}: ${updateError.message}`, payload: body })
               return NextResponse.json({ error: updateError.message }, { status: 500 })
             }
             console.log('[Hubla Webhook] valor corrigido para offer individual:', orderId, 'valor:', sale.valor_pago_cliente)
+            await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'sale_updated_offer_priority', saleId: existingRows[0].id as string, detalhe: orderId, payload: body })
             return NextResponse.json({ success: true, event: 'sale_updated_offer_priority' })
           }
           console.log('[Hubla Webhook] duplicata ignorada por order_id:', orderId)
+          await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'duplicate_ignored', saleId: existingRows[0].id as string, detalhe: orderId, payload: body })
           return NextResponse.json({ success: true, event: 'duplicate_ignored' })
         }
       } else {
@@ -143,7 +149,12 @@ export async function POST(req: NextRequest) {
           .eq('produto', sale.produto)
           .limit(1)
         if (existingRows && existingRows.length > 0) {
-          console.log('[Hubla Webhook] duplicata ignorada por email+produto:', sale.email, sale.produto)
+          // Caminho de risco: sem order_id no payload pra desempatar, cai pra
+          // email+produto — se o mesmo cliente comprar o mesmo produto DUAS
+          // VEZES de verdade, a segunda venda é descartada aqui como se fosse
+          // duplicata. Resultado marcado à parte pra dar pra auditar depois.
+          console.log('[Hubla Webhook] duplicata ignorada por email+produto (sem order_id):', sale.email, sale.produto)
+          await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'duplicate_ignored_email_produto_fallback', saleId: existingRows[0].id as string, detalhe: `${sale.email} / ${sale.produto}`, payload: body })
           return NextResponse.json({ success: true, event: 'duplicate_ignored' })
         }
       }
@@ -154,14 +165,17 @@ export async function POST(req: NextRequest) {
 
       if (error) {
         console.error('[Hubla Webhook] erro no insert:', error)
+        await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'insert_error', detalhe: error.message, payload: body })
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
       console.log('[Hubla Webhook] venda salva com sucesso:', sale.id)
+      await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'sale_created', saleId: sale.id, payload: body })
       return NextResponse.json({ success: true, event: 'sale_created', id: sale.id })
 
     } catch (err) {
       console.error('[Hubla Webhook] exceção ao processar pagamento:', err)
+      await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'exception', detalhe: String(err), payload: body })
       return NextResponse.json({ error: String(err) }, { status: 500 })
     }
   }
@@ -174,6 +188,7 @@ export async function POST(req: NextRequest) {
 
       if (!email) {
         console.warn('[Hubla Webhook] reembolso sem email — ignorado')
+        await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'refund_no_email', payload: body })
         return NextResponse.json({ success: true, event: 'ignored' })
       }
 
@@ -190,18 +205,22 @@ export async function POST(req: NextRequest) {
 
       if (error) {
         console.error('[Hubla Webhook] erro ao atualizar reembolso:', error)
+        await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'refund_update_error', detalhe: `${email}: ${error.message}`, payload: body })
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
       console.log('[Hubla Webhook] reembolso processado para:', email)
+      await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'sale_refunded', detalhe: email, payload: body })
       return NextResponse.json({ success: true, event: 'sale_refunded' })
 
     } catch (err) {
       console.error('[Hubla Webhook] exceção ao processar reembolso:', err)
+      await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'exception', detalhe: String(err), payload: body })
       return NextResponse.json({ error: String(err) }, { status: 500 })
     }
   }
 
   console.log('[Hubla Webhook] evento ignorado:', type)
+  await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type ?? 'unknown', resultado: 'ignored_unknown_type', payload: body })
   return NextResponse.json({ success: true, event: 'ignored', type })
 }
