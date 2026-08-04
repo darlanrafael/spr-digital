@@ -6,7 +6,7 @@ export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json() as {
       sessao_id: string
-      acao: 'iniciar' | 'concluir' | 'anular'
+      acao: 'iniciar' | 'concluir' | 'anular' | 'nao_compareceu'
       motivo?: string
       data_entrega?: string
       senha: string
@@ -73,6 +73,12 @@ export async function PATCH(req: NextRequest) {
       ocorrenciaTitulo = `Sessão Anulada — Sessão ${sessao.numero_sessao}`
       ocorrenciaDesc = `Sessão anulada por ${usuario_nome}. Motivo: ${motivo}`
       logAcao = 'cancelamento'
+    } else if (acao === 'nao_compareceu') {
+      updateData = { status_consulta: 'nao_compareceu' }
+      ocorrenciaTipo = 'nao_compareceu'
+      ocorrenciaTitulo = `Paciente Não Compareceu — Sessão ${sessao.numero_sessao}`
+      ocorrenciaDesc = `Paciente não compareceu à sessão. Registrado por ${usuario_nome} às ${horaLocal}`
+      logAcao = 'nao_compareceu'
     } else {
       return NextResponse.json({ error: 'Ação inválida' }, { status: 400 })
     }

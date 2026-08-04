@@ -44,9 +44,13 @@ type SessaoHojeRow = {
   id: string
   data_agendada: string | null
   paciente_nome: string
+  paciente_email: string
+  numero_sessao: number
+  total_sessoes: number
   link_meet: string | null
   status: string
   status_consulta: string | null
+  iniciado_em: string | null
   terapeuta_id: string
   terapeutas: { nome: string } | null
 }
@@ -228,7 +232,9 @@ export async function GET(req: NextRequest) {
       // na prática de outro terapeuta; deixá-lo aparecer aqui é exatamente o
       // tipo de reconciliação manual que o corte existe pra evitar.
       const pendentes = vendasRaw.filter(v => {
-        if (v.status !== 'aprovada' || saleIdsComSessao.has(v.id) || !v.produto.toLowerCase().includes(primeiroNome) || !saleAposCorte(v)) return false
+        // Mentoria em Grupo não é agendamento individual — não deve entrar
+        // na contagem de sessões/comissão pendente de agendamento.
+        if (v.status !== 'aprovada' || saleIdsComSessao.has(v.id) || !v.produto.toLowerCase().includes(primeiroNome) || !saleAposCorte(v) || v.produto.toLowerCase().includes('grupo')) return false
         if (t.vendas_a_partir_de) {
           const outrosQueTambemBatem = todosNomesTerapeutas.filter(n => n !== primeiroNome && v.produto.toLowerCase().includes(n))
           if (outrosQueTambemBatem.length > 0) return false
@@ -331,7 +337,7 @@ export async function GET(req: NextRequest) {
 
     let hojeQ = supabase
       .from('sessoes')
-      .select('id,data_agendada,paciente_nome,link_meet,status,status_consulta,terapeuta_id,terapeutas(nome)')
+      .select('id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,link_meet,status,status_consulta,iniciado_em,terapeuta_id,terapeutas(nome)')
       .gte('data_agendada', hojeStart)
       .lte('data_agendada', hojeEnd)
       // Já entregue não precisa mais de ação hoje — só polui a lista com
@@ -353,7 +359,7 @@ export async function GET(req: NextRequest) {
     // quadrante pra olhar o que vem pela frente, não só o dia de hoje.
     let proximasQ = supabase
       .from('sessoes')
-      .select('id,data_agendada,paciente_nome,link_meet,status,status_consulta,terapeuta_id,terapeutas(nome)')
+      .select('id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,link_meet,status,status_consulta,iniciado_em,terapeuta_id,terapeutas(nome)')
       .gt('data_agendada', hojeEnd)
       .in('status', ['agendada', 'pendente'])
       .in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
@@ -380,10 +386,14 @@ export async function GET(req: NextRequest) {
             })
           : '—',
         paciente_nome: s.paciente_nome,
+        paciente_email: s.paciente_email,
+        numero_sessao: s.numero_sessao,
+        total_sessoes: s.total_sessoes,
         terapeuta_nome: (s.terapeutas as { nome: string } | null)?.nome ?? '—',
         link_meet: s.link_meet,
         status: s.status,
         status_consulta: s.status_consulta ?? 'aguardando',
+        iniciado_em: s.iniciado_em,
       }
     }
 

@@ -195,6 +195,8 @@ const OCORRENCIA_META: Record<string, { icon: string; label: string; cls: string
   solicitacao_reembolso: { icon: '💰', label: 'Solicitação de Reembolso', cls: 'text-orange-400 bg-orange-400/10 border-orange-400/20' },
   reembolso_aprovado:    { icon: '✅', label: 'Reembolso Aprovado',      cls: 'text-green-500 bg-green-500/10 border-green-500/20' },
   reembolso_rejeitado:   { icon: '❌', label: 'Reembolso Rejeitado',     cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
+  orientacao_sessao:     { icon: '📣', label: 'Orientação da Sessão',    cls: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
+  nao_compareceu:        { icon: '🚫', label: 'Não Compareceu',         cls: 'text-orange-400 bg-orange-400/10 border-orange-400/20' },
 }
 
 const SC_BADGE: Record<string, { label: string; cls: string }> = {
@@ -203,6 +205,7 @@ const SC_BADGE: Record<string, { label: string; cls: string }> = {
   concluida:      { label: 'Concluída',     cls: 'text-green-500 bg-green-500/10' },
   cancelada:      { label: 'Cancelada',     cls: 'text-red-400 bg-red-400/10' },
   remarcada:      { label: 'Remarcada',     cls: 'text-purple-400 bg-purple-400/10' },
+  nao_compareceu: { label: 'Não compareceu', cls: 'text-orange-400 bg-orange-400/10' },
 }
 
 function calcularReembolsoLocal(params: {

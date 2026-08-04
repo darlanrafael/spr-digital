@@ -156,9 +156,13 @@ type ConsultaHoje = {
   horario: string
   data?: string
   paciente_nome: string
+  paciente_email: string
+  numero_sessao: number
+  total_sessoes: number
   link_meet: string | null
   status: string
   status_consulta: string
+  iniciado_em: string | null
 }
 
 const PRESET_LABELS: Record<Preset, string> = {
@@ -174,6 +178,25 @@ const STATUS_CONSULTA_BADGE: Record<string, { label: string; cls: string }> = {
   concluida:      { label: 'Concluída',     cls: 'text-green-500 bg-green-500/10' },
   cancelada:      { label: 'Cancelada',     cls: 'text-red-400 bg-red-400/10' },
   remarcada:      { label: 'Remarcada',     cls: 'text-purple-400 bg-purple-400/10' },
+  nao_compareceu: { label: 'Não compareceu', cls: 'text-orange-400 bg-orange-400/10' },
+}
+
+function CronometroSessao({ iniciadoEm }: { iniciadoEm: string | null }) {
+  const [agora, setAgora] = useState(() => Date.now())
+  useEffect(() => {
+    if (!iniciadoEm) return
+    const interval = setInterval(() => setAgora(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [iniciadoEm])
+  if (!iniciadoEm) return null
+  const decorridoSeg = Math.max(0, Math.floor((agora - new Date(iniciadoEm).getTime()) / 1000))
+  const h = Math.floor(decorridoSeg / 3600)
+  const m = Math.floor((decorridoSeg % 3600) / 60)
+  const s = decorridoSeg % 60
+  const texto = h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return <span className="text-[10px] text-blue-300 font-mono tabular-nums">⏱ {texto}</span>
 }
 
 function LinkMeetCell({ id, link, copiadoId, onCopy }: { id: string; link: string | null; copiadoId: string | null; onCopy: (id: string, link: string) => void }) {
@@ -269,6 +292,7 @@ const OCORRENCIA_META: Record<string, { icon: string; label: string; cls: string
   reembolso_aprovado:    { icon: '✅', label: 'Reembolso Aprovado',      cls: 'text-green-500 bg-green-500/10 border-green-500/20' },
   reembolso_rejeitado:   { icon: '❌', label: 'Reembolso Rejeitado',     cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
   orientacao_sessao:     { icon: '📣', label: 'Orientação da Sessão',    cls: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
+  nao_compareceu:        { icon: '🚫', label: 'Não Compareceu',         cls: 'text-orange-400 bg-orange-400/10 border-orange-400/20' },
 }
 
 function calcularReembolsoLocal(params: {
@@ -333,7 +357,7 @@ export default function PainelTerapeuta() {
 
   // Modal status_consulta (iniciar / concluir / anular) — usado tanto na visão admin quanto na do terapeuta
   const [statusSessaoId, setStatusSessaoId] = useState<string | null>(null)
-  const [statusAcao, setStatusAcao] = useState<'iniciar' | 'concluir' | 'anular'>('iniciar')
+  const [statusAcao, setStatusAcao] = useState<'iniciar' | 'concluir' | 'anular' | 'nao_compareceu'>('iniciar')
   const [statusErro, setStatusErro] = useState('')
   const [statusLoading, setStatusLoading] = useState(false)
   const [anularMotivo, setAnularMotivo] = useState('')
@@ -541,6 +565,9 @@ export default function PainelTerapeuta() {
         .from('sales')
         .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status')
         .ilike('produto', `%${primeiroNome}%`)
+        // Mentoria em Grupo não é agendamento individual — não deve cair em
+        // Pendentes de Agendamento junto com a Mentoria Particular.
+        .not('produto', 'ilike', '%grupo%')
         .eq('status', 'aprovada')
       // vendas_a_partir_de: corte de data — vendas anteriores não aparecem
       // mais em Pendentes de Agendamento (paciente lançado manualmente em
@@ -1389,15 +1416,25 @@ export default function PainelTerapeuta() {
                                 return (
                                   <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
                                     <td className="px-4 py-3 text-indigo-400 font-medium">{s.horario}</td>
-                                    <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                                    <td className="px-4 py-3 text-white">
+                                      {s.paciente_nome}
+                                      <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                    </td>
                                     <td className="px-4 py-3">
                                       <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
                                     </td>
                                     <td className="px-4 py-3">
                                       <span className={`text-xs px-2 py-0.5 rounded-full ${scBadge.cls}`}>{scBadge.label}</span>
+                                      {s.status_consulta === 'em_atendimento' && (
+                                        <div className="mt-1"><CronometroSessao iniciadoEm={s.iniciado_em} /></div>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3">
                                       <div className="flex items-center gap-2 flex-wrap">
+                                        <button onClick={() => setProntuarioEmail(s.paciente_email)}
+                                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors whitespace-nowrap">
+                                          📋 Prontuário
+                                        </button>
                                         {(s.status === 'agendada' || s.status === 'pendente') && (s.status_consulta ?? 'aguardando') === 'aguardando' && (
                                           <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('iniciar'); setStatusErro('') }}
                                             className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap">
@@ -1408,6 +1445,12 @@ export default function PainelTerapeuta() {
                                           <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setConcluirData(nowForDatetimeLocal()); setStatusErro('') }}
                                             className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors whitespace-nowrap">
                                             <CheckCircle className="w-3 h-3" /> Concluir
+                                          </button>
+                                        )}
+                                        {(s.status === 'agendada' || s.status === 'pendente') && (
+                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('nao_compareceu'); setStatusErro('') }}
+                                            className="flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300 transition-colors whitespace-nowrap">
+                                            🚫 Não compareceu
                                           </button>
                                         )}
                                         {s.status === 'entregue' && (
@@ -1454,7 +1497,13 @@ export default function PainelTerapeuta() {
                                   <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
                                     <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{s.data}</td>
                                     <td className="px-4 py-3 text-purple-400 font-medium">{s.horario}</td>
-                                    <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
+                                    <td className="px-4 py-3 text-white">
+                                      <button onClick={() => setProntuarioEmail(s.paciente_email)}
+                                        className="text-left hover:text-indigo-300 transition-colors">
+                                        {s.paciente_nome}
+                                      </button>
+                                      <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                    </td>
                                     <td className="px-4 py-3">
                                       <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
                                     </td>
@@ -1885,7 +1934,12 @@ export default function PainelTerapeuta() {
         isOpen={!!statusSessaoId && (statusAcao !== 'anular' || anularMotivo.trim().length >= 10) && (statusAcao !== 'concluir' || !!concluirData)}
         onClose={() => { setStatusSessaoId(null); setStatusErro(''); setAnularMotivo(''); setConcluirData('') }}
         onConfirm={handleStatusAcao}
-        titulo={statusAcao === 'iniciar' ? 'Iniciar consulta' : statusAcao === 'concluir' ? 'Concluir consulta' : 'Anular sessão'}
+        titulo={
+          statusAcao === 'iniciar' ? 'Iniciar consulta'
+          : statusAcao === 'concluir' ? 'Concluir consulta'
+          : statusAcao === 'nao_compareceu' ? 'Registrar não comparecimento'
+          : 'Anular sessão'
+        }
         descricao="Digite sua senha para confirmar"
         loading={statusLoading}
         erro={statusErro}

@@ -232,8 +232,11 @@ export async function GET(req: NextRequest) {
     const vendasReembolsos = vendasAll.filter(v =>
       ['reembolsada', 'chargeback', 'cancelada', 'em_protesto'].includes(v.status ?? '')
     )
+    // Mentoria em Grupo não é agendamento individual — não deve cair em
+    // Pendentes de Agendamento junto com a Mentoria Particular.
     const vendasPendentes = vendasAprovadas.filter(v =>
       (!sessoesPorVenda[v.id] || sessoesPorVenda[v.id].length === 0) && saleAposCorte(v)
+      && !v.produto.toLowerCase().includes('grupo')
     )
     const vendasAtivos = vendasAprovadas.filter(v =>
       sessoesPorVenda[v.id] && sessoesPorVenda[v.id].length > 0
