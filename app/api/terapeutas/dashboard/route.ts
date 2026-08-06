@@ -51,9 +51,32 @@ type SessaoHojeRow = {
   status: string
   status_consulta: string | null
   iniciado_em: string | null
+  concluido_em: string | null
+  data_entrega: string | null
+  entregue_confirmado_por: string | null
   terapeuta_id: string
   terapeutas: { nome: string } | null
 }
+
+// "48 min" / "1h05" / "—". Devolve "—" também pro caso degenerado de
+// concluido_em anterior ao iniciado_em (dado inconsistente no banco), em
+// vez de imprimir duração negativa na tela.
+function duracaoConsulta(iniciadoEm: string | null, concluidoEm: string | null): string {
+  if (!iniciadoEm || !concluidoEm) return '—'
+  const min = Math.round(
+    (new Date(concluidoEm).getTime() - new Date(iniciadoEm).getTime()) / 60000)
+  if (!Number.isFinite(min) || min < 0) return '—'
+  if (min < 60) return `${min} min`
+  return `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`
+}
+
+// Colunas comuns aos três quadrantes do Overview (hoje / entregues hoje /
+// próximas) — o mapper é compartilhado, então todas as queries precisam
+// trazer o mesmo conjunto, senão um quadrante devolve campo undefined.
+const COLUNAS_SESSAO_QUADRANTE =
+  'id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,' +
+  'link_meet,status,status_consulta,iniciado_em,concluido_em,data_entrega,' +
+  'entregue_confirmado_por,terapeuta_id,terapeutas(nome)'
 
 // Brasília = UTC-3
 function brasiliaStartUTC(d: Date): string {
@@ -337,7 +360,7 @@ export async function GET(req: NextRequest) {
 
     let hojeQ = supabase
       .from('sessoes')
-      .select('id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,link_meet,status,status_consulta,iniciado_em,terapeuta_id,terapeutas(nome)')
+      .select(COLUNAS_SESSAO_QUADRANTE)
       .gte('data_agendada', hojeStart)
       .lte('data_agendada', hojeEnd)
       // Já entregue não precisa mais de ação hoje — só polui a lista com
@@ -359,18 +382,63 @@ export async function GET(req: NextRequest) {
     // quadrante pra olhar o que vem pela frente, não só o dia de hoje.
     let proximasQ = supabase
       .from('sessoes')
-      .select('id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,link_meet,status,status_consulta,iniciado_em,terapeuta_id,terapeutas(nome)')
+      .select(COLUNAS_SESSAO_QUADRANTE)
       .gt('data_agendada', hojeEnd)
       .in('status', ['agendada', 'pendente'])
       .in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
       .order('data_agendada', { ascending: true })
-      .limit(20)
+    // Sem `.limit()` de propósito. Havia um `.limit(20)` aqui: o Pedro tem
+    // 104 sessões futuras, então 84 delas simplesmente não chegavam na tela
+    // — e sem nenhum aviso, o que lê como "só tenho 20 consultas marcadas".
+    // Agora a lista vem inteira e quem corta é a paginação da tela, que
+    // mostra o total de páginas.
 
     if (terapeutaId !== 'all') {
       proximasQ = proximasQ.eq('terapeuta_id', terapeutaId)
     }
 
-    const [{ data: hojeData }, { data: proximasData }] = await Promise.all([hojeQ, proximasQ])
+    // 7b. Entregues hoje — o outro lado da moeda do quadrante acima. Assim
+    // que uma consulta é concluída ela vira `entregue` e some de "Consultas
+    // de Hoje" (filtro deliberado, ver comentário lá em cima); sem esta
+    // lista o terapeuta terminava o dia com o quadro vazio, sem registro
+    // nenhum de quem ele atendeu.
+    //
+    // São dois critérios em união porque nenhum sozinho cobre o dia:
+    //   (a) agendada PARA hoje e já entregue — o que saiu do quadro de cima;
+    //   (b) data_entrega caindo hoje — pega a regularização retroativa
+    //       (sessão antiga concluída hoje com data informada à mão), que o
+    //       critério (a) perderia por estar agendada em outro dia.
+    // O inverso também vale: (b) sozinho perde a sessão atendida hoje cuja
+    // data_entrega foi informada com outra data. Daí a união, deduplicada.
+    const entreguesBase = () => {
+      let q = supabase
+        .from('sessoes')
+        .select(COLUNAS_SESSAO_QUADRANTE)
+        .eq('status', 'entregue')
+        // Mesmo corte de saleIds das outras queries — sem isso, sessão
+        // pré-`vendas_a_partir_de` reapareceria aqui depois de ter sumido
+        // do resto da tela.
+        .in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
+      if (terapeutaId !== 'all') q = q.eq('terapeuta_id', terapeutaId)
+      return q
+    }
+
+    const entreguesAgendadasHojeQ = entreguesBase()
+      .gte('data_agendada', hojeStart)
+      .lte('data_agendada', hojeEnd)
+
+    const entreguesConfirmadasHojeQ = entreguesBase()
+      .gte('data_entrega', hojeStart)
+      .lte('data_entrega', hojeEnd)
+
+    const [
+      { data: hojeData },
+      { data: proximasData },
+      { data: entreguesAgendadasData },
+      { data: entreguesConfirmadasData },
+    ] = await Promise.all([
+      hojeQ, proximasQ, entreguesAgendadasHojeQ, entreguesConfirmadasHojeQ,
+    ])
 
     function mapSessaoHoje(s: SessaoHojeRow) {
       return {
@@ -394,11 +462,42 @@ export async function GET(req: NextRequest) {
         status: s.status,
         status_consulta: s.status_consulta ?? 'aguardando',
         iniciado_em: s.iniciado_em,
+        data_entrega: s.data_entrega,
+        // Duração real da consulta: o intervalo entre clicar "Iniciar" e
+        // clicar "Concluir". Só existe quando o terapeuta passou pelos dois
+        // botões — hoje a maioria vai direto pro "Concluir", então a maior
+        // parte das linhas mostra "—". É de propósito: preencher com a
+        // duração cadastrada do terapeuta encheria a coluna de estimativa
+        // disfarçada de medição.
+        duracao: duracaoConsulta(s.iniciado_em, s.concluido_em),
+        entregue_as: s.data_entrega
+          ? new Date(s.data_entrega).toLocaleTimeString('pt-BR', {
+              hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
+            })
+          : '—',
+        entregue_confirmado_por: s.entregue_confirmado_por,
       }
     }
 
     const consultas_hoje = ((hojeData ?? []) as unknown as SessaoHojeRow[]).map(mapSessaoHoje)
     const proximas_consultas = ((proximasData ?? []) as unknown as SessaoHojeRow[]).map(mapSessaoHoje)
+
+    // Dedup por id: uma sessão agendada pra hoje E confirmada hoje bate nos
+    // dois critérios e apareceria duas vezes na lista.
+    const entreguesPorId = new Map<string, SessaoHojeRow>()
+    for (const linha of [
+      ...((entreguesAgendadasData ?? []) as unknown as SessaoHojeRow[]),
+      ...((entreguesConfirmadasData ?? []) as unknown as SessaoHojeRow[]),
+    ]) {
+      entreguesPorId.set(linha.id, linha)
+    }
+    const consultas_entregues_hoje = [...entreguesPorId.values()]
+      // Entrega mais recente primeiro — a leitura natural de "o que eu já
+      // fiz hoje". Sessão sem data_entrega (não deveria existir com status
+      // entregue, mas o banco permite) vai pro fim.
+      .sort((a, b) =>
+        new Date(b.data_entrega ?? 0).getTime() - new Date(a.data_entrega ?? 0).getTime())
+      .map(mapSessaoHoje)
 
     return NextResponse.json({
       metricas: {
@@ -418,6 +517,7 @@ export async function GET(req: NextRequest) {
       },
       por_terapeuta,
       consultas_hoje,
+      consultas_entregues_hoje,
       proximas_consultas,
     })
   } catch (err) {

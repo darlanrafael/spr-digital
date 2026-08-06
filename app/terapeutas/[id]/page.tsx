@@ -163,6 +163,12 @@ type ConsultaHoje = {
   status: string
   status_consulta: string
   iniciado_em: string | null
+  // Só preenchidos no quadrante "Consultas Entregues (hoje)" — os outros
+  // dois quadrantes usam o mesmo tipo e nunca trazem sessão entregue.
+  data_entrega?: string | null
+  entregue_as?: string
+  entregue_confirmado_por?: string | null
+  duracao?: string
 }
 
 const PRESET_LABELS: Record<Preset, string> = {
@@ -340,6 +346,10 @@ type TerapeutaSession = {
   terapeuta_id: string | null
 }
 
+// Próximas Consultas pagina de 8 em 8. O Pedro tem mais de 100 sessões
+// futuras — a lista inteira virava um scroll sem fim no meio do Overview.
+const PROXIMAS_POR_PAGINA = 8
+
 const TERAPEUTA_TABS = ['overview', 'vendas', 'agenda', 'fechamentos'] as const
 type TerapeutaTabType = typeof TERAPEUTA_TABS[number]
 const VENDAS_SUBTABS = ['pendentes', 'ativos', 'concluidos', 'reembolsados'] as const
@@ -469,7 +479,9 @@ export default function PainelTerapeuta() {
   const [ovDateEnd, setOvDateEnd] = useState('')
   const [ovMetricas, setOvMetricas] = useState<Metricas>(METRICAS_VAZIA)
   const [ovConsultasHoje, setOvConsultasHoje] = useState<ConsultaHoje[]>([])
+  const [ovConsultasEntreguesHoje, setOvConsultasEntreguesHoje] = useState<ConsultaHoje[]>([])
   const [ovProximasConsultas, setOvProximasConsultas] = useState<ConsultaHoje[]>([])
+  const [ovProximasPagina, setOvProximasPagina] = useState(1)
   const [ovLoading, setOvLoading] = useState(false)
 
   // Vendas — sub-aba também fica na URL (?subtab=), mesma regra do
@@ -712,6 +724,7 @@ export default function PainelTerapeuta() {
       const json = await res.json()
       setOvMetricas(json.metricas ?? METRICAS_VAZIA)
       setOvConsultasHoje(json.consultas_hoje ?? [])
+      setOvConsultasEntreguesHoje(json.consultas_entregues_hoje ?? [])
       setOvProximasConsultas(json.proximas_consultas ?? [])
     } finally {
       setOvLoading(false)
@@ -732,6 +745,7 @@ export default function PainelTerapeuta() {
         .then(r => r.ok ? r.json() : null)
         .then(json => {
           if (json?.consultas_hoje) setOvConsultasHoje(json.consultas_hoje)
+          if (json?.consultas_entregues_hoje) setOvConsultasEntreguesHoje(json.consultas_entregues_hoje)
           if (json?.proximas_consultas) setOvProximasConsultas(json.proximas_consultas)
         })
         .catch(() => {})
@@ -1319,6 +1333,18 @@ export default function PainelTerapeuta() {
     loadData()
   }
 
+  const ovProximasTotalPaginas = Math.max(1, Math.ceil(ovProximasConsultas.length / PROXIMAS_POR_PAGINA))
+  // Clamp contra o total: o auto-refresh de 60s pode encurtar a lista (uma
+  // consulta vira entregue e sai daqui) sem passar por nenhum reset de
+  // página, o que deixaria a tela numa página que não existe mais.
+  const ovProximasPaginaAtual = Math.min(ovProximasPagina, ovProximasTotalPaginas)
+  const ovProximasVisiveis = useMemo(
+    () => ovProximasConsultas.slice(
+      (ovProximasPaginaAtual - 1) * PROXIMAS_POR_PAGINA,
+      ovProximasPaginaAtual * PROXIMAS_POR_PAGINA),
+    [ovProximasConsultas, ovProximasPaginaAtual]
+  )
+
   const compromissoNovoValido = compromissoNovoTitulo.trim().length > 0
     && compromissoNovoInicio && compromissoNovoFim
     && new Date(compromissoNovoFim) > new Date(compromissoNovoInicio)
@@ -1536,6 +1562,66 @@ export default function PainelTerapeuta() {
                       )}
                     </div>
 
+                    {/* Consultas entregues hoje — o outro lado de "Consultas de
+                        Hoje": assim que a consulta é concluída ela some de lá e
+                        cai aqui, senão o dia terminava com o quadro vazio. */}
+                    <div className="bg-gray-900 border border-white/10 rounded-xl mt-4">
+                      <div className="p-4 border-b border-white/10 flex items-center justify-between">
+                        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                          Consultas Entregues — hoje ({ovConsultasEntreguesHoje.length})
+                        </h2>
+                      </div>
+                      {ovConsultasEntreguesHoje.length === 0 ? (
+                        <p className="px-4 py-6 text-center text-gray-600 text-xs">Nenhuma consulta entregue hoje</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-white/5">
+                                {['Horário', 'Paciente', 'Entregue às', 'Duração', 'Confirmado por', 'Ações'].map(h => (
+                                  <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ovConsultasEntreguesHoje.map(s => (
+                                <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
+                                  <td className="px-4 py-3 text-gray-400 font-medium">{s.horario}</td>
+                                  <td className="px-4 py-3 text-white">
+                                    <button onClick={() => setProntuarioEmail(s.paciente_email)}
+                                      className="text-left hover:text-indigo-300 transition-colors">
+                                      {s.paciente_nome}
+                                    </button>
+                                    <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs px-2 py-0.5 rounded-full text-green-500 bg-green-500/10">
+                                      {s.entregue_as ?? '—'}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-gray-400 text-xs">{s.duracao ?? '—'}</td>
+                                  <td className="px-4 py-3 text-gray-400 text-xs">{s.entregue_confirmado_por ?? '—'}</td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-1">
+                                      <button onClick={() => setProntuarioEmail(s.paciente_email)} title="Ver prontuário"
+                                        className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+                                        <ClipboardList className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }} title="Anular sessão"
+                                        className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors">
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Próximas consultas */}
                     <div className="bg-gray-900 border border-white/10 rounded-xl mt-4">
                       <div className="p-4 border-b border-white/10 flex items-center justify-between">
@@ -1557,7 +1643,7 @@ export default function PainelTerapeuta() {
                               </tr>
                             </thead>
                             <tbody>
-                              {ovProximasConsultas.map(s => {
+                              {ovProximasVisiveis.map(s => {
                                 const scBadge = STATUS_CONSULTA_BADGE[s.status_consulta] ?? STATUS_CONSULTA_BADGE.aguardando
                                 return (
                                   <tr key={s.id} className="border-b border-white/5 hover:bg-white/2">
@@ -1581,6 +1667,14 @@ export default function PainelTerapeuta() {
                               })}
                             </tbody>
                           </table>
+                          {ovProximasTotalPaginas > 1 && (
+                            <Pagination
+                              currentPage={ovProximasPaginaAtual}
+                              totalPages={ovProximasTotalPaginas}
+                              onPrevious={() => setOvProximasPagina(p => Math.max(1, p - 1))}
+                              onNext={() => setOvProximasPagina(p => Math.min(ovProximasTotalPaginas, p + 1))}
+                            />
+                          )}
                         </div>
                       )}
                     </div>
