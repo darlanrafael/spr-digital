@@ -1,6 +1,8 @@
 // components/terapeutas/AgendaDiaTerapeuta.tsx
 'use client'
 
+import { fimEfetivoSessao } from '@/lib/agenda-horarios'
+
 export type SessaoDia = {
   id: string
   paciente_nome: string
@@ -137,10 +139,15 @@ export default function AgendaDiaTerapeuta({
   const agora = new Date()
   const agoraMin = agora.getHours() * 60 + agora.getMinutes()
 
+  // O fim usa `fimEfetivoSessao`, não início+duração: terapeuta de horário
+  // fixo pode ter horários mais próximos que a duração cadastrada (na grade
+  // do Pedro, 13:30 → 14:10 são 40min pra uma sessão de 50), e somar a
+  // duração cega faz a consulta invadir o horário seguinte — que a própria
+  // grade oferece como atendível.
   const sessoesComHorario = sessoes.map(s => ({
     sessao: s,
     inicio: minutosDoDia(s.data_agendada),
-    fim: minutosDoDia(s.data_agendada) + duracaoSessaoMinutos,
+    fim: fimEfetivoSessao(minutosDoDia(s.data_agendada), duracaoSessaoMinutos, horariosFixos),
   }))
 
   const compromissosComHorario = compromissos.map(c => ({

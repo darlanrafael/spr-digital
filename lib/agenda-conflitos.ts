@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { fimEfetivoSessao } from '@/lib/agenda-horarios'
 
 // Trava de conflito de horário na agenda do terapeuta.
 //
@@ -48,8 +49,26 @@ export async function buscarConflitosAgenda(params: {
   const client = getSupabaseAdmin()
 
   const { data: terapeuta } = await client
-    .from('terapeutas').select('duracao_sessao_minutos').eq('id', terapeuta_id).single()
-  const duracaoMs = ((terapeuta?.duracao_sessao_minutos as number | null) ?? 60) * 60000
+    .from('terapeutas').select('duracao_sessao_minutos,horarios_fixos').eq('id', terapeuta_id).single()
+  const duracaoMin = (terapeuta?.duracao_sessao_minutos as number | null) ?? 60
+  const horariosFixos = (terapeuta?.horarios_fixos as string[] | null) ?? null
+  const duracaoMs = duracaoMin * 60000
+
+  // Ocupação real da consulta: até o próximo horário da grade, no máximo a
+  // duração cadastrada. Sem isso, na grade do Pedro a consulta das 13:30
+  // "terminava" 14:20 e bloqueava as 14:10 — que a agenda oferece como livre.
+  const BRT = 'America/Sao_Paulo'
+  function minutosBRT(iso: string): number {
+    const p = new Intl.DateTimeFormat('en-US', {
+      timeZone: BRT, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(iso))
+    return Number(p.find(x => x.type === 'hour')?.value ?? 0) * 60
+      + Number(p.find(x => x.type === 'minute')?.value ?? 0)
+  }
+  function fimRealMs(iso: string): number {
+    const ini = minutosBRT(iso)
+    return new Date(iso).getTime() + (fimEfetivoSessao(ini, duracaoMin, horariosFixos) - ini) * 60000
+  }
 
   const pedidos = datasISO
     .map(iso => ({ iso, inicio: new Date(iso).getTime() }))
@@ -85,7 +104,7 @@ export async function buscarConflitosAgenda(params: {
     ...((sessoes ?? []) as { paciente_nome: string; data_agendada: string; numero_sessao: number; total_sessoes: number }[])
       .map(s => ({
         inicio: new Date(s.data_agendada).getTime(),
-        fim: new Date(s.data_agendada).getTime() + duracaoMs,
+        fim: fimRealMs(s.data_agendada),
         tipo: 'sessao' as const,
         rotulo: `já tem a consulta de ${s.paciente_nome} (sessão ${s.numero_sessao}/${s.total_sessoes})`,
       })),
@@ -100,7 +119,8 @@ export async function buscarConflitosAgenda(params: {
 
   const conflitos: Conflito[] = []
   for (const p of pedidos) {
-    const fimPedido = p.inicio + duracaoMs
+    // A data pedida também ocupa só até o próximo horário da grade.
+    const fimPedido = fimRealMs(p.iso)
     const bateu = ocupados.find(o => p.inicio < o.fim && fimPedido > o.inicio)
     if (bateu) {
       conflitos.push({ dataISO: p.iso, tipo: bateu.tipo, descricao: `${fmt(p.iso)} — ${bateu.rotulo}` })

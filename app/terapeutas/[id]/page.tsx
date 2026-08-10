@@ -17,6 +17,7 @@ import AgendaDiaTerapeuta, {
   contarSlotsLivres, calcularIntervalosLivres, fmtDuracao, minutosDoDia,
   JANELA_INICIO_MIN, JANELA_FIM_MIN,
 } from '@/components/terapeutas/AgendaDiaTerapeuta'
+import { fimEfetivoSessao } from '@/lib/agenda-horarios'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 
@@ -1273,11 +1274,17 @@ export default function PainelTerapeuta() {
   function haConflitoDeHorario(inicio: Date, fim: Date): boolean {
     const iMs = inicio.getTime()
     const fMs = fim.getTime()
-    const duracaoMs = (terapeuta?.duracao_sessao_minutos ?? 60) * 60000
+    const duracaoMin = terapeuta?.duracao_sessao_minutos ?? 60
+    const horariosFixos = terapeuta?.horarios_fixos ?? null
     const conflitaSessao = sessoes.some(s => {
       if (!s.data_agendada || s.status === 'cancelada') return false
       const sIni = new Date(s.data_agendada).getTime()
-      const sFim = sIni + duracaoMs
+      // Ocupa até o próximo horário da grade, no máximo a duração cadastrada.
+      // Somar a duração cega fazia a consulta das 13:30 (sessão de 50min)
+      // "terminar" 14:20 e avisar conflito ao clicar no Livre das 14:10 —
+      // horário que a própria grade do terapeuta oferece como atendível.
+      const sIniMin = minutosDoDia(s.data_agendada)
+      const sFim = sIni + (fimEfetivoSessao(sIniMin, duracaoMin, horariosFixos) - sIniMin) * 60000
       return iMs < sFim && fMs > sIni
     })
     if (conflitaSessao) return true
