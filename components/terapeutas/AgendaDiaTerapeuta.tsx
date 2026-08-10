@@ -224,101 +224,94 @@ export default function AgendaDiaTerapeuta({
             // horários mais próximo que a duração — na grade do Pedro:
             // 12:10/12:40, 13:30/14:10, 17:30/18:15 e 19:00/19:30.
             //
-            // Ancorar pelo início mais próximo mantém a garantia de não
-            // duplicar (cada horário recebe no máximo um item, e cada item
-            // ocupa um horário só) e põe o item onde ele de fato está.
-            const horariosLivres = new Set(marcas.map(x => x.minuto))
-            const ancoras = new Map<number, { sessao?: typeof sessoesComHorario[number]; compromisso?: typeof compromissosComHorario[number] }>()
-            // Sessões primeiro: em empate de horário exato com um
-            // compromisso, a consulta de paciente é que fica na linha.
-            const itens = [
-              ...sessoesComHorario.map(s => ({ inicio: s.inicio, sessao: s })),
-              ...compromissosComHorario.map(c => ({ inicio: c.inicio, compromisso: c })),
-            ]
-            // Duas passadas. Na primeira, quem começa exatamente em cima de
-            // um horário da grade fica com ele. Só na segunda os que sobraram
-            // (horário fora da grade, ou dois itens marcados no MESMO
-            // horário) procuram a linha livre mais próxima.
+            // Uma linha da grade pode conter MAIS DE UM item. Quando dois
+            // pacientes estão marcados no mesmo horário (acontece: nem
+            // `agendar` nem `remarcar` checam conflito), os dois ficam na
+            // linha daquele horário, empilhados e sinalizados como conflito.
             //
-            // Sem separar as passadas, uma passada gulosa única deixa um item
-            // legítimo sem a própria linha: no dia 17/08 havia duas consultas
-            // às 18:15; a segunda tomava a linha das 17:30 e empurrava a
-            // consulta real das 17:30 pra 16:00 — três linhas erradas por
-            // causa de um único conflito.
-            const sobraram: typeof itens = []
+            // A versão anterior empurrava o segundo pra linha livre mais
+            // próxima. Ficava pior que o problema: no dia 11/08 a Ana Assis,
+            // marcada às 12:40 junto com o Wendel, aparecia lá embaixo entre
+            // 13:30 e 16:00 exibindo "12:40" — a agenda saía fora da ordem do
+            // relógio e parecia bug de tela, escondendo a dupla marcação real.
+            const ancoras = new Map<number, typeof itens>()
+            // Sessões primeiro: no empate de horário com um compromisso, a
+            // consulta de paciente é que aparece em cima.
+            const itens = [
+              ...sessoesComHorario.map(s => ({ inicio: s.inicio, sessao: s, compromisso: undefined })),
+              ...compromissosComHorario.map(c => ({ inicio: c.inicio, sessao: undefined, compromisso: c })),
+            ] as { inicio: number; sessao?: typeof sessoesComHorario[number]; compromisso?: typeof compromissosComHorario[number] }[]
+
             for (const item of itens) {
-              if (horariosLivres.has(item.inicio)) {
-                horariosLivres.delete(item.inicio)
-                ancoras.set(item.inicio, item)
-              } else {
-                sobraram.push(item)
+              // Horário exato dá empate zero, então cai naturalmente na
+              // própria linha; item fora da grade vai pra linha mais próxima
+              // e exibe o horário verdadeiro dele.
+              let alvo = marcas[0].minuto
+              for (const marca of marcas) {
+                if (Math.abs(marca.minuto - item.inicio) < Math.abs(alvo - item.inicio)) alvo = marca.minuto
               }
-            }
-            for (const item of sobraram) {
-              if (horariosLivres.size === 0) break
-              let alvo: number | null = null
-              for (const minuto of horariosLivres) {
-                if (alvo === null || Math.abs(minuto - item.inicio) < Math.abs(alvo - item.inicio)) {
-                  alvo = minuto
-                }
-              }
-              horariosLivres.delete(alvo as number)
-              ancoras.set(alvo as number, item)
+              const lista = ancoras.get(alvo)
+              if (lista) lista.push(item)
+              else ancoras.set(alvo, [item])
             }
 
             return marcas.map(m => {
-              const ancora = ancoras.get(m.minuto)
-              const sessaoAqui = ancora?.sessao
-              const compromissoAqui = ancora?.compromisso
-              // Horário mostrado na linha ocupada é o do item de verdade, não
-              // o rótulo da grade: se um item foi lançado fora dos horários
-              // fixos (dá pra editar a hora no modal), a linha diria uma hora
-              // que não é a dele. Linha livre segue mostrando a grade.
-              const rotulo = sessaoAqui
-                ? minutosParaLabel(sessaoAqui.inicio)
-                : compromissoAqui
-                  ? minutosParaLabel(compromissoAqui.inicio)
-                  : m.label
+              const aqui = ancoras.get(m.minuto) ?? []
+              const emConflito = aqui.length > 1
 
-            if (sessaoAqui) {
-              const { sessao } = sessaoAqui
+              if (aqui.length === 0) {
+                return (
+                  <button key={m.minuto}
+                    onClick={() => onClickLivre(horaParaData(data, m.minuto), horaParaData(data, m.minuto + duracaoSessaoMinutos))}
+                    className="w-full flex items-center gap-3 px-5 py-3 text-left bg-green-500/[0.04] hover:bg-green-500/10 transition-colors">
+                    <span className="w-12 shrink-0 text-[11px] text-gray-500">{m.label}</span>
+                    <span className="w-[3px] h-8 rounded-sm bg-green-500/40 shrink-0" />
+                    <span className="text-[11px] text-green-500/70">Livre — clique pra bloquear</span>
+                  </button>
+                )
+              }
+
               return (
-                <button key={m.minuto} onClick={() => onClickSessao(sessao)}
-                  className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
-                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
-                  <span className="w-[3px] h-8 rounded-sm bg-indigo-500 shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
-                    <p className="text-[11px] text-indigo-400/80 truncate">Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
-                  </span>
-                </button>
+                <div key={m.minuto} className={emConflito ? 'bg-red-500/[0.07] border-l-2 border-red-500/60' : ''}>
+                  {emConflito && (
+                    <p className="px-5 pt-2.5 text-[11px] font-medium text-red-300">
+                      ⚠ {aqui.length} consultas marcadas no mesmo horário
+                    </p>
+                  )}
+                  {aqui.map(item => {
+                    // Horário exibido é o do item, não o rótulo da grade: item
+                    // lançado fora dos horários fixos (dá pra editar a hora no
+                    // modal) mostraria uma hora que não é a dele.
+                    const rotulo = minutosParaLabel(item.inicio)
+                    if (item.sessao) {
+                      const { sessao } = item.sessao
+                      return (
+                        <button key={sessao.id} onClick={() => onClickSessao(sessao)}
+                          className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
+                          <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
+                          <span className="w-[3px] h-8 rounded-sm bg-indigo-500 shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
+                            <p className="text-[11px] text-indigo-400/80 truncate">Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+                          </span>
+                        </button>
+                      )
+                    }
+                    const { compromisso } = item.compromisso!
+                    const isSessao = compromisso.categoria === 'sessao'
+                    return (
+                      <button key={compromisso.id} onClick={() => onClickCompromisso(compromisso)}
+                        className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
+                        <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
+                        <span className={`w-[3px] h-8 rounded-sm shrink-0 ${isSessao ? 'bg-indigo-500' : 'bg-stone-400'}`} />
+                        <span className="min-w-0 flex-1">
+                          <p className={`text-sm font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
               )
-            }
-
-            if (compromissoAqui) {
-              const { compromisso } = compromissoAqui
-              const isSessao = compromisso.categoria === 'sessao'
-              return (
-                <button key={m.minuto} onClick={() => onClickCompromisso(compromisso)}
-                  className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
-                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
-                  <span className={`w-[3px] h-8 rounded-sm shrink-0 ${isSessao ? 'bg-indigo-500' : 'bg-stone-400'}`} />
-                  <span className="min-w-0 flex-1">
-                    <p className={`text-sm font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
-                  </span>
-                </button>
-              )
-            }
-
-            return (
-              <button key={m.minuto}
-                onClick={() => onClickLivre(horaParaData(data, m.minuto), horaParaData(data, m.minuto + duracaoSessaoMinutos))}
-                className="w-full flex items-center gap-3 px-5 py-3 text-left bg-green-500/[0.04] hover:bg-green-500/10 transition-colors">
-                <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
-                <span className="w-[3px] h-8 rounded-sm bg-green-500/40 shrink-0" />
-                <span className="text-[11px] text-green-500/70">Livre — clique pra bloquear</span>
-              </button>
-            )
             })
           })()}
         </div>
