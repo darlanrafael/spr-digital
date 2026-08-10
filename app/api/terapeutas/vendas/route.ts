@@ -132,10 +132,21 @@ export async function GET(req: NextRequest) {
       })
     }
 
-    // Vendas paginadas
+    // Vendas paginadas por CURSOR (id crescente), não por offset.
+    //
+    // O `.range(offset, ...)` daqui era o mesmo bug crítico já corrigido no
+    // getSales() em 04/07: `sales` recebe insert de webhook o tempo todo, e
+    // com a lista ordenada por data_hora desc uma venda nova entra no topo e
+    // empurra tudo pra baixo entre uma página e outra — a página seguinte
+    // relê linhas já vistas e pula outras, fazendo vendas existentes sumirem
+    // da tela de forma aleatória. Cursor por chave estável não desliza.
+    //
+    // Não estava disparando ainda (200 vendas casam com nome de terapeuta,
+    // página de 1000), mas dispararia sozinho quando passasse de 1000 — sem
+    // aviso nenhum, que é o pior tipo de falha.
     const vendasAllTotal: SaleRow[] = []
     const PAGE = 1000
-    let offset = 0
+    let cursor = ''
     while (true) {
       let query = supabase
         .from('sales')
@@ -145,15 +156,17 @@ export async function GET(req: NextRequest) {
       }
       if (from) query = query.gte('data_hora', from)
       if (to) query = query.lte('data_hora', to)
-      const { data, error } = await query
-        .order('data_hora', { ascending: false })
-        .range(offset, offset + PAGE - 1)
+      if (cursor) query = query.gt('id', cursor)
+      const { data, error } = await query.order('id', { ascending: true }).limit(PAGE)
       if (error) throw new Error(error.message)
       if (!data || data.length === 0) break
       vendasAllTotal.push(...(data as SaleRow[]))
       if (data.length < PAGE) break
-      offset += PAGE
+      cursor = String(data[data.length - 1].id)
     }
+    // Ordem de exibição continua a mesma de antes (mais recente primeiro) —
+    // a paginação por id é só o mecanismo de varredura.
+    vendasAllTotal.sort((a, b) => String(b.data_hora ?? '').localeCompare(String(a.data_hora ?? '')))
     // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
     // vendas anteriores ao corte somem de Pendentes/Ativos/Concluídos aqui
     // também — mesma regra da página do terapeuta, pra essa lista geral não

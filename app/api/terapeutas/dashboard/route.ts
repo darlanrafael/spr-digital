@@ -177,9 +177,13 @@ export async function GET(req: NextRequest) {
       })
     }
 
+    // Cursor por id, não offset — mesmo motivo do /api/terapeutas/vendas e do
+    // getSales(): `sales` recebe insert de webhook o tempo todo, e offset numa
+    // lista que cresce faz a página seguinte pular linhas. Latente hoje (200
+    // vendas, página de 1000), mas dispararia sozinho ao passar de 1000.
     const vendasRawTotal: SaleRow[] = []
     const PAGE = 1000
-    let offset = 0
+    let cursor = ''
     while (true) {
       let q = supabase
         .from('sales')
@@ -189,15 +193,13 @@ export async function GET(req: NextRequest) {
       }
       if (from) q = q.gte('data_hora', from)
       if (to) q = q.lte('data_hora', to)
-      q = q
-        .order('data_hora', { ascending: false })
-        .range(offset, offset + PAGE - 1)
-      const { data, error } = await q
+      if (cursor) q = q.gt('id', cursor)
+      const { data, error } = await q.order('id', { ascending: true }).limit(PAGE)
       if (error) throw new Error(error.message)
       if (!data || data.length === 0) break
       vendasRawTotal.push(...(data as SaleRow[]))
       if (data.length < PAGE) break
-      offset += PAGE
+      cursor = String(data[data.length - 1].id)
     }
     // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
     // vendas anteriores ao corte somem de TODAS as telas (Overview, Ativos,

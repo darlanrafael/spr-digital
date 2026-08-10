@@ -89,12 +89,29 @@ export async function POST(req: NextRequest) {
     if (!terapeuta_id || !senha || !usuario_email) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
-    if (usuario_tipo === 'terapeuta') {
-      return NextResponse.json({ error: 'Apenas administradores podem confirmar fechamentos de comissão' }, { status: 403 })
-    }
 
-    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
+    // O papel vem do BANCO, nunca do corpo da requisição.
+    //
+    // Antes o gate era `if (usuario_tipo === 'terapeuta')` lendo `usuario_tipo`
+    // do body — um campo que quem chama escolhe. `verificarSenhaUsuario`
+    // devolvia o registro real em `usuario`, mas o código só usava `{ valido }`
+    // e jogava fora o tipo verdadeiro. Na prática: a própria terapeuta, com o
+    // login legítimo dela, mandava `usuario_tipo: "admin"` e liberava o
+    // pagamento da própria comissão — e o atividades_log registrava "admin",
+    // então nem a auditoria pegava. Confirmado em teste em 10/08/2026.
+    //
+    // Só admin confirma fechamento: quem paga é o CEO, ninguém mais.
+    const { valido, usuario } = await verificarSenhaUsuario(usuario_email, senha)
     if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+
+    const tipoReal = (usuario as Record<string, unknown> | undefined)?.tipo as string ?? ''
+    const nomeReal = (usuario as Record<string, unknown> | undefined)?.nome as string ?? usuario_email
+    if (tipoReal !== 'admin') {
+      return NextResponse.json(
+        { error: 'Apenas administradores podem confirmar fechamentos de comissão' },
+        { status: 403 },
+      )
+    }
 
     const supabase = getSupabaseAdmin()
 
@@ -130,7 +147,9 @@ export async function POST(req: NextRequest) {
       valor_total: total,
       quantidade_sessoes: sessoes.length,
       sessoes,
-      criado_por_nome: usuario_nome,
+      // Nome também do banco: quem confirmou o pagamento é registro
+      // financeiro, não pode depender do que o cliente mandou no corpo.
+      criado_por_nome: nomeReal,
       criado_por_email: usuario_email,
     })
     if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
@@ -142,8 +161,8 @@ export async function POST(req: NextRequest) {
     if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
 
     await registrarAtividade({
-      usuario_nome,
-      usuario_tipo,
+      usuario_nome: nomeReal,
+      usuario_tipo: tipoReal,
       tipo_acao: 'fechamento_comissao',
       descricao: `Fechamento de comissão — ${(terapeuta as { nome: string }).nome} — ${sessoes.length} sessão(ões) — R$ ${total.toFixed(2)}`,
     })
