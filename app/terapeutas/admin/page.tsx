@@ -17,6 +17,7 @@ type Terapeuta = {
   email: string
   percentual_comissao: number
   ativo: boolean
+  duracao_sessao_minutos?: number | null
 }
 
 type Usuario = {
@@ -73,6 +74,8 @@ export default function AdminPage() {
   const [terapeutas, setTerapeutas] = useState<Terapeuta[]>([])
   const [tLoading, setTLoading] = useState(true)
   const [novoTerapeuta, setNovoTerapeuta] = useState({ nome: '', email: '', percentual_comissao: '' })
+  const [duracaoEdit, setDuracaoEdit] = useState<Record<string, number>>({})
+  const [duracaoSalvando, setDuracaoSalvando] = useState<string | null>(null)
   const [tSaving, setTSaving] = useState(false)
   const [tErro, setTErro] = useState('')
   const [tSucesso, setTSucesso] = useState('')
@@ -230,6 +233,25 @@ export default function AdminPage() {
     if (!res.ok) { setTErro(json.error ?? 'Erro'); return }
     setTSucesso('Terapeuta criado com sucesso!')
     setNovoTerapeuta({ nome: '', email: '', percentual_comissao: '' })
+    loadTerapeutas()
+  }
+
+  async function handleSalvarDuracao(t: Terapeuta) {
+    const valor = duracaoEdit[t.id]
+    if (valor === undefined) return
+    setDuracaoSalvando(t.id)
+    const res = await fetch('/api/terapeutas/admin/terapeutas', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: t.id, duracao_sessao_minutos: valor }),
+    })
+    setDuracaoSalvando(null)
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      setTErro(json.error ?? 'Erro ao salvar duração')
+      return
+    }
+    setDuracaoEdit(d => { const n = { ...d }; delete n[t.id]; return n })
     loadTerapeutas()
   }
 
@@ -391,19 +413,40 @@ export default function AdminPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/5">
-                      {['Nome', 'E-mail', 'Comissão', 'Status', ''].map(h => (
+                      {['Nome', 'E-mail', 'Comissão', 'Duração da sessão', 'Status', ''].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {terapeutas.length === 0 ? (
-                      <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-600 text-xs">Nenhum terapeuta cadastrado</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-600 text-xs">Nenhum terapeuta cadastrado</td></tr>
                     ) : terapeutas.map(t => (
                       <tr key={t.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                         <td className="px-4 py-3 text-white">{t.nome}</td>
                         <td className="px-4 py-3 text-gray-400">{t.email}</td>
                         <td className="px-4 py-3 text-indigo-400">{t.percentual_comissao}%</td>
+                        {/* Editável direto na linha: o valor errado aqui faz a
+                            agenda tratar cada consulta como se invadisse o
+                            horário seguinte, e até 10/08/2026 só dava pra
+                            corrigir por SQL. */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number" min={5} max={480} step={5}
+                              value={duracaoEdit[t.id] ?? t.duracao_sessao_minutos ?? 60}
+                              onChange={e => setDuracaoEdit(d => ({ ...d, [t.id]: Number(e.target.value) }))}
+                              className="w-16 bg-gray-800 border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500/50"
+                            />
+                            <span className="text-[11px] text-gray-500">min</span>
+                            {duracaoEdit[t.id] !== undefined && duracaoEdit[t.id] !== (t.duracao_sessao_minutos ?? 60) && (
+                              <button onClick={() => handleSalvarDuracao(t)} disabled={duracaoSalvando === t.id}
+                                className="text-[11px] px-2 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors">
+                                {duracaoSalvando === t.id ? '...' : 'Salvar'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3">
                           <span className={`text-xs px-2 py-0.5 rounded-full ${t.ativo ? 'text-green-500 bg-green-500/10' : 'text-gray-500 bg-gray-500/10'}`}>
                             {t.ativo ? 'Ativo' : 'Inativo'}

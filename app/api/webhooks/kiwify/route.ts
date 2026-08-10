@@ -126,6 +126,21 @@ export async function POST(req: NextRequest) {
         )
       }
 
+      // O produtor não pode receber mais do que o cliente pagou. Quando
+      // `my_commission` > `charge_amount`, algum dos dois veio numa base
+      // diferente (parcela vs. total, ou desconto aplicado só num deles) e o
+      // faturamento líquido sai inflado. Aconteceu em 5 vendas de 20-21/05/2026
+      // (razão 1,10 a 1,19 — nas vendas normais dos mesmos produtos a razão é
+      // 0,88 a 0,92), somando R$ 74,18 a mais. O detector de moeda acima não
+      // pega: ele olha pago/base, que nesses casos estava dentro do normal.
+      if (sale.valor_liquido > sale.valor_pago_cliente && sale.valor_pago_cliente > 0) {
+        console.warn(
+          '[Kiwify Webhook] ALERTA líquido maior que o pago pelo cliente ' +
+          '(my_commission > charge_amount — valores em bases diferentes?):',
+          JSON.stringify({ produto: sale.produto, email: sale.email, preco_base: sale.preco_base, valor_pago_cliente: sale.valor_pago_cliente, valor_liquido: sale.valor_liquido, data_hora: sale.data_hora, order_id: orderId })
+        )
+      }
+
       console.log('[Kiwify Webhook] inserindo venda:', JSON.stringify(sale, null, 2))
 
       const { error } = await client.from('sales').insert(sale)

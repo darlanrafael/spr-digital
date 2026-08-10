@@ -47,12 +47,13 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { id, nome, email, percentual_comissao, ativo } = body as {
+  const { id, nome, email, percentual_comissao, ativo, duracao_sessao_minutos } = body as {
     id: string
     nome?: string
     email?: string
     percentual_comissao?: number
     ativo?: boolean
+    duracao_sessao_minutos?: number
   }
 
   if (!id) return NextResponse.json({ error: 'ID obrigatório' }, { status: 400 })
@@ -63,6 +64,16 @@ export async function PUT(req: NextRequest) {
   if (email !== undefined) updates.email = email
   if (percentual_comissao !== undefined) updates.percentual_comissao = percentual_comissao
   if (ativo !== undefined) updates.ativo = ativo
+  // Duração da sessão não tinha edição em tela nenhuma — a do Pedro estava
+  // cadastrada como 50min sendo 40, e isso fazia a agenda tratar cada consulta
+  // como se invadisse o horário seguinte. Só por SQL até 10/08/2026.
+  if (duracao_sessao_minutos !== undefined) {
+    const min = Math.round(Number(duracao_sessao_minutos))
+    if (!Number.isFinite(min) || min < 5 || min > 480) {
+      return NextResponse.json({ error: 'Duração da sessão deve ser entre 5 e 480 minutos' }, { status: 400 })
+    }
+    updates.duracao_sessao_minutos = min
+  }
 
   const { data, error } = await client.from('terapeutas').update(updates).eq('id', id).select().single()
 

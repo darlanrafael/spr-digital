@@ -161,6 +161,17 @@ export async function POST(req: NextRequest) {
 
       console.log('[Hubla Webhook] inserindo venda:', JSON.stringify(sale, null, 2))
 
+      // Mesma checagem do webhook da Kiwify: o produtor não pode receber mais
+      // do que o cliente pagou. Se `sellerTotal` > `subtotal`, os dois vieram
+      // em bases diferentes e o faturamento líquido sai inflado. Nenhum caso
+      // detectado na Hubla até 10/08/2026 — preventivo.
+      if (sale.valor_liquido > sale.valor_pago_cliente && sale.valor_pago_cliente > 0) {
+        console.warn(
+          '[Hubla Webhook] ALERTA líquido maior que o pago pelo cliente:',
+          JSON.stringify({ produto: sale.produto, email: sale.email, valor_pago_cliente: sale.valor_pago_cliente, valor_liquido: sale.valor_liquido, data_hora: sale.data_hora })
+        )
+      }
+
       const { error } = await client.from('sales').insert(sale)
 
       if (error) {
