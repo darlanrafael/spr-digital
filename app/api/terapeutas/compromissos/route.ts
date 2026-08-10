@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,11 +15,12 @@ export async function POST(req: NextRequest) {
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
-      senha: string
+      senha?: string
+      token?: string
     }
-    const { terapeuta_id, titulo, inicio, fim, categoria, repetir_frequencia, repetir_vezes, usuario_nome, usuario_tipo, usuario_email, senha } = body
+    const { terapeuta_id, titulo, inicio, fim, categoria, repetir_frequencia, repetir_vezes, usuario_nome, usuario_tipo, usuario_email, senha, token } = body
 
-    if (!terapeuta_id || !titulo?.trim() || !inicio || !fim || !usuario_email || !senha) {
+    if (!terapeuta_id || !titulo?.trim() || !inicio || !fim || !usuario_email || (!senha && !token)) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
     if (categoria && categoria !== 'sessao' && categoria !== 'compromisso') {
@@ -32,8 +33,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Horário de fim precisa ser depois do início' }, { status: 400 })
     }
 
-    const { valido, usuario } = await verificarSenhaUsuario(usuario_email, senha)
-    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+    const acesso = await verificarAcesso({ usuario_email, senha, token })
+    const { valido, usuario } = acesso
+    if (!valido) {
+      const { error, status } = erroAcesso(acesso)
+      return NextResponse.json({ error }, { status })
+    }
 
     const supabase = getSupabaseAdmin()
     const frequencia = repetir_frequencia === 'diaria' ? 'diaria' : 'semanal'
@@ -85,16 +90,20 @@ export async function DELETE(req: NextRequest) {
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
-      senha: string
+      senha?: string
+      token?: string
     }
-    const { id, usuario_nome, usuario_tipo, usuario_email, senha } = body
+    const { id, usuario_nome, usuario_tipo, usuario_email, senha, token } = body
 
-    if (!id || !usuario_email || !senha) {
+    if (!id || !usuario_email || (!senha && !token)) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
 
-    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
-    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+    const acesso = await verificarAcesso({ usuario_email, senha, token })
+    if (!acesso.valido) {
+      const { error, status } = erroAcesso(acesso)
+      return NextResponse.json({ error }, { status })
+    }
 
     const supabase = getSupabaseAdmin()
     const { data: compromisso } = await supabase

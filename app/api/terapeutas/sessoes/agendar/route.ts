@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 import { criarEventoComMeet } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 
@@ -10,23 +10,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, datas_sessoes, usuario_email, senha } = body as {
+  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, datas_sessoes, usuario_email, senha, token } = body as {
     sale_id: string
     terapeuta_id: string
     data_primeira_sessao: string
     numero_sessoes?: number
     datas_sessoes?: string[]
     usuario_email: string
-    senha: string
+    senha?: string
+    token?: string
   }
 
-  if (!sale_id || !terapeuta_id || !data_primeira_sessao || !usuario_email || !senha) {
+  if (!sale_id || !terapeuta_id || !data_primeira_sessao || !usuario_email || (!senha && !token)) {
     return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
   }
 
   try {
-  const { valido, usuario } = await verificarSenhaUsuario(usuario_email, senha)
-  if (!valido) return NextResponse.json({ error: 'Senha inválida' }, { status: 401 })
+  const acesso = await verificarAcesso({ usuario_email, senha, token })
+  const { valido, usuario } = acesso
+  if (!valido) {
+    const { error, status } = erroAcesso(acesso)
+    return NextResponse.json({ error }, { status })
+  }
 
   const client = getSupabaseAdmin()
 

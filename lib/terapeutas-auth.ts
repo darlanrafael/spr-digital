@@ -57,6 +57,86 @@ export async function verificarSenhaUsuario(
   return { valido: true, usuario: data }
 }
 
+// ─────────────────────────── Sessão (token) ───────────────────────────
+//
+// O módulo de terapeutas não tinha sessão no servidor: cada ação reenviava a
+// senha porque era a única prova de identidade que o servidor recebia. O
+// token abaixo é emitido no login e vale como credencial nas ações
+// operacionais, pra quem tem `dispensa_senha_nas_acoes` ligado.
+//
+// IMPORTANTE: os endpoints que mexem em dinheiro (aprovacoes, fechamentos,
+// vendas/lancamento-manual) NÃO usam `verificarAcesso` — continuam chamando
+// `verificarSenhaUsuario` direto. É de propósito: assim é impossível um
+// token virar credencial financeira por descuido numa refatoração futura.
+
+const SESSION_TOKEN_DIAS = 7
+
+export function gerarSessionToken(): { token: string; expiraEm: string } {
+  return {
+    token: crypto.randomBytes(32).toString('hex'),
+    expiraEm: new Date(Date.now() + SESSION_TOKEN_DIAS * 24 * 60 * 60 * 1000).toISOString(),
+  }
+}
+
+export type ResultadoAcesso = {
+  valido: boolean
+  usuario?: Record<string, unknown>
+  /** true quando o token existe mas passou da validade — a tela usa isso
+   *  pra mandar pro login em vez de dizer "senha incorreta". */
+  expirado?: boolean
+}
+
+/**
+ * Autoriza uma ação operacional por senha OU por token de sessão.
+ *
+ * Ordem deliberada: senha primeiro. Quem digitou a senha deve passar mesmo
+ * que o token no navegador esteja velho ou de outra conta — senão um token
+ * ruim guardado bloquearia alguém que sabe a própria senha, que foi
+ * exatamente o bug do Felipe (colisão de sessão) em 15/07.
+ */
+export async function verificarAcesso(params: {
+  usuario_email?: string
+  senha?: string
+  token?: string
+}): Promise<ResultadoAcesso> {
+  const { usuario_email, senha, token } = params
+
+  if (usuario_email && senha) {
+    return verificarSenhaUsuario(usuario_email, senha)
+  }
+
+  if (token) {
+    const client = getSupabaseAdmin()
+    const { data } = await client
+      .from('usuarios_sistema')
+      .select('*')
+      .eq('session_token', token)
+      .eq('ativo', true)
+      // Sem isto, qualquer usuário logado agiria sem senha — a dispensa vale
+      // só pra quem foi explicitamente liberado.
+      .eq('dispensa_senha_nas_acoes', true)
+      .single()
+    if (!data) return { valido: false }
+
+    const expiraEm = (data as { session_token_expira_em: string | null }).session_token_expira_em
+    if (!expiraEm || new Date(expiraEm).getTime() <= Date.now()) {
+      return { valido: false, expirado: true }
+    }
+    return { valido: true, usuario: data }
+  }
+
+  return { valido: false }
+}
+
+/** Resposta padrão de 401 pras rotas operacionais, distinguindo sessão
+ *  expirada de credencial errada — a tela trata os dois de formas
+ *  diferentes (mandar pro login vs. mostrar "senha incorreta"). */
+export function erroAcesso(res: ResultadoAcesso): { error: string; status: number } {
+  return res.expirado
+    ? { error: 'Sessão expirada', status: 401 }
+    : { error: 'Senha incorreta', status: 401 }
+}
+
 export async function registrarAtividade(params: {
   usuario_nome: string
   usuario_tipo: string

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SaleRow = {
@@ -275,15 +275,21 @@ export async function POST(req: NextRequest) {
       descricao: string
       sessao_id?: string
       dados_extras?: Record<string, unknown>
-      senha: string
+      senha?: string
+      token?: string
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
     }
-    const { sale_id, tipo, titulo, descricao, sessao_id, dados_extras, senha, usuario_nome, usuario_tipo, usuario_email } = body
+    const { sale_id, tipo, titulo, descricao, sessao_id, dados_extras, senha, token, usuario_nome, usuario_tipo, usuario_email } = body
 
-    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
-    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+    // Inclui `tipo === 'reembolso_parcial'`, que aqui é só a SOLICITAÇÃO —
+    // quem aprova é /api/terapeutas/aprovacoes, que continua exigindo senha.
+    const acesso = await verificarAcesso({ usuario_email, senha, token })
+    if (!acesso.valido) {
+      const { error, status } = erroAcesso(acesso)
+      return NextResponse.json({ error }, { status })
+    }
 
     const supabase = getSupabaseAdmin()
 
@@ -431,15 +437,19 @@ export async function PUT(req: NextRequest) {
     const body = await req.json() as {
       id: string
       descricao: string
-      senha: string
+      senha?: string
+      token?: string
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
     }
-    const { id, descricao, senha, usuario_nome, usuario_tipo, usuario_email } = body
+    const { id, descricao, senha, token, usuario_nome, usuario_tipo, usuario_email } = body
 
-    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
-    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+    const acesso = await verificarAcesso({ usuario_email, senha, token })
+    if (!acesso.valido) {
+      const { error, status } = erroAcesso(acesso)
+      return NextResponse.json({ error }, { status })
+    }
 
     const supabase = getSupabaseAdmin()
 

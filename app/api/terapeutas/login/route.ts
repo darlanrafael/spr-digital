@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { hashSenha } from '@/lib/terapeutas-auth'
+import { hashSenha, gerarSessionToken } from '@/lib/terapeutas-auth'
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,9 +12,14 @@ export async function POST(req: NextRequest) {
     const supabase = getSupabaseAdmin()
     const hash = hashSenha(senha)
 
+    // `select('*')` em vez de listar as colunas: se este código subir antes
+    // da migration das colunas de sessão, uma lista explícita com
+    // `dispensa_senha_nas_acoes` faria o PostgREST rejeitar a query inteira
+    // e o login pararia pra todo mundo. Com `*`, a coluna simplesmente não
+    // vem, a flag cai pro default `false` e o comportamento é o de antes.
     const { data } = await supabase
       .from('usuarios_sistema')
-      .select('id,nome,email,tipo,terapeuta_id,ativo')
+      .select('*')
       .eq('email', email.toLowerCase().trim())
       .eq('senha_hash', hash)
       .eq('ativo', true)
@@ -24,7 +29,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email ou senha inválidos' }, { status: 401 })
     }
 
-    const row = data as { id: string; nome: string; email: string; tipo: string; terapeuta_id: string | null; ativo: boolean }
+    const row = data as {
+      id: string; nome: string; email: string; tipo: string
+      terapeuta_id: string | null; ativo: boolean
+      dispensa_senha_nas_acoes: boolean | null
+    }
+
+    // Token novo a cada login: o anterior (de outro navegador) é
+    // invalidado. Emitido pra todo mundo, mas só vale como credencial pra
+    // quem tem `dispensa_senha_nas_acoes` — ver verificarAcesso().
+    const { token, expiraEm } = gerarSessionToken()
+    const { error: erroToken } = await supabase
+      .from('usuarios_sistema')
+      .update({ session_token: token, session_token_expira_em: expiraEm })
+      .eq('id', row.id)
+    // Sem a migration aplicada este update falha. Não é motivo pra derrubar
+    // o login: sem token persistido, nenhuma ação vai ser autorizada por
+    // token e todas voltam a pedir senha — o comportamento de antes.
+    if (erroToken) console.error('[terapeutas/login] token não persistido:', erroToken.message)
 
     return NextResponse.json({
       success: true,
@@ -34,6 +56,8 @@ export async function POST(req: NextRequest) {
         email: row.email,
         tipo: row.tipo,
         terapeuta_id: row.terapeuta_id,
+        token,
+        dispensa_senha_nas_acoes: row.dispensa_senha_nas_acoes ?? false,
       },
     })
   } catch (err) {

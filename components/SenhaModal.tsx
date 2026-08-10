@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Eye, EyeOff, X, Lock } from 'lucide-react'
 
 interface SenhaModalProps {
@@ -11,6 +11,17 @@ interface SenhaModalProps {
   descricao: string
   loading?: boolean
   erro?: string
+  /**
+   * Usuário autorizado a agir sem digitar senha (tem token de sessão válido
+   * e `dispensa_senha_nas_acoes` ligado). O modal não aparece: confirma
+   * sozinho com senha vazia, e quem autentica no servidor é o token que a
+   * tela manda no body.
+   *
+   * Se a ação voltar com erro (token expirado, por exemplo), o modal aparece
+   * normalmente com a mensagem — a pessoa digita a senha e segue. Sem esse
+   * fallback o erro ficaria invisível, já que o modal está escondido.
+   */
+  dispensarSenha?: boolean
 }
 
 export default function SenhaModal({
@@ -21,18 +32,37 @@ export default function SenhaModal({
   descricao,
   loading = false,
   erro,
+  dispensarSenha = false,
 }: SenhaModalProps) {
   const [senha, setSenha] = useState('')
   const [mostrar, setMostrar] = useState(false)
+  const jaConfirmou = useRef(false)
+
+  const dispensar = dispensarSenha && !erro
 
   useEffect(() => {
     if (!isOpen) {
       setSenha('')
       setMostrar(false)
+      jaConfirmou.current = false
     }
   }, [isOpen])
 
+  useEffect(() => {
+    // A trava de ref é obrigatória: sem ela o StrictMode do dev dispara o
+    // efeito duas vezes e a ação acontece em dobro (dois compromissos, duas
+    // conclusões). Zerada no efeito acima quando o modal fecha.
+    if (isOpen && dispensar && !loading && !jaConfirmou.current) {
+      jaConfirmou.current = true
+      onConfirm('')
+    }
+    // onConfirm muda de identidade a cada render do pai — de propósito fora
+    // das dependências, senão o efeito re-dispara sem parar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, dispensar, loading])
+
   if (!isOpen) return null
+  if (dispensar) return null
 
   function handleConfirm() {
     if (!senha.trim() || loading) return

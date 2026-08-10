@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
 
 export async function PATCH(req: NextRequest) {
   try {
@@ -9,19 +9,23 @@ export async function PATCH(req: NextRequest) {
       acao: 'iniciar' | 'concluir' | 'anular' | 'nao_compareceu'
       motivo?: string
       data_entrega?: string
-      senha: string
+      senha?: string
+      token?: string
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
     }
-    const { sessao_id, acao, motivo, data_entrega, senha, usuario_nome, usuario_tipo, usuario_email } = body
+    const { sessao_id, acao, motivo, data_entrega, senha, token, usuario_nome, usuario_tipo, usuario_email } = body
 
-    if (!sessao_id || !acao || !senha || !usuario_email) {
+    if (!sessao_id || !acao || (!senha && !token) || !usuario_email) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
 
-    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
-    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+    const acesso = await verificarAcesso({ usuario_email, senha, token })
+    if (!acesso.valido) {
+      const { error, status } = erroAcesso(acesso)
+      return NextResponse.json({ error }, { status })
+    }
 
     const supabase = getSupabaseAdmin()
 

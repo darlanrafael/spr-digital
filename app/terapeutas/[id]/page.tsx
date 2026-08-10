@@ -169,6 +169,7 @@ type ConsultaHoje = {
   entregue_as?: string
   entregue_confirmado_por?: string | null
   duracao?: string
+  dias_em_atraso?: number
 }
 
 const PRESET_LABELS: Record<Preset, string> = {
@@ -344,6 +345,11 @@ type TerapeutaSession = {
   email: string
   tipo: string
   terapeuta_id: string | null
+  // Emitidos pelo login desde 06/08/2026. Sessões antigas guardadas no
+  // navegador não têm — daí opcionais, e o comportamento nesse caso é o de
+  // sempre (pede senha).
+  token?: string
+  dispensa_senha_nas_acoes?: boolean
 }
 
 // Próximas Consultas pagina de 8 em 8. O Pedro tem mais de 100 sessões
@@ -371,6 +377,11 @@ export default function PainelTerapeuta() {
   const [adminEmail, setAdminEmail] = useState('')
   const [isTerapeutaSession, setIsTerapeutaSession] = useState(false)
   const [sessionNome, setSessionNome] = useState('')
+  const [sessionToken, setSessionToken] = useState('')
+  // Só o login do módulo de terapeutas emite token. Quem cai aqui pelo
+  // dashboard principal (spr_session) continua digitando senha — aquele
+  // login é outro sistema de auth, contra outra tabela.
+  const [dispensaSenha, setDispensaSenha] = useState(false)
   const [linkCopiadoId, setLinkCopiadoId] = useState<string | null>(null)
 
   async function copiarLinkMeet(id: string, link: string) {
@@ -480,6 +491,7 @@ export default function PainelTerapeuta() {
   const [ovMetricas, setOvMetricas] = useState<Metricas>(METRICAS_VAZIA)
   const [ovConsultasHoje, setOvConsultasHoje] = useState<ConsultaHoje[]>([])
   const [ovConsultasEntreguesHoje, setOvConsultasEntreguesHoje] = useState<ConsultaHoje[]>([])
+  const [ovPendentesConclusao, setOvPendentesConclusao] = useState<ConsultaHoje[]>([])
   const [ovProximasConsultas, setOvProximasConsultas] = useState<ConsultaHoje[]>([])
   const [ovProximasPagina, setOvProximasPagina] = useState(1)
   const [ovLoading, setOvLoading] = useState(false)
@@ -684,6 +696,8 @@ export default function PainelTerapeuta() {
         const session = JSON.parse(raw) as TerapeutaSession
         setAdminEmail(session.email)
         setSessionNome(session.nome)
+        setSessionToken(session.token ?? '')
+        setDispensaSenha(!!session.token && !!session.dispensa_senha_nas_acoes)
         if (session.tipo === 'terapeuta') {
           setIsTerapeutaSession(true)
           if (session.terapeuta_id && session.terapeuta_id !== id) {
@@ -725,6 +739,7 @@ export default function PainelTerapeuta() {
       setOvMetricas(json.metricas ?? METRICAS_VAZIA)
       setOvConsultasHoje(json.consultas_hoje ?? [])
       setOvConsultasEntreguesHoje(json.consultas_entregues_hoje ?? [])
+      setOvPendentesConclusao(json.consultas_pendentes_conclusao ?? [])
       setOvProximasConsultas(json.proximas_consultas ?? [])
     } finally {
       setOvLoading(false)
@@ -746,6 +761,7 @@ export default function PainelTerapeuta() {
         .then(json => {
           if (json?.consultas_hoje) setOvConsultasHoje(json.consultas_hoje)
           if (json?.consultas_entregues_hoje) setOvConsultasEntreguesHoje(json.consultas_entregues_hoje)
+          if (json?.consultas_pendentes_conclusao) setOvPendentesConclusao(json.consultas_pendentes_conclusao)
           if (json?.proximas_consultas) setOvProximasConsultas(json.proximas_consultas)
         })
         .catch(() => {})
@@ -1009,6 +1025,7 @@ export default function PainelTerapeuta() {
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
         senha,
+        token: sessionToken,
       }),
     })
     const json = await res.json()
@@ -1026,7 +1043,7 @@ export default function PainelTerapeuta() {
     const res = await fetch('/api/terapeutas/sessoes/remarcar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessao_id: remarcarSessaoId, nova_data: remarcarData, motivo: remarcarMotivo, usuario_email: adminEmail, senha }),
+      body: JSON.stringify({ sessao_id: remarcarSessaoId, nova_data: remarcarData, motivo: remarcarMotivo, usuario_email: adminEmail, senha, token: sessionToken }),
     })
     const json = await res.json()
     setRemarcarLoading(false)
@@ -1050,6 +1067,7 @@ export default function PainelTerapeuta() {
         titulo: notaTitulo,
         descricao: notaDesc,
         senha,
+        token: sessionToken,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
@@ -1081,6 +1099,7 @@ export default function PainelTerapeuta() {
         solicitado_por: remSolicitadoPor,
         usuario_email: adminEmail,
         senha,
+        token: sessionToken,
       }),
     })
     const json = await res.json()
@@ -1113,6 +1132,7 @@ export default function PainelTerapeuta() {
           paciente_email: prontuarioSaleMaisRecente.email,
         },
         senha,
+        token: sessionToken,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
@@ -1138,6 +1158,7 @@ export default function PainelTerapeuta() {
         email: editEmail,
         telefone: editTelefone,
         senha,
+        token: sessionToken,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
@@ -1162,6 +1183,7 @@ export default function PainelTerapeuta() {
           id: orientEditandoId,
           descricao: orientDesc,
           senha,
+          token: sessionToken,
           usuario_nome: sessionNome || adminEmail.split('@')[0],
           usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
           usuario_email: adminEmail,
@@ -1182,6 +1204,7 @@ export default function PainelTerapeuta() {
           titulo: 'ORIENTAÇÃO DA SESSÃO:',
           descricao: orientDesc,
           senha,
+          token: sessionToken,
           usuario_nome: sessionNome || adminEmail.split('@')[0],
           usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
           usuario_email: adminEmail,
@@ -1298,6 +1321,7 @@ export default function PainelTerapeuta() {
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
         senha,
+        token: sessionToken,
       }),
     })
     const json = await res.json()
@@ -1324,6 +1348,7 @@ export default function PainelTerapeuta() {
         usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
         usuario_email: adminEmail,
         senha,
+        token: sessionToken,
       }),
     })
     const json = await res.json()
@@ -1480,6 +1505,73 @@ export default function PainelTerapeuta() {
                         </div>
                       ))}
                     </div>
+
+                    {/* Pendentes de conclusão — consultas cujo horário já
+                        terminou e que ninguém fechou. Fica no TOPO e só
+                        aparece quando existe alguma: é o único lugar onde
+                        elas são visíveis (nem "Hoje" nem "Próximas" pegam
+                        consulta passada), e foi assim que 96 se acumularam
+                        sem ninguém ver. */}
+                    {ovPendentesConclusao.length > 0 && (
+                      <div className="bg-amber-500/[0.06] border border-amber-500/30 rounded-xl mb-4">
+                        <div className="p-4 border-b border-amber-500/20">
+                          <h2 className="text-sm font-semibold text-amber-300 flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4" />
+                            Pendentes de conclusão ({ovPendentesConclusao.length})
+                          </h2>
+                          <p className="text-[11px] text-amber-200/60 mt-1">
+                            O horário já passou e ninguém marcou como concluída ou anulada. Enquanto ficar assim, o pacote do paciente não avança e a comissão não é gerada.
+                          </p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-amber-500/15">
+                                {['Data', 'Horário', 'Paciente', 'Em atraso', 'Ações'].map(h => (
+                                  <th key={h} className="px-4 py-3 text-left text-xs text-amber-200/50 font-medium">{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ovPendentesConclusao.map(s => (
+                                <tr key={s.id} className="border-b border-amber-500/10 hover:bg-amber-500/[0.04]">
+                                  <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{s.data}</td>
+                                  <td className="px-4 py-3 text-amber-300 font-medium">{s.horario}</td>
+                                  <td className="px-4 py-3 text-white">
+                                    <button onClick={() => setProntuarioEmail(s.paciente_email)}
+                                      className="text-left hover:text-indigo-300 transition-colors">
+                                      {s.paciente_nome}
+                                    </button>
+                                    <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs px-2 py-0.5 rounded-full text-amber-300 bg-amber-500/15">
+                                      {(s.dias_em_atraso ?? 0) === 0 ? 'hoje' : `${s.dias_em_atraso} ${s.dias_em_atraso === 1 ? 'dia' : 'dias'}`}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-1">
+                                      <button onClick={() => setProntuarioEmail(s.paciente_email)} title="Ver prontuário"
+                                        className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+                                        <ClipboardList className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('concluir'); setConcluirData(nowForDatetimeLocal()); setStatusErro('') }} title="Concluir consulta"
+                                        className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-green-500 hover:bg-green-500/10 transition-colors">
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('nao_compareceu'); setStatusErro('') }} title="Paciente não compareceu"
+                                        className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-orange-400 hover:bg-orange-500/10 transition-colors">
+                                        <Ban className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Consultas de hoje */}
                     <div className="bg-gray-900 border border-white/10 rounded-xl">
@@ -2091,6 +2183,7 @@ export default function PainelTerapeuta() {
       )}
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={!!statusSessaoId && (statusAcao !== 'anular' || anularMotivo.trim().length >= 10) && (statusAcao !== 'concluir' || !!concluirData)}
         onClose={() => { setStatusSessaoId(null); setStatusErro(''); setAnularMotivo(''); setConcluirData('') }}
         onConfirm={handleStatusAcao}
@@ -2135,6 +2228,7 @@ export default function PainelTerapeuta() {
       )}
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={remarcarSenhaModal}
         onClose={() => { setRemarcarSenhaModal(false); setRemarcarErro('') }}
         onConfirm={handleRemarcar}
@@ -2658,6 +2752,7 @@ export default function PainelTerapeuta() {
       )}
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={notaSenhaOpen}
         onClose={() => { setNotaSenhaOpen(false); setNotaErro('') }}
         onConfirm={handleNota}
@@ -2668,6 +2763,7 @@ export default function PainelTerapeuta() {
       />
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={editSenhaOpen}
         onClose={() => { setEditSenhaOpen(false); setEditErro('') }}
         onConfirm={handleEditarPaciente}
@@ -2678,6 +2774,7 @@ export default function PainelTerapeuta() {
       />
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={remSenhaOpen}
         onClose={() => { setRemSenhaOpen(false); setRemErro('') }}
         onConfirm={handleRemarcarOcorrencia}
@@ -2688,6 +2785,7 @@ export default function PainelTerapeuta() {
       />
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={orientSenhaOpen}
         onClose={() => { setOrientSenhaOpen(false); setOrientErro('') }}
         onConfirm={handleOrientacao}
@@ -2698,6 +2796,7 @@ export default function PainelTerapeuta() {
       />
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={reeSenhaOpen}
         onClose={() => { setReeSenhaOpen(false); setReeErro('') }}
         onConfirm={handleReembolso}
@@ -3019,6 +3118,7 @@ export default function PainelTerapeuta() {
       )}
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={compromissoNovoSenhaOpen}
         onClose={() => { setCompromissoNovoSenhaOpen(false); setCompromissoNovoErro('') }}
         onConfirm={handleLancarCompromisso}
@@ -3066,6 +3166,7 @@ export default function PainelTerapeuta() {
       )}
 
       <SenhaModal
+        dispensarSenha={dispensaSenha}
         isOpen={compromissoApagarSenhaOpen}
         onClose={() => { setCompromissoApagarSenhaOpen(false); setCompromissoApagarErro('') }}
         onConfirm={handleApagarCompromisso}

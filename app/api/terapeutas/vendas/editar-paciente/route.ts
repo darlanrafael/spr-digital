@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 
 // Edita nome/e-mail/telefone da venda (dado que a tela de prontuário lê
 // direto de `sales`, não existe uma tabela "paciente" separada — corrigir um
@@ -13,19 +13,23 @@ export async function PUT(req: NextRequest) {
       nome: string
       email: string
       telefone: string
-      senha: string
+      senha?: string
+      token?: string
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
     }
-    const { sale_id, nome, email, telefone, senha, usuario_nome, usuario_tipo, usuario_email } = body
+    const { sale_id, nome, email, telefone, senha, token, usuario_nome, usuario_tipo, usuario_email } = body
 
     if (!sale_id || !nome?.trim() || !email?.trim()) {
       return NextResponse.json({ error: 'Nome e e-mail são obrigatórios' }, { status: 400 })
     }
 
-    const { valido } = await verificarSenhaUsuario(usuario_email, senha)
-    if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+    const acesso = await verificarAcesso({ usuario_email, senha, token })
+    if (!acesso.valido) {
+      const { error, status } = erroAcesso(acesso)
+      return NextResponse.json({ error }, { status })
+    }
 
     const supabase = getSupabaseAdmin()
 

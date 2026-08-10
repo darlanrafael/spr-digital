@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -8,18 +8,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sessao_id, usuario_email, senha } = body as {
+  const { sessao_id, usuario_email, senha, token } = body as {
     sessao_id: string
     usuario_email: string
-    senha: string
+    senha?: string
+    token?: string
   }
 
-  if (!sessao_id || !usuario_email || !senha) {
+  if (!sessao_id || !usuario_email || (!senha && !token)) {
     return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
   }
 
-  const { valido, usuario } = await verificarSenhaUsuario(usuario_email, senha)
-  if (!valido) return NextResponse.json({ error: 'Senha inválida' }, { status: 401 })
+  const acesso = await verificarAcesso({ usuario_email, senha, token })
+  const { valido, usuario } = acesso
+  if (!valido) {
+    const { error, status } = erroAcesso(acesso)
+    return NextResponse.json({ error }, { status })
+  }
 
   const client = getSupabaseAdmin()
 

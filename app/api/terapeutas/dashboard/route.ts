@@ -128,10 +128,11 @@ export async function GET(req: NextRequest) {
     // 1. Terapeutas ativos
     const { data: terapeutasData } = await supabase
       .from('terapeutas')
-      .select('id,nome,percentual_comissao,vendas_a_partir_de')
+      .select('id,nome,percentual_comissao,vendas_a_partir_de,duracao_sessao_minutos')
       .eq('ativo', true)
       .order('nome')
-    const terapeutas = (terapeutasData ?? []) as { id: string; nome: string; percentual_comissao: number; vendas_a_partir_de: string | null }[]
+    const terapeutas = (terapeutasData ?? []) as { id: string; nome: string; percentual_comissao: number; vendas_a_partir_de: string | null; duracao_sessao_minutos: number | null }[]
+    const duracaoPorTerapeuta = new Map(terapeutas.map(t => [t.id, t.duracao_sessao_minutos ?? 60]))
 
     // 2. Se filtro de terapeuta: restringir pelo nome dela no produto (não só
     // pelas vendas que já têm sessão — senão as pendentes de agendamento
@@ -410,6 +411,28 @@ export async function GET(req: NextRequest) {
     //       critério (a) perderia por estar agendada em outro dia.
     // O inverso também vale: (b) sozinho perde a sessão atendida hoje cuja
     // data_entrega foi informada com outra data. Daí a união, deduplicada.
+    // 7c. Pendentes de conclusão — consultas cujo horário JÁ TERMINOU e que
+    // continuam em `agendada`/`pendente`: ninguém clicou Concluir nem Anular.
+    //
+    // Sem esta lista elas ficam invisíveis: "Consultas de Hoje" só mostra o
+    // dia corrente e "Próximas" só o futuro, então uma consulta de duas
+    // semanas atrás não aparece em lugar nenhum — o pacote do paciente trava
+    // e a comissão nunca é gerada. Em 10/08/2026 havia 96 acumuladas assim,
+    // a mais antiga de junho.
+    //
+    // O corte é o FIM da consulta (início + duração do terapeuta), não o
+    // início: senão a consulta que está acontecendo agora apareceria como
+    // pendente um minuto depois de começar.
+    const agoraMs = Date.now()
+    let atrasadasQ = supabase
+      .from('sessoes')
+      .select(COLUNAS_SESSAO_QUADRANTE)
+      .in('status', ['agendada', 'pendente'])
+      .lt('data_agendada', new Date(agoraMs).toISOString())
+      .in('sale_id', saleIds.length > 0 ? saleIds : ['__none__'])
+      .order('data_agendada', { ascending: true })
+    if (terapeutaId !== 'all') atrasadasQ = atrasadasQ.eq('terapeuta_id', terapeutaId)
+
     const entreguesBase = () => {
       let q = supabase
         .from('sessoes')
@@ -436,8 +459,9 @@ export async function GET(req: NextRequest) {
       { data: proximasData },
       { data: entreguesAgendadasData },
       { data: entreguesConfirmadasData },
+      { data: atrasadasData },
     ] = await Promise.all([
-      hojeQ, proximasQ, entreguesAgendadasHojeQ, entreguesConfirmadasHojeQ,
+      hojeQ, proximasQ, entreguesAgendadasHojeQ, entreguesConfirmadasHojeQ, atrasadasQ,
     ])
 
     function mapSessaoHoje(s: SessaoHojeRow) {
@@ -491,6 +515,20 @@ export async function GET(req: NextRequest) {
     ]) {
       entreguesPorId.set(linha.id, linha)
     }
+    // O filtro por fim-da-consulta é aqui e não na query porque a duração
+    // varia por terapeuta (`duracao_sessao_minutos`) — o Postgres não tem
+    // esse valor na linha de `sessoes` pra comparar direto no WHERE.
+    const consultas_pendentes_conclusao = ((atrasadasData ?? []) as unknown as SessaoHojeRow[])
+      .filter(s => {
+        if (!s.data_agendada) return false
+        const dur = duracaoPorTerapeuta.get(s.terapeuta_id) ?? 60
+        return new Date(s.data_agendada).getTime() + dur * 60000 <= agoraMs
+      })
+      .map(s => ({
+        ...mapSessaoHoje(s),
+        dias_em_atraso: Math.floor((agoraMs - new Date(s.data_agendada as string).getTime()) / 86400000),
+      }))
+
     const consultas_entregues_hoje = [...entreguesPorId.values()]
       // Entrega mais recente primeiro — a leitura natural de "o que eu já
       // fiz hoje". Sessão sem data_entrega (não deveria existir com status
@@ -517,6 +555,7 @@ export async function GET(req: NextRequest) {
       },
       por_terapeuta,
       consultas_hoje,
+      consultas_pendentes_conclusao,
       consultas_entregues_hoje,
       proximas_consultas,
     })
