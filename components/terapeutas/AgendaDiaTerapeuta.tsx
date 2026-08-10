@@ -95,6 +95,12 @@ function horarioParaMinutos(horario: string): number {
   return h * 60 + m
 }
 
+// Inverso de horarioParaMinutos — usado pra rotular a linha da agenda de
+// horário fixo com o horário REAL do item, e não com o horário da grade.
+function minutosParaLabel(minutos: number): string {
+  return `${String(Math.floor(minutos / 60)).padStart(2, '0')}:${String(minutos % 60).padStart(2, '0')}`
+}
+
 // Conta quantos horários fixos (ex: os 14 do Pedro) NÃO batem com nada em
 // `ocupados` (sessão ou compromisso já ocupando aquele intervalo) — usado
 // pelo preview do card de mês pra terapeuta de horário fixo.
@@ -204,32 +210,82 @@ export default function AgendaDiaTerapeuta({
         // nesses horários exatos, não numa agenda de horário livre.
         <div className="divide-y divide-white/5">
           {(() => {
-            // Cada sessão/compromisso só pode "ocupar" o primeiro horário fixo
-            // com quem ela sobrepõe (marcas já vêm ordenadas por minuto). Sem
-            // isso, quando dois horários da grade ficam mais próximos entre si
-            // do que a duração da sessão (ex: grade de 45min pra sessão de
-            // 50min), a MESMA sessão real batia na janela de dois horários e
-            // aparecia duplicada na lista — o paciente não tinha 2 sessões,
-            // era a mesma sendo contada duas vezes.
-            const sessoesUsadas = new Set<string>()
-            const compromissosUsados = new Set<string>()
+            // Cada sessão/compromisso é ancorado no horário fixo MAIS PRÓXIMO
+            // do seu início real.
+            //
+            // A regra anterior era "o primeiro horário cuja janela de duração
+            // sobrepõe o item". Ela existia pra evitar que a mesma sessão
+            // aparecesse duas vezes quando dois horários da grade ficam mais
+            // perto entre si do que a duração da sessão — resolvia a
+            // duplicação, mas deslocava o item pra linha errada: um
+            // compromisso das 14:10 caía na linha das 13:30, porque a janela
+            // das 13:30 (13:30–14:20, sessão de 50min) encosta 10 minutos
+            // nele, e 13:30 vem antes na lista. Acontece em todo par de
+            // horários mais próximo que a duração — na grade do Pedro:
+            // 12:10/12:40, 13:30/14:10, 17:30/18:15 e 19:00/19:30.
+            //
+            // Ancorar pelo início mais próximo mantém a garantia de não
+            // duplicar (cada horário recebe no máximo um item, e cada item
+            // ocupa um horário só) e põe o item onde ele de fato está.
+            const horariosLivres = new Set(marcas.map(x => x.minuto))
+            const ancoras = new Map<number, { sessao?: typeof sessoesComHorario[number]; compromisso?: typeof compromissosComHorario[number] }>()
+            // Sessões primeiro: em empate de horário exato com um
+            // compromisso, a consulta de paciente é que fica na linha.
+            const itens = [
+              ...sessoesComHorario.map(s => ({ inicio: s.inicio, sessao: s })),
+              ...compromissosComHorario.map(c => ({ inicio: c.inicio, compromisso: c })),
+            ]
+            // Duas passadas. Na primeira, quem começa exatamente em cima de
+            // um horário da grade fica com ele. Só na segunda os que sobraram
+            // (horário fora da grade, ou dois itens marcados no MESMO
+            // horário) procuram a linha livre mais próxima.
+            //
+            // Sem separar as passadas, uma passada gulosa única deixa um item
+            // legítimo sem a própria linha: no dia 17/08 havia duas consultas
+            // às 18:15; a segunda tomava a linha das 17:30 e empurrava a
+            // consulta real das 17:30 pra 16:00 — três linhas erradas por
+            // causa de um único conflito.
+            const sobraram: typeof itens = []
+            for (const item of itens) {
+              if (horariosLivres.has(item.inicio)) {
+                horariosLivres.delete(item.inicio)
+                ancoras.set(item.inicio, item)
+              } else {
+                sobraram.push(item)
+              }
+            }
+            for (const item of sobraram) {
+              if (horariosLivres.size === 0) break
+              let alvo: number | null = null
+              for (const minuto of horariosLivres) {
+                if (alvo === null || Math.abs(minuto - item.inicio) < Math.abs(alvo - item.inicio)) {
+                  alvo = minuto
+                }
+              }
+              horariosLivres.delete(alvo as number)
+              ancoras.set(alvo as number, item)
+            }
+
             return marcas.map(m => {
-              const fimSlot = m.minuto + duracaoSessaoMinutos
-              const sessaoAqui = sessoesComHorario.find(s =>
-                !sessoesUsadas.has(s.sessao.id) && m.minuto < s.fim && fimSlot > s.inicio)
-              if (sessaoAqui) sessoesUsadas.add(sessaoAqui.sessao.id)
-              const compromissoAqui = !sessaoAqui
-                ? compromissosComHorario.find(c =>
-                    !compromissosUsados.has(c.compromisso.id) && m.minuto < c.fim && fimSlot > c.inicio)
-                : undefined
-              if (compromissoAqui) compromissosUsados.add(compromissoAqui.compromisso.id)
+              const ancora = ancoras.get(m.minuto)
+              const sessaoAqui = ancora?.sessao
+              const compromissoAqui = ancora?.compromisso
+              // Horário mostrado na linha ocupada é o do item de verdade, não
+              // o rótulo da grade: se um item foi lançado fora dos horários
+              // fixos (dá pra editar a hora no modal), a linha diria uma hora
+              // que não é a dele. Linha livre segue mostrando a grade.
+              const rotulo = sessaoAqui
+                ? minutosParaLabel(sessaoAqui.inicio)
+                : compromissoAqui
+                  ? minutosParaLabel(compromissoAqui.inicio)
+                  : m.label
 
             if (sessaoAqui) {
               const { sessao } = sessaoAqui
               return (
                 <button key={m.minuto} onClick={() => onClickSessao(sessao)}
                   className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
-                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{m.label}</span>
+                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
                   <span className="w-[3px] h-8 rounded-sm bg-indigo-500 shrink-0" />
                   <span className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
@@ -245,7 +301,7 @@ export default function AgendaDiaTerapeuta({
               return (
                 <button key={m.minuto} onClick={() => onClickCompromisso(compromisso)}
                   className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-white/5 transition-colors">
-                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{m.label}</span>
+                  <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
                   <span className={`w-[3px] h-8 rounded-sm shrink-0 ${isSessao ? 'bg-indigo-500' : 'bg-stone-400'}`} />
                   <span className="min-w-0 flex-1">
                     <p className={`text-sm font-medium truncate ${isSessao ? 'text-indigo-200' : 'text-stone-300'}`}>🔒 {compromisso.titulo}</p>
@@ -256,9 +312,9 @@ export default function AgendaDiaTerapeuta({
 
             return (
               <button key={m.minuto}
-                onClick={() => onClickLivre(horaParaData(data, m.minuto), horaParaData(data, fimSlot))}
+                onClick={() => onClickLivre(horaParaData(data, m.minuto), horaParaData(data, m.minuto + duracaoSessaoMinutos))}
                 className="w-full flex items-center gap-3 px-5 py-3 text-left bg-green-500/[0.04] hover:bg-green-500/10 transition-colors">
-                <span className="w-12 shrink-0 text-[11px] text-gray-500">{m.label}</span>
+                <span className="w-12 shrink-0 text-[11px] text-gray-500">{rotulo}</span>
                 <span className="w-[3px] h-8 rounded-sm bg-green-500/40 shrink-0" />
                 <span className="text-[11px] text-green-500/70">Livre — clique pra bloquear</span>
               </button>
