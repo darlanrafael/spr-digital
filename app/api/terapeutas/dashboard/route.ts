@@ -208,6 +208,23 @@ export async function GET(req: NextRequest) {
 
     const saleIds = vendasRaw.map(v => v.id)
 
+    // Lançamento manual (id "manual_*") registra uma compra feita FORA das
+    // plataformas — sistema antigo, pagamento por fora — só pra criar as
+    // sessões do paciente na agenda. Ele não é uma transação nova: em 28 dos
+    // 31 casos com valor existe a venda real da Hubla/Kiwify com o mesmo
+    // valor, e somar os dois contava a mesma receita duas vezes (R$ 81.900 a
+    // mais no faturamento do Pedro em 10/08/2026).
+    //
+    // Regra: o manual conta a SESSÃO (o paciente é real e precisa aparecer na
+    // agenda, nas listas e nas contagens), mas nunca o DINHEIRO. Só venda que
+    // entrou por webhook alimenta faturamento, imposto e ticket médio.
+    //
+    // O `getSales()` do dashboard principal/DRE já fazia isso desde 27/07
+    // (`.not('id','like','manual_%')`); esta tela tinha ficado de fora, então
+    // o número que o terapeuta via nunca batia com o do CEO.
+    const ehLancamentoManual = (id: string) => String(id).startsWith('manual_')
+    const vendasFaturamento = vendasRaw.filter(v => !ehLancamentoManual(v.id))
+
     // 4. Buscar sessões em lotes de 200
     const sessoes: SessaoRow[] = []
     if (saleIds.length > 0) {
@@ -270,7 +287,8 @@ export async function GET(req: NextRequest) {
         sessoesExtra += inferirSessoesPorValor(v, vendasRaw)
         const imposto = (v.valor_liquido || 0) * 0.1285
         comissaoExtra += ((v.valor_liquido || 0) - imposto) * (t.percentual_comissao / 100)
-        brutoExtra += v.valor_pago_cliente || 0
+        // Sessão do manual conta; o bruto dele, não — mesma regra do resto.
+        if (!ehLancamentoManual(v.id)) brutoExtra += v.valor_pago_cliente || 0
       }
       pendentesPorTerapeuta.set(t.id, { sessoes: sessoesExtra, comissao: comissaoExtra, bruto: brutoExtra, saleIds: pendentes.map(v => v.id) })
     }
@@ -285,14 +303,19 @@ export async function GET(req: NextRequest) {
     const sessoes_futuras = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesFiltrado.sessoes
     const sessoes_vendidas = sessoesFiltradas.length + pendentesFiltrado.sessoes
 
-    const faturamento_bruto = vendasRaw.reduce((a, v) => a + saleBruto(v), 0)
-    const total_impostos = vendasRaw.reduce((a, v) => a + saleImpostoBase(v) * (saleAliquota(v) / 100), 0)
-    const faturamento_liquido_total = vendasRaw.reduce((a, v) => {
+    // Daqui pra baixo, tudo que é dinheiro usa `vendasFaturamento` (sem os
+    // lançamentos manuais). Contagem de sessão continua vindo de
+    // `sessoesFiltradas`, que inclui as sessões dos manuais — elas são reais.
+    const faturamento_bruto = vendasFaturamento.reduce((a, v) => a + saleBruto(v), 0)
+    const total_impostos = vendasFaturamento.reduce((a, v) => a + saleImpostoBase(v) * (saleAliquota(v) / 100), 0)
+    const faturamento_liquido_total = vendasFaturamento.reduce((a, v) => {
       return a + (v.valor_liquido || 0) - saleImpostoBase(v) * (saleAliquota(v) / 100)
     }, 0)
     const faturamento_liquido_spr = faturamento_liquido_total * 0.70
     const faturamento_liquido_terapeutas = faturamento_liquido_total * 0.30
-    const ticket_medio = vendasRaw.length > 0 ? faturamento_bruto / vendasRaw.length : 0
+    // Denominador também sem manual: dividir a receita real por um total de
+    // vendas que inclui as manuais derrubaria o ticket médio artificialmente.
+    const ticket_medio = vendasFaturamento.length > 0 ? faturamento_bruto / vendasFaturamento.length : 0
     const comissao_gerada = sessoesFiltradas.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + (s.comissao_valor || 0), 0)
     const comissao_futura = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesFiltrado.comissao
     // Comissão total sobre todas as sessões vendidas no período (entregues + futuras + ainda sem sessão criada), independente de já ter sido paga —
@@ -306,7 +329,11 @@ export async function GET(req: NextRequest) {
     // no período. Não usa vendasRaw (que já veio filtrado por data_hora da
     // compra) porque uma sessão entregue agora pode vir de uma venda de meses
     // atrás — busca à parte, direto pelas vendas referenciadas.
-    const sessoesEntreguesFiltradas = sessoesFiltradas.filter(s => s.status === 'entregue' && s.total_sessoes > 0)
+    // Sessão vinda de lançamento manual fica FORA da média: o valor da venda
+    // dela é zero ou é cópia da venda real, então entraria como R$ 0,00 e
+    // puxaria o ticket médio pra baixo sem representar nada.
+    const sessoesEntreguesFiltradas = sessoesFiltradas.filter(s =>
+      s.status === 'entregue' && s.total_sessoes > 0 && !ehLancamentoManual(s.sale_id))
     const saleIdsEntregues = [...new Set(sessoesEntreguesFiltradas.map(s => s.sale_id))]
     const liquidoPorSale = new Map<string, number>()
     if (saleIdsEntregues.length > 0) {
@@ -335,7 +362,7 @@ export async function GET(req: NextRequest) {
       const ts = sessoesFiltradas.filter(s => s.terapeuta_id === t.id)
       const pendentesT = pendentesPorTerapeuta.get(t.id) ?? { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] }
       const saleIdsTerapeuta = [...new Set(ts.map(s => s.sale_id))]
-      const fat_bruto_t = vendasRaw
+      const fat_bruto_t = vendasFaturamento
         .filter(v => saleIdsTerapeuta.includes(v.id))
         .reduce((a, v) => a + (v.valor_pago_cliente || 0), 0) + pendentesT.bruto
       const proximas = ts
