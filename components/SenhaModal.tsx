@@ -119,8 +119,10 @@ export default function SenhaModal({
           </button>
         </div>
 
+        {/* whitespace-pre-line: o conflito de agenda lista uma data por linha
+            quando várias sessões do pacote batem em horário ocupado. */}
         {erro && (
-          <p className="text-red-400 text-xs mb-3">{erro}</p>
+          <p className="text-red-400 text-xs mb-3 whitespace-pre-line">{erro}</p>
         )}
 
         <div className="flex gap-3 mt-4">

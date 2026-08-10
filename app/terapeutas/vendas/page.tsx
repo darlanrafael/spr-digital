@@ -967,7 +967,9 @@ export default function TerapeutasVendas() {
                   </div>
                 </div>
               )}
-              {agendarErro && <p className="text-xs text-red-400">{agendarErro}</p>}
+              {/* whitespace-pre-line: o conflito de agenda pode listar uma
+                  data por linha quando várias sessões do pacote batem. */}
+              {agendarErro && <p className="text-xs text-red-400 whitespace-pre-line">{agendarErro}</p>}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setAgendarVendaId(null)}

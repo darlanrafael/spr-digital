@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
+import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 
@@ -44,6 +45,18 @@ export async function POST(req: NextRequest) {
   const usuarioNome = (usuario as Record<string, unknown>)?.nome as string ?? usuario_email
 
   const novaDataISO = brasiliaLocalToISO(nova_data)
+
+  // Mesma trava do agendar: o horário novo não pode já ter paciente ou
+  // compromisso. Ignora a própria sessão — senão remarcar pro mesmo horário
+  // (ex: mudando só o dia numa data que ela já ocupa) bateria consigo mesma.
+  const conflitos = await buscarConflitosAgenda({
+    terapeuta_id: sessao.terapeuta_id as string,
+    datasISO: [novaDataISO],
+    ignorarSessaoId: sessao_id,
+  })
+  if (conflitos.length > 0) {
+    return NextResponse.json({ error: mensagemConflito(conflitos), conflitos }, { status: 409 })
+  }
 
   // A tabela sessoes não tem coluna "observacoes" — motivo/histórico fica
   // só em ocorrencias_prontuario (inserido abaixo). Referenciar uma coluna

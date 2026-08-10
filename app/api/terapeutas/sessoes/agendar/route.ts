@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
+import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 
@@ -55,11 +56,6 @@ export async function POST(req: NextRequest) {
     numero_sessoes: numSessoes,
   })
 
-  // Deletar sessões existentes que ainda não foram entregues (reagendamento total)
-  await client.from('sessoes').delete()
-    .eq('sale_id', sale_id)
-    .in('status', ['pendente', 'agendada', 'remarcada'])
-
   // brasiliaLocalToISO trata o input como horário de Brasília (UTC-3, sem
   // horário de verão) — new Date(string sem timezone) direto é ambíguo e
   // depende do TZ do runtime do servidor, causando horários errados.
@@ -71,6 +67,25 @@ export async function POST(req: NextRequest) {
   const datasExplicitas = datas_sessoes && datas_sessoes.length === numSessoes
     ? datas_sessoes.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
     : null
+
+  // Trava de conflito ANTES de apagar qualquer coisa: um conflito no meio do
+  // pacote não pode destruir o agendamento que já existia. Ignora as sessões
+  // da própria venda, que são justamente as que serão recriadas logo abaixo.
+  const datasPedidas = Array.from({ length: numSessoes }, (_, i) =>
+    datasExplicitas ? datasExplicitas[i] : new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString())
+  const conflitos = await buscarConflitosAgenda({
+    terapeuta_id, datasISO: datasPedidas, ignorarSaleId: sale_id,
+  })
+  if (conflitos.length > 0) {
+    // Pacote inteiro recusado, nada criado: agendar só parte deixaria o
+    // paciente com um pacote incompleto que alguém precisa lembrar de fechar.
+    return NextResponse.json({ error: mensagemConflito(conflitos), conflitos }, { status: 409 })
+  }
+
+  // Deletar sessões existentes que ainda não foram entregues (reagendamento total)
+  await client.from('sessoes').delete()
+    .eq('sale_id', sale_id)
+    .in('status', ['pendente', 'agendada', 'remarcada'])
   const sessoes = Array.from({ length: numSessoes }, (_, i) => {
     return {
       sale_id,
