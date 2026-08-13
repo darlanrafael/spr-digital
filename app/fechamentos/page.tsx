@@ -169,8 +169,16 @@ function FechamentosContent() {
     setTrafego(t => ({ ...t, termos: t.termos.filter(x => x !== termo) }))
   }
 
+  // Datas em YYYY-MM-DD comparam certo como string, sem precisar de Date.
+  const periodoTrafegoInvertido = !!trafego.periodo.inicio && !!trafego.periodo.fim
+    && trafego.periodo.inicio > trafego.periodo.fim
+
   async function buscarTrafego() {
     if (!trafego.periodo.inicio || !trafego.periodo.fim || trafego.termos.length === 0) return
+    if (trafego.periodo.inicio > trafego.periodo.fim) {
+      setTrafego(t => ({ ...t, erro: 'Data de início posterior à data de fim' }))
+      return
+    }
     setTrafego(t => ({ ...t, loading: true, erro: null }))
     try {
       const params = new URLSearchParams({ dateStart: trafego.periodo.inicio, dateEnd: trafego.periodo.fim })
@@ -633,8 +641,18 @@ function FechamentosContent() {
                     </div>
                   )}
 
+                  {/* Período invertido devolvia R$ 0,00 e zero campanhas sem
+                      reclamar de nada — e R$ 0,00 de tráfego num fechamento lê
+                      como "não teve investimento", inflando o lucro. */}
+                  {periodoTrafegoInvertido && (
+                    <p className="text-xs text-amber-400 mb-2">
+                      A data de início ({trafego.periodo.inicio.split('-').reverse().join('/')}) é
+                      posterior à data de fim ({trafego.periodo.fim.split('-').reverse().join('/')}).
+                      Inverta as datas para buscar o investimento do período.
+                    </p>
+                  )}
                   <button onClick={buscarTrafego}
-                    disabled={trafego.loading || !trafego.periodo.inicio || !trafego.periodo.fim || trafego.termos.length === 0}
+                    disabled={trafego.loading || !trafego.periodo.inicio || !trafego.periodo.fim || trafego.termos.length === 0 || periodoTrafegoInvertido}
                     className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded-lg transition-colors mb-3">
                     {trafego.loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                     Buscar tráfego
