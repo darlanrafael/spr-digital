@@ -178,6 +178,11 @@ function mapSaleRow(r: Record<string, unknown>): Sale {
     produto: String(r.produto ?? ''),
     plataforma: String(r.plataforma ?? '').toLowerCase() as 'kiwify' | 'hubla',
     plataforma_sale_id: r.plataforma_sale_id ? String(r.plataforma_sale_id) : undefined,
+    // Necessário pra conferência do fechamento distinguir ITEM de FATURA: o
+    // order_id é "{idDaFatura}-{idDoProduto}", então duas linhas da mesma
+    // fatura compartilham o prefixo. Sem isso não dá pra explicar por que a
+    // plataforma mostra 85 faturas e nós mostramos 90 itens.
+    order_id: r.order_id ? String(r.order_id) : undefined,
     preco_base: Number(r.preco_base),
     valor_pago_cliente: Number(r.valor_pago_cliente),
     valor_liquido: Number(r.valor_liquido),

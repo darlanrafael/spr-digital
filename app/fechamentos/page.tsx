@@ -10,7 +10,7 @@ import PlatformBadge from '@/components/PlatformBadge'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
-import { Closing, ClosingBuyer, CashflowEntry } from '@/types'
+import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
 import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
 import { getSupabaseClient } from '@/lib/supabase'
 
@@ -269,6 +269,57 @@ function FechamentosContent() {
       return s.status === 'aprovada' && matchProject && matchPeriod && matchProduct
     })
   }, [sales, periodo, selectedProject, selectedProducts, produtoParaGrupo])
+
+  // ── Conferência com as plataformas ─────────────────────────────────────
+  //
+  // Existe porque conferir o fechamento contra Hubla/Kiwify no olho gerava
+  // falso alarme e escondia erro real ao mesmo tempo. Em 12/08/2026: o
+  // "Gravação" mostrava 90 aqui e 85 na Hubla (os dois certos — 5 clientes
+  // compraram duas ofertas do mesmo produto na mesma fatura), enquanto duas
+  // vendas em dólar gravadas como real escondiam R$ 2.083 de verdade.
+  //
+  // Antecipa a divergência e explica o motivo, em vez de deixar a conta
+  // "não bater" sem explicação.
+  const conferencia = useMemo(() => {
+    // order_id é "{uuidDaFatura}-{idDoProduto}" — o UUID inicial identifica a
+    // fatura na plataforma; o resto distingue o item dentro dela.
+    const UUID = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+    const faturaDe = (s: Sale) => UUID.exec(s.order_id ?? '')?.[1] ?? s.order_id ?? s.id
+
+    const multiplos: { produto: string; itens: number; faturas: number; clientes: string[] }[] = []
+    for (const produto of [...new Set(periodSales.map(s => s.produto))]) {
+      const doProduto = periodSales.filter(s => s.produto === produto)
+      const porFatura = new Map<string, Sale[]>()
+      for (const s of doProduto) {
+        const f = faturaDe(s)
+        porFatura.set(f, [...(porFatura.get(f) ?? []), s])
+      }
+      if (porFatura.size === doProduto.length) continue
+      multiplos.push({
+        produto,
+        itens: doProduto.length,
+        faturas: porFatura.size,
+        clientes: [...porFatura.values()].filter(v => v.length > 1).map(v => v[0].nome),
+      })
+    }
+
+    // Kiwify permite checkout em outra moeda e manda o valor cobrado sem dizer
+    // qual é; preco_base é sempre o catálogo em BRL. Razão muito baixa = a
+    // venda entrou na moeda estrangeira.
+    const moedaEstrangeira = periodSales.filter(s =>
+      s.plataforma === 'kiwify' && s.preco_base > 0 && s.valor_pago_cliente / s.preco_base < 0.4)
+
+    // Produtor recebendo mais do que o cliente pagou é impossível: os dois
+    // campos vieram em bases diferentes.
+    const liquidoAcimaDoPago = periodSales.filter(s =>
+      s.valor_liquido > s.valor_pago_cliente && s.valor_pago_cliente > 0)
+
+    return { multiplos, moedaEstrangeira, liquidoAcimaDoPago }
+  }, [periodSales])
+
+  const temConferencia = conferencia.multiplos.length > 0
+    || conferencia.moedaEstrangeira.length > 0
+    || conferencia.liquidoAcimaDoPago.length > 0
 
   const byProduct = useMemo(() => {
     const map: Record<string, {
@@ -861,6 +912,73 @@ function FechamentosContent() {
                     </div>
                   )}
                 </div>
+
+                {/* Conferência — some sozinha quando o período está limpo */}
+                {temConferencia && (
+                  <div className="bg-amber-500/[0.06] border border-amber-500/30 rounded-xl mb-4 overflow-hidden">
+                    <div className="p-4 border-b border-amber-500/20">
+                      <h3 className="text-sm font-semibold text-amber-300">
+                        Conferência com as plataformas
+                      </h3>
+                      <p className="text-[11px] text-amber-200/60 mt-1">
+                        Diferenças esperadas ao comparar este fechamento com a Hubla ou a Kiwify. Confira antes de fechar.
+                      </p>
+                    </div>
+
+                    {conferencia.multiplos.map(m => (
+                      <div key={m.produto} className="px-4 py-3 border-b border-amber-500/10">
+                        <p className="text-xs font-medium text-white">{m.produto}</p>
+                        <p className="text-[11px] text-amber-200/80 mt-1">
+                          Aqui: <strong>{m.itens} itens</strong> · Na plataforma: <strong>{m.faturas} faturas</strong> — os dois estão certos.
+                        </p>
+                        <p className="text-[11px] text-gray-400 mt-1">
+                          {m.clientes.length} cliente(s) compraram esse produto mais de uma vez na mesma fatura
+                          (ofertas diferentes com o mesmo nome, ex: turmas distintas): {m.clientes.slice(0, 6).join(', ')}
+                          {m.clientes.length > 6 ? ` e mais ${m.clientes.length - 6}` : ''}.
+                        </p>
+                      </div>
+                    ))}
+
+                    {conferencia.moedaEstrangeira.length > 0 && (
+                      <div className="px-4 py-3 border-b border-amber-500/10">
+                        <p className="text-xs font-medium text-white">
+                          {conferencia.moedaEstrangeira.length} venda(s) cobradas em moeda estrangeira
+                        </p>
+                        <p className="text-[11px] text-amber-200/80 mt-1">
+                          O total pode ficar alguns reais acima ou abaixo do que a plataforma mostra: a conversão
+                          usa o câmbio do dia da venda, e a plataforma converte no próprio momento dela.
+                        </p>
+                        <div className="mt-1.5 space-y-0.5">
+                          {conferencia.moedaEstrangeira.map(s => (
+                            <p key={s.id} className="text-[11px] text-gray-400">
+                              {new Date(s.data_hora).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })} ·
+                              {' '}{s.nome} · {s.produto} · {formatCurrency(s.valor_liquido)}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {conferencia.liquidoAcimaDoPago.length > 0 && (
+                      <div className="px-4 py-3">
+                        <p className="text-xs font-medium text-red-300">
+                          {conferencia.liquidoAcimaDoPago.length} venda(s) com líquido maior que o valor pago
+                        </p>
+                        <p className="text-[11px] text-amber-200/80 mt-1">
+                          Impossível na prática — os dois valores vieram da plataforma em bases diferentes. O faturamento líquido está superestimado nessas linhas.
+                        </p>
+                        <div className="mt-1.5 space-y-0.5">
+                          {conferencia.liquidoAcimaDoPago.map(s => (
+                            <p key={s.id} className="text-[11px] text-gray-400">
+                              {new Date(s.data_hora).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })} ·
+                              {' '}{s.produto} · pago {formatCurrency(s.valor_pago_cliente)} · líquido {formatCurrency(s.valor_liquido)}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
                   <div className="p-4 border-b border-white/10">

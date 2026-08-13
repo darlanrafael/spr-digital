@@ -36,6 +36,9 @@ export interface Sale {
   produto: string
   plataforma: Platform
   plataforma_sale_id?: string
+  /** "{idDaFatura}-{idDoProduto}" — duas linhas da mesma fatura compartilham
+   *  o prefixo do UUID. Usado pela conferência do fechamento. */
+  order_id?: string
   preco_base: number
   valor_pago_cliente: number
   valor_com_juros?: number
