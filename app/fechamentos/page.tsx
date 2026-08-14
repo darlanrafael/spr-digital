@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { AlertCircle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Download, Loader2, X } from 'lucide-react'
+import { AlertCircle, Check, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Copy, Download, Hash, Loader2, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -1524,6 +1524,32 @@ function HistoricoTab({ closings }: { closings: Closing[] }) {
 
 const COMPRADORES_PAGE_SIZE = 12
 
+// Tag do ID do fechamento. Clicar copia — o ID é usado em consulta ao banco e
+// em correção manual, então copiar à mão de um texto pequeno era fricção real.
+function TagIdFechamento({ id }: { id: string }) {
+  const [copiado, setCopiado] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard?.writeText(id)
+        setCopiado(true)
+        setTimeout(() => setCopiado(false), 1600)
+      }}
+      title="Copiar ID do fechamento"
+      className={`group inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[10px] leading-5 transition-colors ${
+        copiado
+          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+          : 'bg-white/[0.04] border-white/10 text-gray-500 hover:bg-white/[0.07] hover:text-gray-300'
+      }`}
+    >
+      {copiado ? <Check className="w-3 h-3" /> : <Hash className="w-3 h-3 opacity-50 group-hover:opacity-80" />}
+      <span>{copiado ? 'ID copiado' : id}</span>
+      {!copiado && <Copy className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity" />}
+    </button>
+  )
+}
+
 function ClosingCard({ closing }: { closing: Closing }) {
   const { user } = useApp()
   const podeVerRepasse = user?.role !== 'socio'
@@ -1599,9 +1625,10 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 </span>
               )}
             </div>
-            <p className="text-xs text-gray-500 mb-3">
-              Confirmado em {confirmedAt} · <span className="text-gray-600 font-mono">{closing.id}</span>
-            </p>
+            <div className="flex items-center gap-2 flex-wrap mb-3">
+              <span className="text-xs text-gray-500">Confirmado em {confirmedAt}</span>
+              <TagIdFechamento id={closing.id} />
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div>
                 <p className="text-gray-600">Faturamento bruto</p>
