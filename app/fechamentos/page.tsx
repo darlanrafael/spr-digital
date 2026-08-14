@@ -12,6 +12,7 @@ import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
 import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
+import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
 import { getSupabaseClient } from '@/lib/supabase'
 
 type Step = 1 | 2 | 3 | 4
@@ -401,8 +402,14 @@ function FechamentosContent() {
     }
   }, [availableProducts, produtosInicializados])
 
-  const lastClosed = closings[closings.length - 1]
-  const alertas = lastClosed?.alertas ?? []
+  // Reembolsos de vendas que já entraram num fechamento confirmado — dinheiro
+  // já repassado aos sócios que precisa voltar. Antes isto lia
+  // `closings[last].alertas`, um campo que `handleConfirm` gravava sempre vazio;
+  // a tabela existia e nunca recebia dado. Ver lib/alertas-reembolso.ts.
+  const alertas = useMemo(
+    () => calcularAlertasPendentes({ closings, sales }),
+    [closings, sales],
+  )
   const alertasTotal = alertas.reduce((a, x) => a + x.valor, 0)
 
   const efectivaAliquota = faturamentoBruto > 0
@@ -487,7 +494,7 @@ function FechamentosContent() {
       repasseTerapeutasTotal,
       socios: sociosData,
       compradores: buyers,
-      alertas: [],
+      alertas,
       byProduct: byProduct.map(p => ({
         nome: p.nome,
         plataforma: p.plataforma,
