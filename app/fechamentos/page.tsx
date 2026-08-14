@@ -11,7 +11,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
-import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
+import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
 import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
 import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/lib/etiqueta-fechamento'
@@ -1550,7 +1550,72 @@ function TagIdFechamento({ id }: { id: string }) {
   )
 }
 
+// Edição da etiqueta de um fechamento já confirmado. Mexe só no rótulo:
+// nenhum valor, período ou repasse é tocado. Existe porque a etiqueta nasceu
+// no wizard e os fechamentos anteriores a ela ficaram sem forma de nomear.
+function EditorEtiqueta({ closing, onFechar }: { closing: Closing; onFechar: () => void }) {
+  const { setClosings } = useApp()
+  const [texto, setTexto] = useState(closing.etiqueta ?? '')
+  const [cor, setCor] = useState<CorEtiqueta>(
+    (closing.etiqueta_cor as CorEtiqueta) in CORES_ETIQUETA ? (closing.etiqueta_cor as CorEtiqueta) : COR_PADRAO,
+  )
+  const [salvando, setSalvando] = useState(false)
+
+  async function salvar() {
+    setSalvando(true)
+    const etiqueta = texto.trim() || null
+    const etiquetaCor = etiqueta ? cor : null
+    try {
+      await updateClosingEtiqueta(closing.id, etiqueta, etiquetaCor)
+      setClosings(prev => prev.map(c =>
+        c.id === closing.id ? { ...c, etiqueta: etiqueta ?? undefined, etiqueta_cor: etiquetaCor ?? undefined } : c,
+      ))
+      onFechar()
+    } catch (e) {
+      console.error(e)
+      alert('Não foi possível salvar a etiqueta.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 bg-gray-800/60 border border-white/10 rounded-lg px-2.5 py-2">
+      <input
+        autoFocus
+        type="text"
+        value={texto}
+        onChange={e => setTexto(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') salvar(); if (e.key === 'Escape') onFechar() }}
+        placeholder="Ex: IAR Julho"
+        maxLength={40}
+        className="bg-gray-900 border border-white/10 rounded-md px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500/50 w-40"
+      />
+      <div className="flex items-center gap-1">
+        {(Object.keys(CORES_ETIQUETA) as CorEtiqueta[]).map(c => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setCor(c)}
+            title={CORES_ETIQUETA[c].nome}
+            aria-label={CORES_ETIQUETA[c].nome}
+            className={`w-5 h-5 rounded-full border-2 ${classeEtiqueta(c)} ${
+              cor === c ? 'ring-2 ring-white/60 scale-110' : 'opacity-60 hover:opacity-100'
+            }`}
+          />
+        ))}
+      </div>
+      <button onClick={salvar} disabled={salvando}
+        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md">
+        {salvando ? 'Salvando…' : 'Salvar'}
+      </button>
+      <button onClick={onFechar} className="text-gray-500 hover:text-gray-300 text-[11px] px-1">Cancelar</button>
+    </div>
+  )
+}
+
 function ClosingCard({ closing }: { closing: Closing }) {
+  const [editandoEtiqueta, setEditandoEtiqueta] = useState(false)
   const { user } = useApp()
   const podeVerRepasse = user?.role !== 'socio'
   const [expanded, setExpanded] = useState(false)
@@ -1614,10 +1679,23 @@ function ClosingCard({ closing }: { closing: Closing }) {
               <span className="text-sm font-semibold text-white">
                 {formatDate(closing.periodo.inicio)} → {formatDate(closing.periodo.fim)}
               </span>
-              {closing.etiqueta && (
-                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${classeEtiqueta(closing.etiqueta_cor)}`}>
+              {editandoEtiqueta ? (
+                <EditorEtiqueta closing={closing} onFechar={() => setEditandoEtiqueta(false)} />
+              ) : closing.etiqueta ? (
+                <button
+                  onClick={() => setEditandoEtiqueta(true)}
+                  title="Editar etiqueta"
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border transition-opacity hover:opacity-80 ${classeEtiqueta(closing.etiqueta_cor)}`}
+                >
                   {closing.etiqueta}
-                </span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => setEditandoEtiqueta(true)}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border border-dashed border-white/15 text-gray-600 hover:text-gray-300 hover:border-white/30 transition-colors"
+                >
+                  + etiqueta
+                </button>
               )}
               {closing.alertas.length > 0 && (
                 <span className="inline-flex items-center gap-1 bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">

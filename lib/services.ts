@@ -472,6 +472,21 @@ export async function upsertDreAjuste(projectId: string, mes: string, valor: num
   if (error) throw error
 }
 
+/** Renomeia a etiqueta de um fechamento já confirmado (só o rótulo, nunca os valores). */
+export async function updateClosingEtiqueta(
+  id: string,
+  etiqueta: string | null,
+  etiquetaCor: string | null,
+): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client) return
+  const { error } = await client
+    .from('closings')
+    .update({ etiqueta, etiqueta_cor: etiquetaCor })
+    .eq('id', id)
+  if (error) throw error
+}
+
 // ─── All costs (helper for AppContext) ───────────────────────────────────────
 
 export async function getAllCosts(projectId: string): Promise<CostsData> {
