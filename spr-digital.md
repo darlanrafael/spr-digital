@@ -4,6 +4,56 @@
 
 ---
 
+## 0. Estado atual e pendências — atualizado 14/08/2026, 00:40
+
+> **Leia esta seção antes de qualquer coisa.** Ela existe porque a sessão de 13/08 encontrou R$ 6 mil em erros de faturamento e deixou correções prontas mas não publicadas. Enquanto os itens abaixo estiverem em aberto, o sistema continua dependendo de conferência manual contra Hubla e Kiwify para não errar.
+
+### Pronto, testado, **NÃO publicado**
+
+Cinco commits no branch `fix/estorno-por-fatura`, nada em `origin/main` — **produção roda o código anterior a 13/08, com todos os bugs ativos**.
+
+| Correção | Módulo | Testes | Ligado na tela? |
+|---|---|---|---|
+| Estorno marcava todas as vendas do cliente, não a fatura | `lib/refund-target.ts` | 8 | sim (webhooks) |
+| `data_reembolso` gravava data de processamento em UTC | `lib/refund-date.ts` | 9 | sim (webhooks) |
+| Alerta de reembolso pós-fechamento nunca calculava (`alertas: []`) | `lib/alertas-reembolso.ts` | 13 | sim |
+| Venda já fechada podendo entrar em outro fechamento | `lib/vendas-ja-fechadas.ts` | 8 | **NÃO — nem commitado** |
+
+Publicar: `git push -u origin fix/estorno-por-fatura` e depois merge em `main` (a Vercel faz o deploy sozinha).
+
+### Dado pendente no banco
+
+```sql
+-- Joseli: 4ª vítima do bug de estorno por e-mail. O webhook_events prova que
+-- chegou UM evento de reembolso, para a outra compra dela.
+update sales set status = 'aprovada', data_reembolso = null
+where order_id = 'rvKzOD1';
+```
+
+As outras cinco linhas da sessão de 13/08 (Roger, Cristiane, Juliana, Maria de Fátima, Daiani) já estão corretas.
+
+### Dedução pendente no próximo fechamento
+
+Três reembolsos de vendas já repassadas aos sócios, nunca devolvidos: **R$ 1.394,59 líquidos, R$ 697,30 por sócio**. Assim que o alerta entrar em produção, aparecem sozinhos no Step 4. Ver item 31.
+
+### Riscos SEM prevenção nenhuma — continuam podendo acontecer
+
+1. **Fuso na tela do fechamento.** `app/fechamentos/page.tsx` filtra o período com `s.data_hora.slice(0,10)`, a data crua. A Hubla grava UTC, então **516 das 1.892 vendas do período** (27%, as feitas entre 21h e 23h59 BRT) caem no dia seguinte. Não altera totais no meio do período, só nas bordas — que é justamente onde se decide o que entra em cada fechamento. `getSales()` em `lib/services.ts` converte certo; a tela do fechamento não usa essa conversão.
+2. **Venda no banco sem respaldo na plataforma.** Duas encontradas em 13/08 (R$ 697 e R$ 39,90). Só aparecem cruzando com export manual — nenhuma verificação interna alcança.
+3. **Mesma compra gravada duas vezes com formatos de `order_id` diferentes** (código curto da Kiwify vs UUID). Dois casos em 13/08.
+4. **Dedup por e-mail+produto descarta a 2ª compra legítima** quando o payload vem sem `order_id`. Conhecido desde 04/08 (item 24), nunca tratado.
+5. **Produto renomeado na plataforma parte o relatório** em dois nomes (Mentoria Particular → Mentoria - Individual). Não é erro de conta, mas confunde a leitura.
+6. **Varredura preventiva diária**: desenhada com o usuário em 13/08 (escopo interno, aviso no WhatsApp todo dia), não construída. É o que substituiria a conferência manual — foi uma varredura assim que achou os R$ 2.860 que ninguém procurava.
+
+### Ordem sugerida
+
+1. Publicar o que já está pronto (para o sangramento)
+2. SQL da Joseli + terminar e ligar `vendas-ja-fechadas`
+3. Corrigir o fuso do fechamento (risco 1)
+4. Construir a varredura diária (risco 6)
+
+---
+
 ## 1. Visão Geral
 
 **Nome do projeto:** SPR Digital — Controle de Projetos  
