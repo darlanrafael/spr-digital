@@ -1692,7 +1692,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
               ) : (
                 <button
                   onClick={() => setEditandoEtiqueta(true)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border border-dashed border-white/15 text-gray-600 hover:text-gray-300 hover:border-white/30 transition-colors"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-dashed border-indigo-400/40 text-indigo-300/80 hover:text-indigo-200 hover:border-indigo-400/70 hover:bg-indigo-500/10 transition-colors"
                 >
                   + etiqueta
                 </button>

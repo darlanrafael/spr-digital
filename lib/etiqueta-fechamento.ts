@@ -12,6 +12,9 @@ export const CORES_ETIQUETA = {
   ambar: { nome: 'Âmbar',  classe: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
   rosa:  { nome: 'Rosa',   classe: 'bg-pink-500/20 text-pink-300 border-pink-500/40' },
   ciano: { nome: 'Ciano',  classe: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' },
+  amarelo:  { nome: 'Amarelo',  classe: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' },
+  laranja:  { nome: 'Laranja',  classe: 'bg-orange-500/20 text-orange-300 border-orange-500/40' },
+  vermelho: { nome: 'Vermelho', classe: 'bg-red-500/20 text-red-300 border-red-500/40' },
 } as const
 
 export type CorEtiqueta = keyof typeof CORES_ETIQUETA
