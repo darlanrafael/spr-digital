@@ -359,10 +359,15 @@ function FechamentosContent() {
     }
     // Repasse à terapeuta: % dela sobre o líquido pós-impostos do produto que
     // leva o nome dela. "Mentoria Particular - Pedro Roncada" sozinho é dele
-    // mesmo (sócio) — sem repasse.
+    // mesmo (sócio) - sem repasse.
+    //
+    // Terapeuta com comissão 0% não gera linha nenhuma. É o caso do Pedro, que
+    // está cadastrado como terapeuta para a agenda funcionar mas é sócio e não
+    // recebe comissão: mostrar "-R$ 0,00 (Pedro Roncada)" no Detalhamento só
+    // poluía a coluna, dando a entender que havia repasse quando não há.
     for (const row of Object.values(map)) {
       const terapeuta = matchTerapeutaComissao(row.nome)
-      if (terapeuta) {
+      if (terapeuta && terapeuta.percentual_comissao > 0) {
         row.terapeuta_nome = terapeuta.nome
         row.repasse_terapeuta = row.liquido_pos_impostos * (terapeuta.percentual_comissao / 100)
       }
@@ -1098,7 +1103,7 @@ function FechamentosContent() {
                               <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(row.liquido)}</td>
                               <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(row.liquido_pos_impostos)}</td>
                               <td className="px-4 py-3 text-right text-orange-400">
-                                {row.terapeuta_nome ? `-${formatCurrency(row.repasse_terapeuta)} (${row.terapeuta_nome})` : '—'}
+                                {row.terapeuta_nome && row.repasse_terapeuta > 0 ? `-${formatCurrency(row.repasse_terapeuta)} (${row.terapeuta_nome})` : '—'}
                               </td>
                             </tr>
                           ))}
@@ -1873,7 +1878,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
                         <td className="px-4 py-2.5 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                         <td className="px-4 py-2.5 text-right text-emerald-400 font-medium">{formatCurrency(row.liquido)}</td>
                         <td className="px-4 py-2.5 text-right text-orange-400">
-                          {row.terapeuta_nome ? `-${formatCurrency(row.repasse_terapeuta ?? 0)} (${row.terapeuta_nome})` : '—'}
+                          {row.terapeuta_nome && (row.repasse_terapeuta ?? 0) > 0 ? `-${formatCurrency(row.repasse_terapeuta ?? 0)} (${row.terapeuta_nome})` : '—'}
                         </td>
                       </tr>
                     ))}
