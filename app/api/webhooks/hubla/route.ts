@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { logWebhookEvent } from '@/lib/webhook-log'
+import { resolveRefundTargets, type SaleRow } from '@/lib/refund-target'
+import { hublaRefundDate } from '@/lib/refund-date'
 
 const PROJECT_ID = 'proj_1'
 
@@ -204,15 +206,37 @@ export async function POST(req: NextRequest) {
       }
 
       const client = getSupabaseAdmin()
+
+      // Trava contra estorno em massa: o alvo é a FATURA, nunca o cliente.
+      // Ver lib/refund-target.ts para o caso real que originou isso.
+      const { data: approvedRows } = await client
+        .from('sales')
+        .select('id, order_id, produto')
+        .eq('email', email)
+        .eq('plataforma', 'hubla')
+        .eq('status', 'aprovada')
+
+      const invoiceId = (invoice?.id as string) ?? null
+      const decision = resolveRefundTargets({
+        invoiceId,
+        approvedSales: (approvedRows ?? []) as SaleRow[],
+      })
+
+      if (decision.action === 'block') {
+        console.warn(`[Hubla Webhook] estorno BLOQUEADO (${decision.reason}):`, email, invoiceId)
+        await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: `refund_blocked_${decision.reason}`, detalhe: `${email} | invoice=${invoiceId} | aprovadas=${approvedRows?.length ?? 0}`, payload: body })
+        return NextResponse.json({ success: true, event: 'refund_blocked', reason: decision.reason })
+      }
+
+      const dataReembolso = hublaRefundDate(invoice ?? {}, new Date())
+
       const { error } = await client
         .from('sales')
         .update({
           status: 'reembolsada',
-          data_reembolso: new Date().toISOString().split('T')[0],
+          data_reembolso: dataReembolso,
         })
-        .eq('email', email)
-        .eq('plataforma', 'hubla')
-        .eq('status', 'aprovada')
+        .in('id', decision.rows.map(r => r.id))
 
       if (error) {
         console.error('[Hubla Webhook] erro ao atualizar reembolso:', error)
@@ -220,9 +244,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
-      console.log('[Hubla Webhook] reembolso processado para:', email)
-      await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'sale_refunded', detalhe: email, payload: body })
-      return NextResponse.json({ success: true, event: 'sale_refunded' })
+      console.log(`[Hubla Webhook] reembolso processado (${decision.matchedBy}):`, email, decision.rows.map(r => r.produto))
+      await logWebhookEvent({ plataforma: 'hubla', tipoEvento: type, resultado: 'sale_refunded', detalhe: `${email} | invoice=${invoiceId} | ${decision.matchedBy} | ${decision.rows.length} item(ns) | reembolso=${dataReembolso}`, payload: body })
+      return NextResponse.json({ success: true, event: 'sale_refunded', refunded: decision.rows.length })
 
     } catch (err) {
       console.error('[Hubla Webhook] exceção ao processar reembolso:', err)

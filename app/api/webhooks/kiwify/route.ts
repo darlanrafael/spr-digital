@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { logWebhookEvent } from '@/lib/webhook-log'
+import { resolveRefundTargets, type SaleRow } from '@/lib/refund-target'
+import { kiwifyRefundDate } from '@/lib/refund-date'
 
 const PROJECT_ID = 'proj_1'
 
@@ -178,15 +180,37 @@ export async function POST(req: NextRequest) {
       }
 
       const client = getSupabaseAdmin()
+
+      // Mesma trava da rota da Hubla: o alvo é o pedido, nunca o cliente inteiro.
+      // Ver lib/refund-target.ts.
+      const { data: approvedRows } = await client
+        .from('sales')
+        .select('id, order_id, produto')
+        .eq('email', email)
+        .eq('plataforma', 'kiwify')
+        .eq('status', 'aprovada')
+
+      const refundOrderId = (order.order_id as string) ?? null
+      const decision = resolveRefundTargets({
+        invoiceId: refundOrderId,
+        approvedSales: (approvedRows ?? []) as SaleRow[],
+      })
+
+      if (decision.action === 'block') {
+        console.warn(`[Kiwify Webhook] estorno BLOQUEADO (${decision.reason}):`, email, refundOrderId)
+        await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: `refund_blocked_${decision.reason}`, detalhe: `${email} | order=${refundOrderId} | aprovadas=${approvedRows?.length ?? 0}`, payload: body })
+        return NextResponse.json({ success: true, event: 'refund_blocked', reason: decision.reason })
+      }
+
+      const dataReembolso = kiwifyRefundDate(order, new Date())
+
       const { error } = await client
         .from('sales')
         .update({
           status: 'reembolsada',
-          data_reembolso: new Date().toISOString().split('T')[0],
+          data_reembolso: dataReembolso,
         })
-        .eq('email', email)
-        .eq('plataforma', 'kiwify')
-        .eq('status', 'aprovada')
+        .in('id', decision.rows.map(r => r.id))
 
       if (error) {
         console.error('[Kiwify Webhook] erro ao atualizar reembolso:', error)
@@ -194,9 +218,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
-      console.log('[Kiwify Webhook] reembolso processado para:', email)
-      await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'sale_refunded', detalhe: email, payload: body })
-      return NextResponse.json({ success: true, event: 'sale_refunded' })
+      console.log(`[Kiwify Webhook] reembolso processado (${decision.matchedBy}):`, email, decision.rows.map(r => r.produto))
+      await logWebhookEvent({ plataforma: 'kiwify', tipoEvento: eventType, resultado: 'sale_refunded', detalhe: `${email} | order=${refundOrderId} | ${decision.matchedBy} | ${decision.rows.length} item(ns) | reembolso=${dataReembolso}`, payload: body })
+      return NextResponse.json({ success: true, event: 'sale_refunded', refunded: decision.rows.length })
 
     } catch (err) {
       console.error('[Kiwify Webhook] exceção ao processar reembolso:', err)
