@@ -1088,7 +1088,6 @@ function FechamentosContent() {
                             <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Imposto</th>
                             <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Faturamento líquido</th>
                             <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Líquido Pós-Impostos</th>
-                            <th className="text-right px-4 py-2.5 text-gray-500 font-medium">Repasse Terapeuta</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1102,9 +1101,6 @@ function FechamentosContent() {
                               <td className="px-4 py-3 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                               <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(row.liquido)}</td>
                               <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(row.liquido_pos_impostos)}</td>
-                              <td className="px-4 py-3 text-right text-orange-400">
-                                {row.terapeuta_nome && row.repasse_terapeuta > 0 ? `-${formatCurrency(row.repasse_terapeuta)} (${row.terapeuta_nome})` : '—'}
-                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1122,7 +1118,6 @@ function FechamentosContent() {
                             <td className="px-4 py-3 text-right text-red-400 font-semibold">-{formatCurrency(impostoTotal)}</td>
                             <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(byProduct.reduce((a, r) => a + r.liquido, 0))}</td>
                             <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(byProduct.reduce((a, r) => a + r.liquido_pos_impostos, 0))}</td>
-                            <td className="px-4 py-3 text-right text-orange-400 font-semibold">-{formatCurrency(repasseTerapeutasTotal)}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1858,7 +1853,6 @@ function ClosingCard({ closing }: { closing: Closing }) {
                       <th className="text-center px-4 py-2 text-gray-500">Alíq.</th>
                       <th className="text-right px-4 py-2 text-gray-500">Imposto</th>
                       <th className="text-right px-4 py-2 text-gray-500">Líquido</th>
-                      <th className="text-right px-4 py-2 text-gray-500">Repasse Terapeuta</th>
                     </tr>
                   </thead>
                   <tbody>
