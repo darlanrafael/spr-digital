@@ -123,6 +123,51 @@ test('fechamento sem data_confirmacao é ignorado', () => {
   assert.equal(a.length, 0)
 })
 
+test('prazo de garantia: venda fechada dentro dos 7 dias e estornada depois vira alerta no fechamento seguinte', () => {
+  // A regra do negócio: por lei o cliente tem 7 dias para pedir reembolso.
+  // Todo fechamento entra com vendas ainda dentro desse prazo, e os sócios já
+  // retiram sobre elas. Quem compra 13/08 pode estornar até 20/08 — depois do
+  // fechamento já confirmado e do dinheiro já repassado.
+  const fechadoEm14 = {
+    id: 'close_ago',
+    data: '2026-08-14',
+    data_confirmacao: '2026-08-14T02:00:00.000+00:00', // 13/08 23:00 BRT
+    periodo: { inicio: '2026-08-01', fim: '2026-08-13' },
+    produtos_incluidos: ['O RESGATE'],
+    alertas: [],
+  } as unknown as Closing
+
+  const compraDia13 = venda({
+    id: 'garantia',
+    nome: 'Comprou dia 13',
+    data_hora: '2026-08-13T15:00:00',
+    valor_liquido: 671.18,
+    status: 'reembolsada',
+    data_reembolso: '2026-08-20', // dentro dos 7 dias, mas depois do fechamento
+  })
+
+  const a = calcularAlertasPendentes({ closings: [fechadoEm14], sales: [compraDia13] })
+
+  assert.equal(a.length, 1)
+  assert.equal(a[0].saleId, 'garantia')
+  assert.equal(a[0].valor, 671.18)
+  assert.equal(a[0].data, '2026-08-20')
+})
+
+test('prazo de garantia: quem compra 10/08 e estorna 17/08 também é pego', () => {
+  const fechadoEm14 = {
+    id: 'close_ago', data: '2026-08-14',
+    data_confirmacao: '2026-08-14T02:00:00.000+00:00',
+    periodo: { inicio: '2026-08-01', fim: '2026-08-13' },
+    produtos_incluidos: ['O RESGATE'], alertas: [],
+  } as unknown as Closing
+  const a = calcularAlertasPendentes({
+    closings: [fechadoEm14],
+    sales: [venda({ id: 'g2', data_hora: '2026-08-10T09:00:00', status: 'reembolsada', data_reembolso: '2026-08-17' })],
+  })
+  assert.equal(a.length, 1)
+})
+
 test('cenário real de 13/08: três estornos legítimos viram alerta', () => {
   const a = calcularAlertasPendentes({
     closings: [FECHADO],
