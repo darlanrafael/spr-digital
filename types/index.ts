@@ -136,6 +136,10 @@ export interface ClosingProductRow {
 
 export interface Closing {
   id: string
+  /** Nome curto dado pelo usuário ao fechar. Ex: "IAR Julho" */
+  etiqueta?: string
+  /** Chave da paleta em lib/etiqueta-fechamento.ts */
+  etiqueta_cor?: string
   data: string
   data_confirmacao?: string
   periodo: { inicio: string; fim: string }

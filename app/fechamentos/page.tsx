@@ -14,6 +14,7 @@ import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
 import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
 import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
+import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/lib/etiqueta-fechamento'
 import { getSupabaseClient } from '@/lib/supabase'
 
 type Step = 1 | 2 | 3 | 4
@@ -69,6 +70,8 @@ function FechamentosContent() {
 
   type PeriodoGrupo = { id: string; inicio: string; fim: string; produtos: string[] }
   const [periodosGrupos, setPeriodosGrupos] = useState<PeriodoGrupo[]>([])
+  const [etiqueta, setEtiqueta] = useState('')
+  const [etiquetaCor, setEtiquetaCor] = useState<CorEtiqueta>(COR_PADRAO)
 
   function addPeriodoGrupo() {
     setPeriodosGrupos(prev => [...prev, { id: `pg_${Date.now()}`, inicio: '', fim: '', produtos: [] }])
@@ -505,6 +508,8 @@ function FechamentosContent() {
       repasseTerapeutasTotal,
       socios: sociosData,
       compradores: buyers,
+      etiqueta: etiqueta.trim() || undefined,
+      etiqueta_cor: etiqueta.trim() ? etiquetaCor : undefined,
       alertas,
       byProduct: byProduct.map(p => ({
         nome: p.nome,
@@ -862,6 +867,43 @@ function FechamentosContent() {
                         </button>
                       )
                     })}
+                  </div>
+                  <div className="bg-gray-800/40 border border-white/10 rounded-lg px-3 py-3 space-y-2">
+                    <label className="block text-xs text-gray-400">
+                      Etiqueta do fechamento <span className="text-gray-600">(opcional)</span>
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={etiqueta}
+                        onChange={e => setEtiqueta(e.target.value)}
+                        placeholder="Ex: IAR Julho"
+                        maxLength={40}
+                        className="bg-gray-900 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500/50 w-full sm:w-56"
+                      />
+                      <div className="flex items-center gap-1.5">
+                        {(Object.keys(CORES_ETIQUETA) as CorEtiqueta[]).map(cor => (
+                          <button
+                            key={cor}
+                            type="button"
+                            onClick={() => setEtiquetaCor(cor)}
+                            title={CORES_ETIQUETA[cor].nome}
+                            aria-label={CORES_ETIQUETA[cor].nome}
+                            className={`w-6 h-6 rounded-full border-2 transition-all ${classeEtiqueta(cor)} ${
+                              etiquetaCor === cor ? 'ring-2 ring-white/60 scale-110' : 'opacity-60 hover:opacity-100'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      {etiqueta.trim() && (
+                        <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${classeEtiqueta(etiquetaCor)}`}>
+                          {etiqueta.trim()}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-600">
+                      Aparece no Histórico para diferenciar fechamentos de funis distintos no mesmo período.
+                    </p>
                   </div>
                   <p className="text-xs text-gray-400 bg-gray-800/60 rounded-lg px-3 py-2">
                     {selectedProducts.length} de {availableProducts.length} produtos selecionados · <span className="text-white font-semibold">{periodSales.length} vendas encontradas</span> no período
@@ -1546,13 +1588,20 @@ function ClosingCard({ closing }: { closing: Closing }) {
               <span className="text-sm font-semibold text-white">
                 {formatDate(closing.periodo.inicio)} → {formatDate(closing.periodo.fim)}
               </span>
+              {closing.etiqueta && (
+                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${classeEtiqueta(closing.etiqueta_cor)}`}>
+                  {closing.etiqueta}
+                </span>
+              )}
               {closing.alertas.length > 0 && (
                 <span className="inline-flex items-center gap-1 bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                   {closing.alertas.length} reembolso{closing.alertas.length !== 1 ? 's' : ''}/chargeback{closing.alertas.length !== 1 ? 's' : ''}
                 </span>
               )}
             </div>
-            <p className="text-xs text-gray-500 mb-3">Confirmado em {confirmedAt}</p>
+            <p className="text-xs text-gray-500 mb-3">
+              Confirmado em {confirmedAt} · <span className="text-gray-600 font-mono">{closing.id}</span>
+            </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div>
                 <p className="text-gray-600">Faturamento bruto</p>
