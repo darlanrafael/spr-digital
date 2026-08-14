@@ -100,6 +100,8 @@ export interface ClosingBuyer {
 }
 
 export interface ClosingAlert {
+  /** id da venda em `sales` — usado para não deduzir o mesmo estorno duas vezes */
+  saleId?: string
   compradorId?: string
   nome: string
   telefone?: string

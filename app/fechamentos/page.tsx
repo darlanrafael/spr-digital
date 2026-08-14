@@ -12,6 +12,8 @@ import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
 import { addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
+import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
+import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
 import { getSupabaseClient } from '@/lib/supabase'
 
 type Step = 1 | 2 | 3 | 4
@@ -257,8 +259,16 @@ function FechamentosContent() {
   const varTotal = variableCostsIncluidos.reduce((a, v) => a + v.valor, 0)
   const totalCosts = fixedTotal + varTotal + trafego.total + custosFunilTotal
 
-  const periodSales = useMemo(() => {
-    return sales.filter(s => {
+  // Vendas do período, JÁ DESCONTADAS as que entraram num fechamento anterior.
+  //
+  // O corte por venda (e não por data) é o que permite o período novo começar no
+  // mesmo dia em que o anterior terminou. Um fechamento é confirmado num
+  // instante — 06/07 às 21:36, por exemplo — e leva só o que existia até ali;
+  // as vendas do resto daquele dia ficam órfãs. Começar o próximo no dia
+  // seguinte as perde, começar no mesmo dia repetia tudo que veio antes das
+  // 21:36. Agora a data pode sobrepor à vontade. Ver lib/vendas-ja-fechadas.ts.
+  const { periodSales, vendasJaFechadas } = useMemo(() => {
+    const noPeriodo = sales.filter(s => {
       const matchProject = selectedProject === 'all' || s.projetoId === selectedProject
       const d = s.data_hora.slice(0, 10)
       const grupo = produtoParaGrupo[s.produto]
@@ -268,7 +278,9 @@ function FechamentosContent() {
       const matchProduct = selectedProducts.includes(s.produto)
       return s.status === 'aprovada' && matchProject && matchPeriod && matchProduct
     })
-  }, [sales, periodo, selectedProject, selectedProducts, produtoParaGrupo])
+    const { novas, jaFechadas } = separarJaFechadas(noPeriodo, closings)
+    return { periodSales: novas, vendasJaFechadas: jaFechadas }
+  }, [sales, periodo, selectedProject, selectedProducts, produtoParaGrupo, closings])
 
   // ── Conferência com as plataformas ─────────────────────────────────────
   //
@@ -401,8 +413,14 @@ function FechamentosContent() {
     }
   }, [availableProducts, produtosInicializados])
 
-  const lastClosed = closings[closings.length - 1]
-  const alertas = lastClosed?.alertas ?? []
+  // Reembolsos de vendas que já entraram num fechamento confirmado — dinheiro
+  // já repassado aos sócios que precisa voltar. Antes isto lia
+  // `closings[last].alertas`, um campo que `handleConfirm` gravava sempre vazio;
+  // a tabela existia e nunca recebia dado. Ver lib/alertas-reembolso.ts.
+  const alertas = useMemo(
+    () => calcularAlertasPendentes({ closings, sales }),
+    [closings, sales],
+  )
   const alertasTotal = alertas.reduce((a, x) => a + x.valor, 0)
 
   const efectivaAliquota = faturamentoBruto > 0
@@ -487,7 +505,7 @@ function FechamentosContent() {
       repasseTerapeutasTotal,
       socios: sociosData,
       compradores: buyers,
-      alertas: [],
+      alertas,
       byProduct: byProduct.map(p => ({
         nome: p.nome,
         plataforma: p.plataforma,
@@ -848,6 +866,24 @@ function FechamentosContent() {
                   <p className="text-xs text-gray-400 bg-gray-800/60 rounded-lg px-3 py-2">
                     {selectedProducts.length} de {availableProducts.length} produtos selecionados · <span className="text-white font-semibold">{periodSales.length} vendas encontradas</span> no período
                   </p>
+                  {vendasJaFechadas.length > 0 && (
+                    <div className="text-xs bg-sky-500/10 border border-sky-500/25 rounded-lg px-3 py-2.5 space-y-1">
+                      <p className="text-sky-300 font-semibold">
+                        {vendasJaFechadas.length} venda{vendasJaFechadas.length !== 1 ? 's' : ''} deste período já {vendasJaFechadas.length !== 1 ? 'entraram' : 'entrou'} num fechamento anterior e {vendasJaFechadas.length !== 1 ? 'foram excluídas' : 'foi excluída'} — {formatCurrency(vendasJaFechadas.reduce((a, s) => a + s.valor_pago_cliente, 0))}
+                      </p>
+                      <p className="text-gray-400">
+                        Você pode começar o período no mesmo dia em que o fechamento anterior terminou: cada venda é contada uma única vez, e as feitas depois do horário de confirmação entram normalmente.
+                      </p>
+                      <ul className="text-gray-400 pt-0.5 space-y-0.5">
+                        {vendasJaFechadas.slice(0, 5).map(s => (
+                          <li key={s.id}>
+                            {formatDate(s.data_hora)} · {s.produto} · {formatCurrency(s.valor_pago_cliente)} · {s.nome}
+                          </li>
+                        ))}
+                        {vendasJaFechadas.length > 5 && <li>… e mais {vendasJaFechadas.length - 5}</li>}
+                      </ul>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
