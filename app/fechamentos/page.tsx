@@ -429,7 +429,28 @@ function FechamentosContent() {
     () => calcularAlertasPendentes({ closings, sales }),
     [closings, sales],
   )
-  const alertasTotal = alertas.reduce((a, x) => a + x.valor, 0)
+  // Quais reembolsos o usuário aceitou abater NESTE fechamento.
+  //
+  // Um estorno do funil da Imersão não pode ser descontado num fechamento da
+  // terapeuta Denise: são repasses de pessoas diferentes. Por isso a aceitação
+  // é explícita, um a um, e começa vazia — o que não for marcado continua
+  // pendente e reaparece no próximo fechamento, sem se perder.
+  const [alertasAceitos, setAlertasAceitos] = useState<Set<string>>(new Set())
+
+  const alertasSelecionados = useMemo(
+    () => alertas.filter(a => a.saleId && alertasAceitos.has(a.saleId)),
+    [alertas, alertasAceitos],
+  )
+  const alertasTotal = alertasSelecionados.reduce((a, x) => a + x.valor, 0)
+
+  function toggleAlerta(saleId?: string) {
+    if (!saleId) return
+    setAlertasAceitos(prev => {
+      const novo = new Set(prev)
+      if (novo.has(saleId)) novo.delete(saleId); else novo.add(saleId)
+      return novo
+    })
+  }
 
   const efectivaAliquota = faturamentoBruto > 0
     ? ((impostoTotal / faturamentoBruto) * 100).toFixed(2)
@@ -515,7 +536,7 @@ function FechamentosContent() {
       compradores: buyers,
       etiqueta: etiqueta.trim() || undefined,
       etiqueta_cor: etiqueta.trim() ? etiquetaCor : undefined,
-      alertas,
+      alertas: alertasSelecionados,
       byProduct: byProduct.map(p => ({
         nome: p.nome,
         plataforma: p.plataforma,
@@ -1364,6 +1385,9 @@ function FechamentosContent() {
                             <h4 className="text-sm font-semibold text-red-400">⚠️ Reembolsos e chargebacks identificados</h4>
                           </div>
                           <p className="text-xs text-gray-400">Os seguintes compradores de fechamentos anteriores solicitaram reembolso ou chargeback após o repasse já ter sido realizado.</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Marque os que devem ser abatidos <strong className="text-gray-300">neste</strong> fechamento. Os não marcados continuam pendentes e reaparecem no próximo, sem se perder — útil quando o estorno é de um funil diferente do que está sendo fechado agora.
+                          </p>
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-xs">
@@ -1376,6 +1400,7 @@ function FechamentosContent() {
                                 <th className="text-right px-4 py-2.5 text-gray-500">Valor</th>
                                 <th className="text-center px-4 py-2.5 text-gray-500">Tipo</th>
                                 <th className="text-right px-4 py-2.5 text-gray-500 hidden lg:table-cell">Data</th>
+                                <th className="text-center px-4 py-2.5 text-gray-500">Abater aqui</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1396,14 +1421,26 @@ function FechamentosContent() {
                                     </span>
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-gray-400 hidden lg:table-cell">{formatDate(a.data)}</td>
+                                  <td className="px-4 py-2.5 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!a.saleId && alertasAceitos.has(a.saleId)}
+                                      onChange={() => toggleAlerta(a.saleId)}
+                                      className="w-4 h-4 accent-red-500 cursor-pointer"
+                                      aria-label={`Abater o estorno de ${a.nome} neste fechamento`}
+                                    />
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
                             <tfoot>
                               <tr className="border-t border-red-500/20">
-                                <td colSpan={4} className="px-4 py-2.5 text-right text-gray-400 font-semibold">Total a deduzir:</td>
+                                <td colSpan={4} className="px-4 py-2.5 text-right text-gray-400 font-semibold">
+                                  Total a deduzir neste fechamento
+                                  <span className="text-gray-600 font-normal"> ({alertasSelecionados.length} de {alertas.length})</span>:
+                                </td>
                                 <td className="px-4 py-2.5 text-right text-red-400 font-bold">-{formatCurrency(alertasTotal)}</td>
-                                <td colSpan={2} />
+                                <td colSpan={3} />
                               </tr>
                             </tfoot>
                           </table>
