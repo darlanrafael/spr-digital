@@ -31,14 +31,7 @@ export function isHojeBrasilia(dataISO: string): boolean {
 // dígitos puros com código do país, senão aceita a chamada mas a mensagem
 // nunca chega de verdade. Sempre passar telefone por aqui antes de mandar
 // pra Z-API.
-export function normalizarTelefoneBR(telefone: string | null | undefined): string | null {
-  if (!telefone) return null
-  const digitos = telefone.replace(/\D/g, '')
-  if (!digitos) return null
-  // DDD (2) + número (8 ou 9) = 10 ou 11 dígitos, sem código do país ainda.
-  if (digitos.length === 10 || digitos.length === 11) return '55' + digitos
-  return digitos
-}
+export { normalizarTelefoneBR } from './telefone'
 
 export async function verificarSenhaUsuario(
   email: string,
