@@ -1660,9 +1660,73 @@ function EditorEtiqueta({ closing, onFechar }: { closing: Closing; onFechar: () 
   )
 }
 
+// Lista de campanhas de tráfego abatidas. Separada em componente próprio por
+// causa do volume: o fechamento IAR de 14/08 tem 348 campanhas gravadas.
+function CampanhasAbatidas({
+  campanhas, total,
+}: { campanhas: { name: string; spend: number }[]; total: number }) {
+  const [tudo, setTudo] = useState(false)
+  const TOPO = 8
+  const visiveis = tudo ? campanhas : campanhas.slice(0, TOPO)
+  const resto = campanhas.length - visiveis.length
+
+  return (
+    <div className="mt-4 pt-3 border-t border-white/5">
+      <p className="text-[11px] font-medium text-gray-400 mb-1.5">
+        Custo de tráfego ({campanhas.length} campanha{campanhas.length !== 1 ? 's' : ''})
+      </p>
+      {visiveis.map((c, i) => (
+        <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
+          <span className="text-gray-500 truncate">{c.name}</span>
+          <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.spend)}</span>
+        </div>
+      ))}
+      {resto > 0 && (
+        <button onClick={() => setTudo(true)}
+          className="text-[11px] text-indigo-400 hover:text-indigo-300 mt-1 transition-colors">
+          Ver as outras {resto} campanhas
+        </button>
+      )}
+      <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
+        <span className="text-gray-400 font-medium">Subtotal (com markup de 13,85%)</span>
+        <span className="text-red-400 font-medium">-{formatCurrency(total)}</span>
+      </div>
+    </div>
+  )
+}
+
 function ClosingCard({ closing }: { closing: Closing }) {
   const [editandoEtiqueta, setEditandoEtiqueta] = useState(false)
-  const { user } = useApp()
+  const { user, costs } = useApp()
+  // Quais custos foram abatidos neste fechamento.
+  //
+  // `closings` guarda só os TOTAIS de fixo e variável — o detalhe vive nas
+  // próprias linhas de custo, marcadas com `fechamento_id` quando o
+  // fechamento é confirmado (mecanismo de 16/07, que também faz o custo
+  // sumir do Dashboard pra não ser pago duas vezes). Conferido em 17/08:
+  // as 42 linhas existentes estão todas vinculadas e somam exato os totais
+  // gravados nos 8 fechamentos.
+  //
+  // Tráfego e funil são diferentes: o detalhe deles já é gravado dentro do
+  // próprio fechamento, porque campanha da Meta e custo de funil não existem
+  // como linha nas tabelas de custo.
+  const custosDoFechamento = useMemo(() => {
+    const fixos = (costs?.fixos ?? []).filter(c => c.fechamentoId === closing.id)
+    const variaveis = (costs?.variaveis ?? []).filter(c => c.fechamentoId === closing.id)
+    const campanhas = [...(closing.custos_trafego_campanhas ?? [])].sort((a, b) => b.spend - a.spend)
+    const funil = closing.custos_funil_itens ?? []
+    return {
+      fixos, variaveis, campanhas, funil,
+      // Diferença entre o total gravado e a soma das linhas encontradas.
+      // Só aparece se algum vínculo tiver se perdido — hoje é sempre zero,
+      // mas é melhor mostrar do que somar errado em silêncio.
+      faltaFixos: (closing.custos_fixos_total ?? 0) - fixos.reduce((a, c) => a + c.valor, 0),
+      faltaVariaveis: (closing.custos_variaveis_total ?? 0) - variaveis.reduce((a, c) => a + c.valor, 0),
+    }
+  }, [costs, closing])
+
+  const temCustos = custosDoFechamento.fixos.length > 0 || custosDoFechamento.variaveis.length > 0
+    || custosDoFechamento.campanhas.length > 0 || custosDoFechamento.funil.length > 0
   const podeVerRepasse = user?.role !== 'socio'
   const [expanded, setExpanded] = useState(false)
   const [compradoresPage, setCompradoresPage] = useState(1)
@@ -1845,6 +1909,91 @@ function ClosingCard({ closing }: { closing: Closing }) {
               </div>
             )}
           </div>
+
+          {/* Seção 1b — Custos abatidos, linha a linha */}
+          {temCustos && (
+            <div className="p-4 border-b border-white/5">
+              <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+                Custos abatidos neste fechamento
+              </h4>
+
+              <div className="grid md:grid-cols-2 gap-x-8 gap-y-4">
+                {custosDoFechamento.fixos.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-medium text-gray-400 mb-1.5">
+                      Custos fixos ({custosDoFechamento.fixos.length})
+                    </p>
+                    {custosDoFechamento.fixos.map(c => (
+                      <div key={c.id} className="flex justify-between gap-3 text-xs py-0.5">
+                        <span className="text-gray-500 truncate">
+                          {c.descricao} <span className="text-gray-700">{formatDate(c.data)}</span>
+                        </span>
+                        <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.valor)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
+                      <span className="text-gray-400 font-medium">Subtotal</span>
+                      <span className="text-red-400 font-medium">-{formatCurrency(closing.custos_fixos_total ?? 0)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {custosDoFechamento.variaveis.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-medium text-gray-400 mb-1.5">
+                      Custos variáveis ({custosDoFechamento.variaveis.length})
+                    </p>
+                    {custosDoFechamento.variaveis.map(c => (
+                      <div key={c.id} className="flex justify-between gap-3 text-xs py-0.5">
+                        <span className="text-gray-500 truncate">
+                          {c.descricao} <span className="text-gray-700">{formatDate(c.data)}</span>
+                        </span>
+                        <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.valor)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
+                      <span className="text-gray-400 font-medium">Subtotal</span>
+                      <span className="text-red-400 font-medium">-{formatCurrency(closing.custos_variaveis_total ?? 0)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {custosDoFechamento.funil.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-medium text-gray-400 mb-1.5">
+                      Custos do funil ({custosDoFechamento.funil.length})
+                    </p>
+                    {custosDoFechamento.funil.map((c, i) => (
+                      <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
+                        <span className="text-gray-500 truncate">{c.descricao}</span>
+                        <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.valor)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
+                      <span className="text-gray-400 font-medium">Subtotal</span>
+                      <span className="text-red-400 font-medium">-{formatCurrency(closing.custos_funil_total ?? 0)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Campanhas: um fechamento chegou a 348 — mostra as maiores e
+                  deixa o resto atrás de um clique, em vez de despejar tudo. */}
+              {custosDoFechamento.campanhas.length > 0 && (
+                <CampanhasAbatidas
+                  campanhas={custosDoFechamento.campanhas}
+                  total={closing.custos_trafego_total ?? 0}
+                />
+              )}
+
+              {(Math.abs(custosDoFechamento.faltaFixos) > 0.01 || Math.abs(custosDoFechamento.faltaVariaveis) > 0.01) && (
+                <p className="text-[11px] text-amber-400 mt-3">
+                  Atenção: {formatCurrency(Math.abs(custosDoFechamento.faltaFixos + custosDoFechamento.faltaVariaveis))} do
+                  total gravado neste fechamento não têm linha de custo correspondente — o detalhe acima está incompleto.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Seção 2 — Detalhamento por produto */}
           {closing.byProduct && closing.byProduct.length > 0 && (
