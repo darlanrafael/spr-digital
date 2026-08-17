@@ -1660,41 +1660,6 @@ function EditorEtiqueta({ closing, onFechar }: { closing: Closing; onFechar: () 
   )
 }
 
-// Lista de campanhas de tráfego abatidas. Separada em componente próprio por
-// causa do volume: o fechamento IAR de 14/08 tem 348 campanhas gravadas.
-function CampanhasAbatidas({
-  campanhas, total,
-}: { campanhas: { name: string; spend: number }[]; total: number }) {
-  const [tudo, setTudo] = useState(false)
-  const TOPO = 8
-  const visiveis = tudo ? campanhas : campanhas.slice(0, TOPO)
-  const resto = campanhas.length - visiveis.length
-
-  return (
-    <div className="mt-4 pt-3 border-t border-white/5">
-      <p className="text-[11px] font-medium text-gray-400 mb-1.5">
-        Custo de tráfego ({campanhas.length} campanha{campanhas.length !== 1 ? 's' : ''})
-      </p>
-      {visiveis.map((c, i) => (
-        <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
-          <span className="text-gray-500 truncate">{c.name}</span>
-          <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.spend)}</span>
-        </div>
-      ))}
-      {resto > 0 && (
-        <button onClick={() => setTudo(true)}
-          className="text-[11px] text-indigo-400 hover:text-indigo-300 mt-1 transition-colors">
-          Ver as outras {resto} campanhas
-        </button>
-      )}
-      <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
-        <span className="text-gray-400 font-medium">Subtotal (com markup de 13,85%)</span>
-        <span className="text-red-400 font-medium">-{formatCurrency(total)}</span>
-      </div>
-    </div>
-  )
-}
-
 function ClosingCard({ closing }: { closing: Closing }) {
   const [editandoEtiqueta, setEditandoEtiqueta] = useState(false)
   const { user, costs } = useApp()
@@ -1727,9 +1692,31 @@ function ClosingCard({ closing }: { closing: Closing }) {
 
   const temCustos = custosDoFechamento.fixos.length > 0 || custosDoFechamento.variaveis.length > 0
     || custosDoFechamento.campanhas.length > 0 || custosDoFechamento.funil.length > 0
+
+  const diasDoPeriodo = useMemo(() => {
+    const a = new Date(`${closing.periodo.inicio}T00:00:00Z`).getTime()
+    const b = new Date(`${closing.periodo.fim}T00:00:00Z`).getTime()
+    return Number.isFinite(a) && Number.isFinite(b) ? Math.round((b - a) / 86400000) + 1 : 0
+  }, [closing.periodo])
+
+  // Lista única, uma linha por custo, com a categoria como coluna — em vez de
+  // blocos separados lado a lado. `share` é a fatia de cada linha no total de
+  // custos do fechamento: é o que responde "o que pesou aqui" sem calculadora.
+  const linhasDeCusto = useMemo(() => {
+    const total = closing.custosTotais || 1
+    type Linha = { cat: string; cor: string; desc: string; data?: string; valor: number }
+    const linhas: Linha[] = [
+      ...custosDoFechamento.fixos.map(c => ({ cat: 'Fixo', cor: 'text-sky-300', desc: c.descricao, data: c.data, valor: c.valor })),
+      ...custosDoFechamento.variaveis.map(c => ({ cat: 'Variável', cor: 'text-violet-300', desc: c.descricao, data: c.data, valor: c.valor })),
+      ...custosDoFechamento.funil.map(c => ({ cat: 'Funil', cor: 'text-emerald-300', desc: c.descricao, valor: c.valor })),
+      ...custosDoFechamento.campanhas.map(c => ({ cat: 'Tráfego', cor: 'text-orange-300', desc: c.name, valor: c.spend })),
+    ]
+    return linhas.map(l => ({ ...l, share: (l.valor / total) * 100 }))
+  }, [custosDoFechamento, closing.custosTotais])
   const podeVerRepasse = user?.role !== 'socio'
   const [expanded, setExpanded] = useState(false)
   const [compradoresPage, setCompradoresPage] = useState(1)
+  const [mostrarTodosCustos, setMostrarTodosCustos] = useState(false)
   const [produtosFiltro, setProdutosFiltro] = useState<string[]>(() => (closing.byProduct ?? []).map(p => p.nome))
 
   const byProductFiltrado = (closing.byProduct ?? []).filter(row => produtosFiltro.includes(row.nome))
@@ -1854,6 +1841,37 @@ function ClosingCard({ closing }: { closing: Closing }) {
       {expanded && (
         <div className="border-t border-white/10">
 
+          {/* Faixa de contexto — o período apurado tem que estar visível junto
+              dos números que ele gerou. Antes só existia no cabeçalho do card,
+              e ao rolar pro detalhe você perdia de vista de que janela os
+              valores vieram. */}
+          <div className="px-4 py-3 bg-white/[0.02] border-b border-white/5 flex flex-wrap gap-x-8 gap-y-2">
+            <div>
+              <p className="text-[11px] text-gray-600">Período apurado</p>
+              <p className="text-sm font-semibold text-white">
+                {formatDate(closing.periodo.inicio)} a {formatDate(closing.periodo.fim)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-gray-600">Duração</p>
+              <p className="text-sm font-semibold text-gray-300">{diasDoPeriodo} dias</p>
+            </div>
+            <div>
+              <p className="text-[11px] text-gray-600">Confirmado em</p>
+              <p className="text-sm font-semibold text-gray-300">{confirmedAt}</p>
+            </div>
+            {(closing.produtos_periodos ?? []).length > 0 && (
+              <div className="w-full">
+                <p className="text-[11px] text-gray-600 mb-0.5">Produtos com período próprio</p>
+                {closing.produtos_periodos!.map((g, i) => (
+                  <p key={i} className="text-xs text-amber-300/90">
+                    {formatDate(g.inicio)} a {formatDate(g.fim)} — {g.produtos.join(', ')}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Seção 1 — Resumo completo */}
           <div className="p-4 border-b border-white/5">
             <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Resumo completo</h4>
@@ -1910,90 +1928,89 @@ function ClosingCard({ closing }: { closing: Closing }) {
             )}
           </div>
 
-          {/* Seção 1b — Custos abatidos, linha a linha */}
+          {/* Seção 1b — Custos abatidos: lista única, uma linha por custo,
+              com categoria e a fatia de cada um no total. Antes eram blocos
+              lado a lado em fonte miúda — denso e sem dar a noção de peso. */}
           {temCustos && (
             <div className="p-4 border-b border-white/5">
-              <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-                Custos abatidos neste fechamento
-              </h4>
-
-              <div className="grid md:grid-cols-2 gap-x-8 gap-y-4">
-                {custosDoFechamento.fixos.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-medium text-gray-400 mb-1.5">
-                      Custos fixos ({custosDoFechamento.fixos.length})
-                    </p>
-                    {custosDoFechamento.fixos.map(c => (
-                      <div key={c.id} className="flex justify-between gap-3 text-xs py-0.5">
-                        <span className="text-gray-500 truncate">
-                          {c.descricao} <span className="text-gray-700">{formatDate(c.data)}</span>
-                        </span>
-                        <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.valor)}</span>
-                      </div>
-                    ))}
-                    <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
-                      <span className="text-gray-400 font-medium">Subtotal</span>
-                      <span className="text-red-400 font-medium">-{formatCurrency(closing.custos_fixos_total ?? 0)}</span>
-                    </div>
-                  </div>
-                )}
-
-                {custosDoFechamento.variaveis.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-medium text-gray-400 mb-1.5">
-                      Custos variáveis ({custosDoFechamento.variaveis.length})
-                    </p>
-                    {custosDoFechamento.variaveis.map(c => (
-                      <div key={c.id} className="flex justify-between gap-3 text-xs py-0.5">
-                        <span className="text-gray-500 truncate">
-                          {c.descricao} <span className="text-gray-700">{formatDate(c.data)}</span>
-                        </span>
-                        <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.valor)}</span>
-                      </div>
-                    ))}
-                    <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
-                      <span className="text-gray-400 font-medium">Subtotal</span>
-                      <span className="text-red-400 font-medium">-{formatCurrency(closing.custos_variaveis_total ?? 0)}</span>
-                    </div>
-                  </div>
-                )}
-
-                {custosDoFechamento.funil.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-medium text-gray-400 mb-1.5">
-                      Custos do funil ({custosDoFechamento.funil.length})
-                    </p>
-                    {custosDoFechamento.funil.map((c, i) => (
-                      <div key={i} className="flex justify-between gap-3 text-xs py-0.5">
-                        <span className="text-gray-500 truncate">{c.descricao}</span>
-                        <span className="text-red-400 whitespace-nowrap">-{formatCurrency(c.valor)}</span>
-                      </div>
-                    ))}
-                    <div className="flex justify-between text-xs pt-1.5 mt-1 border-t border-white/5">
-                      <span className="text-gray-400 font-medium">Subtotal</span>
-                      <span className="text-red-400 font-medium">-{formatCurrency(closing.custos_funil_total ?? 0)}</span>
-                    </div>
-                  </div>
-                )}
+              <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                  Custos abatidos neste fechamento
+                </h4>
+                <span className="text-sm font-semibold text-red-400">
+                  -{formatCurrency(closing.custosTotais)}
+                </span>
               </div>
 
-              {/* Campanhas: um fechamento chegou a 348 — mostra as maiores e
-                  deixa o resto atrás de um clique, em vez de despejar tudo. */}
-              {custosDoFechamento.campanhas.length > 0 && (
-                <CampanhasAbatidas
-                  campanhas={custosDoFechamento.campanhas}
-                  total={closing.custos_trafego_total ?? 0}
-                />
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10">
+                      <th className="py-2 pr-3 text-left text-[11px] font-medium text-gray-500">Categoria</th>
+                      <th className="py-2 pr-3 text-left text-[11px] font-medium text-gray-500">Descrição</th>
+                      <th className="py-2 pr-3 text-left text-[11px] font-medium text-gray-500 whitespace-nowrap">Data</th>
+                      <th className="py-2 pr-3 text-right text-[11px] font-medium text-gray-500">Valor</th>
+                      <th className="py-2 text-right text-[11px] font-medium text-gray-500">% do total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(mostrarTodosCustos ? linhasDeCusto : linhasDeCusto.slice(0, 15)).map((l, i) => (
+                      <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02]">
+                        <td className="py-2.5 pr-3 whitespace-nowrap">
+                          <span className={`text-xs font-medium ${l.cor}`}>{l.cat}</span>
+                        </td>
+                        <td className="py-2.5 pr-3 text-gray-300 max-w-md truncate" title={l.desc}>{l.desc}</td>
+                        <td className="py-2.5 pr-3 text-gray-600 text-xs whitespace-nowrap">
+                          {l.data ? formatDate(l.data) : '—'}
+                        </td>
+                        <td className="py-2.5 pr-3 text-right text-red-400 font-medium whitespace-nowrap">
+                          -{formatCurrency(l.valor)}
+                        </td>
+                        <td className="py-2.5 text-right text-gray-500 text-xs whitespace-nowrap">
+                          {l.share.toFixed(1)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {linhasDeCusto.length > 15 && !mostrarTodosCustos && (
+                <button onClick={() => setMostrarTodosCustos(true)}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 mt-3 transition-colors">
+                  Ver as outras {linhasDeCusto.length - 15} linhas de custo
+                </button>
+              )}
+
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-1 mt-4 pt-3 border-t border-white/10 text-xs">
+                {[
+                  { rot: 'Custos fixos', v: closing.custos_fixos_total ?? 0, n: custosDoFechamento.fixos.length },
+                  { rot: 'Custos variáveis', v: closing.custos_variaveis_total ?? 0, n: custosDoFechamento.variaveis.length },
+                  { rot: 'Custos do funil', v: closing.custos_funil_total ?? 0, n: custosDoFechamento.funil.length },
+                  { rot: 'Custo de tráfego', v: closing.custos_trafego_total ?? 0, n: custosDoFechamento.campanhas.length },
+                ].filter(x => x.n > 0).map(x => (
+                  <div key={x.rot} className="flex justify-between gap-2">
+                    <span className="text-gray-500">{x.rot} <span className="text-gray-700">({x.n})</span></span>
+                    <span className="text-red-400 font-medium whitespace-nowrap">-{formatCurrency(x.v)}</span>
+                  </div>
+                ))}
+              </div>
+
+              {!!closing.custos_trafego_total && (
+                <p className="text-[11px] text-gray-600 mt-2">
+                  O subtotal de tráfego inclui o markup de 13,85% sobre o gasto bruto das campanhas.
+                </p>
               )}
 
               {(Math.abs(custosDoFechamento.faltaFixos) > 0.01 || Math.abs(custosDoFechamento.faltaVariaveis) > 0.01) && (
-                <p className="text-[11px] text-amber-400 mt-3">
+                <p className="text-[11px] text-amber-400 mt-2">
                   Atenção: {formatCurrency(Math.abs(custosDoFechamento.faltaFixos + custosDoFechamento.faltaVariaveis))} do
                   total gravado neste fechamento não têm linha de custo correspondente — o detalhe acima está incompleto.
                 </p>
               )}
             </div>
           )}
+
 
           {/* Seção 2 — Detalhamento por produto */}
           {closing.byProduct && closing.byProduct.length > 0 && (
