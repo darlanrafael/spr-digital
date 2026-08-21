@@ -35,10 +35,21 @@ export async function POST(req: NextRequest) {
       dispensa_senha_nas_acoes: boolean | null
     }
 
-    // Token novo a cada login: o anterior (de outro navegador) é
-    // invalidado. Emitido pra todo mundo, mas só vale como credencial pra
-    // quem tem `dispensa_senha_nas_acoes` — ver verificarAcesso().
-    const { token, expiraEm } = gerarSessionToken()
+    // Reaproveita o token que já existe se ainda estiver válido, em vez de
+    // gerar um novo a cada login.
+    //
+    // Gerar sempre um novo invalidava o anterior: quem entrasse no celular
+    // derrubava o próprio acesso no computador, sem nenhum aviso — voltaria
+    // a pedir senha só naquele aparelho, e a causa seria invisível. Um crachá
+    // por pessoa, servindo os aparelhos dela, é o que corresponde ao combinado.
+    const tokenAtual = (row as unknown as { session_token: string | null; session_token_expira_em: string | null })
+    const aindaValido = !!tokenAtual.session_token && !!tokenAtual.session_token_expira_em
+      && new Date(tokenAtual.session_token_expira_em).getTime() > Date.now()
+
+    const { token, expiraEm } = aindaValido
+      ? { token: tokenAtual.session_token as string, expiraEm: tokenAtual.session_token_expira_em as string }
+      : gerarSessionToken()
+
     const { error: erroToken } = await supabase
       .from('usuarios_sistema')
       .update({ session_token: token, session_token_expira_em: expiraEm })

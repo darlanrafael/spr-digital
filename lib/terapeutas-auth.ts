@@ -62,7 +62,18 @@ export async function verificarSenhaUsuario(
 // `verificarSenhaUsuario` direto. É de propósito: assim é impossível um
 // token virar credencial financeira por descuido numa refatoração futura.
 
-const SESSION_TOKEN_DIAS = 7
+// Janela DESLIZANTE: cada uso bem-sucedido do token empurra a validade pra
+// frente. Enquanto o Pedro usar o sistema, o crachá nunca vence; ele só morre
+// depois de 30 dias sem nenhum uso — que é o caso em que expirar protege
+// mesmo (máquina perdida, pessoa desligada).
+//
+// A validade fixa de 7 dias que existia antes derrotava o propósito: em
+// 19/08/2026 o token dele venceu e o sistema voltou a pedir senha, exatamente
+// o que a feature existia pra evitar. Ia se repetir toda semana.
+const SESSION_TOKEN_DIAS = 30
+// Só renova quando falta menos que isso, pra não escrever no banco a cada
+// ação. Na prática: no máximo uma escrita a cada ~15 dias por usuário.
+const RENOVAR_QUANDO_FALTAR_DIAS = 15
 
 export function gerarSessionToken(): { token: string; expiraEm: string } {
   return {
@@ -115,6 +126,20 @@ export async function verificarAcesso(params: {
     if (!expiraEm || new Date(expiraEm).getTime() <= Date.now()) {
       return { valido: false, expirado: true }
     }
+
+    // Empurra a validade pra frente enquanto a pessoa está usando.
+    const faltaMs = new Date(expiraEm).getTime() - Date.now()
+    if (faltaMs < RENOVAR_QUANDO_FALTAR_DIAS * 24 * 60 * 60 * 1000) {
+      const nova = new Date(Date.now() + SESSION_TOKEN_DIAS * 24 * 60 * 60 * 1000).toISOString()
+      const { error } = await client
+        .from('usuarios_sistema')
+        .update({ session_token_expira_em: nova })
+        .eq('session_token', token)
+      // Falha aqui não invalida a ação — a pessoa já está autenticada. Só
+      // significa que a renovação tentará de novo na próxima ação.
+      if (error) console.error('[verificarAcesso] falha ao renovar validade:', error.message)
+    }
+
     return { valido: true, usuario: data }
   }
 
