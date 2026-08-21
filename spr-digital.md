@@ -4,9 +4,54 @@
 
 ---
 
-## 0. Estado atual e pendências — atualizado 17/08/2026, 17:00
+## 0. Estado atual e pendências — atualizado 21/08/2026, 23:30
 
-> **Leia esta seção antes de qualquer coisa.** Ela resume o que as sessões de 13-14/08 e 17/08 resolveram e o que ficou aberto.
+> **Leia esta seção antes de qualquer coisa.** Ela resume o que as sessões de 13-14/08, 17/08 e 21/08 resolveram e o que ficou aberto.
+
+### Em desenho, NÃO implementado — Gestor de Projetos (ClickUp), 21/08
+
+Automação do ClickUp real (não um clone): cobrança por WhatsApp + três panoramas
+por dia. **Nada foi construído** — existe apenas o desenho aprovado.
+
+Spec: `docs/superpowers/specs/2026-08-21-gestor-projetos-clickup-design.md`
+
+O que a auditoria do ClickUp encontrou em 21/08 (105 tarefas abertas):
+
+| | |
+|---|---|
+| sem responsável | 34 (32%) |
+| sem prazo | 44 (41%) |
+| vencidas | 27, a mais antiga há 17 dias |
+| sem nenhum toque 8-30 dias | 49 |
+| paradas no status `para fazer` | 99 |
+
+Coordenadas que custam tempo pra redescobrir:
+
+- Workspace **SQUAD - PEDRO RONCADA** = `90171441939`
+- Spaces: `90176754482` (SQUAD - PEDRO RONCADA) e `90176916232` (AÇÕES ASCENSÃO | FUNIS)
+- 16 braços distintos espalhados por 38 listas; ambos os spaces já têm o fluxo
+  completo de status, nenhuma lista usa `override_statuses`
+- Etiquetas existentes no space SQUAD: `produto`, `debriefing` (o outro space não
+  tem nenhuma) — a etiqueta `copy` do fluxo de aprovação ainda precisa ser criada
+  nos dois
+
+Decisões estruturais que valem além desta entrega:
+
+- **Módulo isolado** em `app/api/clickup/` e `lib/clickup/`, tabelas com prefixo
+  `clickup_`. Nenhum arquivo existente é tocado. O usuário pediu isso
+  explicitamente ("meu medo é misturar e virar uma farofa"). O módulo de
+  terapeutas é o precedente: seus 16 arquivos importam só de si mesmos e de
+  `@/lib/supabase`.
+- **Webhook e varredura chamam a mesma função.** O webhook é acelerador, não
+  caminho alternativo. Se ele morrer, nada se perde — só deixa de ser instantâneo.
+- **Relógio externo** (cron-job.org) nos 11 horários da régua + 1 por hora, em vez
+  de Vercel Cron. Motivo direto do risco 8 abaixo: o vigia tem que morar fora do
+  prédio.
+- **O token do ClickUp lê E escreve.** Foi usado só para leitura em todo o
+  desenho. A implementação escreve em exatamente dois pontos, ambos no fluxo de
+  copy (reatribuir ao Pedro, voltar o status), e só com autorização explícita.
+
+Pendências do usuário antes de implementar: ver a seção final da spec (13 itens).
 
 ### Resolvido e EM PRODUÇÃO desde 17/08 (`fe1fae3`)
 
@@ -673,6 +718,14 @@ META_AD_ACCOUNT_IDS=839071654129606,634349981641861,648308663489123,414167410861
 KIWIFY_WEBHOOK_TOKEN=seu_token_kiwify
 HUBLA_WEBHOOK_SECRET=seu_secret_hubla
 
+# ── Gestor de Projetos / ClickUp (em desenho, ainda não usado em runtime) ──
+CLICKUP_TOKEN=pk_...                 # token pessoal, LÊ E ESCREVE
+CLICKUP_WEBHOOK_SECRET=...           # devolvido ao criar o webhook; valida X-Signature
+CLICKUP_CRON_SECRET=...              # protege /api/clickup/sincronizar
+DAPI_KEY=...                         # D-API (WhatsApp não-oficial), header Authorization SEM "Bearer"
+DAPI_SESSION_ID=MARIANA - OFICIAL    # sessão conectada ao número 5511987420791
+DAPI_GRUPO_JID=...                   # descoberto por GET /api/v1/groups
+
 # ── Usuários do sistema (autenticação própria sem Supabase Auth) ───────────
 NEXT_PUBLIC_USER1_EMAIL=rafael@spr.com
 NEXT_PUBLIC_USER1_PASSWORD=spr2026
@@ -698,6 +751,8 @@ NEXT_PUBLIC_USER2_ROLE=gestor
 - `META_AD_ACCOUNT_IDS`: IDs das contas de anúncio no Business Manager (sem prefixo `act_`)
 - `KIWIFY_WEBHOOK_TOKEN`: Configurado no painel Kiwify ao criar o webhook
 - `HUBLA_WEBHOOK_SECRET`: Configurado no painel Hubla ao criar o webhook
+- `CLICKUP_TOKEN`: ClickUp → foto do perfil → Settings → Apps → API Token
+- `DAPI_KEY`: painel `app.d-api.cloud`. Base da API: `https://api.d-api.cloud/api/v1`. Enviar texto: `POST /messages/send/text` com `{sessionId, to, text}`, `to` em dígitos puros sem `+` (mesmo formato da Z-API)
 
 ---
 
@@ -1213,6 +1268,7 @@ Isso permite rodar o app localmente mesmo sem configurar o Supabase, apenas para
 - **Kiwify dias 10-11/05/2026** sem planilha de referência pra conferir (150 vendas no banco, não auditadas linha a linha — provavelmente ok, só não verificado)
 - Auditoria fatura-a-fatura da Hubla foi feita só pra 01/06-01/07/2026; não repetida pros outros meses além de maio
 - Exportação PDF/Excel das telas
+- **Gestor de Projetos (ClickUp) desenhado, não construído** — spec aprovada em 21/08 em `docs/superpowers/specs/2026-08-21-gestor-projetos-clickup-design.md`. Depende de 13 pendências do usuário (ajuste de status no ClickUp, etiqueta `copy`, cadastro de 2 membros, grupo do WhatsApp, estrutura do Drive, autorização de escrita). Ver seção 0.
 - Relatório de debrief de lançamento
 - Adicionar mais usuários sem precisar de redeployment — **resolvido parcialmente em 10/07/2026**: sócios do dashboard principal (`usuarios_dashboard`) e usuários do módulo de terapeutas (`usuarios_sistema` — admin/comercial/terapeuta) já são criados via UI (`/terapeutas/admin`), sem redeploy. Só os 2-3 usuários hardcoded originais do dashboard (Pedro e o 3º opcional, em `lib/auth.ts`) ainda dependem de variável de ambiente.
 - RLS no Supabase (hoje usa service_role_key como bypass)
