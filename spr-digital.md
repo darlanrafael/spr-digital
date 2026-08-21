@@ -1,6 +1,15 @@
-# SPR Digital — Documentação Completa do Projeto
+# SPR Digital — DRE Financeiro + Sistema de Agendamento
 
-> **Arquivo de referência definitivo.** Serve como guia de instalação do zero, memória persistente de contexto e registro de todas as decisões de arquitetura. Qualquer pessoa (ou Claude em um novo chat) consegue subir o projeto exatamente como está lendo este documento.
+> **Arquivo de referência definitivo destes dois sistemas.** Serve como guia de instalação do zero, memória persistente de contexto e registro de todas as decisões de arquitetura. Qualquer pessoa (ou Claude em um novo chat) consegue subir o projeto exatamente como está lendo este documento.
+
+**O que está documentado aqui:**
+
+| Sistema | O que cobre |
+|---|---|
+| **DRE Financeiro** | vendas, webhooks Kiwify e Hubla, imposto e comissão, reembolso, fechamento por sócio, fluxo de caixa, Meta Ads, DRE mensal |
+| **Sistema de Agendamento (Pedro)** | agenda dos terapeutas, sessões e compromissos, link do Meet automático, lembretes de WhatsApp dos pacientes, comissões, aprovações, trava de conflito de horário |
+
+**O que NÃO está aqui:** o Gestor de Projetos (automação do ClickUp) é um sistema à parte, que não troca nenhum dado com estes dois. Documentado em `clickup.md`.
 
 ---
 
