@@ -63,6 +63,7 @@ Está fora, e por quê:
 | 9 | Régua roda **todos os dias**, inclusive fim de semana | Decisão explícita do usuário. |
 | 10 | **Jeito B** de separação: mesmo projeto, pastas e tabelas próprias | Os dois módulos não trocam nenhum dado. O módulo de terapeutas já prova que dá para conviver: seus 16 arquivos importam apenas do próprio módulo e da conexão com o banco. |
 | 11 | **Relógio externo** (cron-job.org), não Vercel Cron | Funciona em qualquer plano Vercel, e avisa por e-mail quando o sistema não responde. Foi exatamente esse alarme que faltou quando o n8n caiu: o alerta morava dentro do próprio n8n. |
+| 11b | **Horários fixos** em vez de varredura de 15 em 15 minutos | A régua tem 11 horários conhecidos. Marcá-los faz a mensagem sair no minuto certo e cai de 96 para 24 chamadas por dia. A passada de hora em hora preserva a rede de segurança. |
 | 12 | Varredura é **redundância do webhook**, não complemento | Ver "Arquitetura". Se o webhook morrer, nada se perde — só deixa de ser instantâneo. |
 
 ## Arquitetura
@@ -80,7 +81,8 @@ Todo o comportamento nasce de **uma única função**, `sincronizar()`:
 Ela é chamada por dois caminhos:
 
 - **Webhook do ClickUp** — para uma tarefa específica, em segundos
-- **Varredura a cada 15 minutos** — para todas as tarefas
+- **Relógio externo** — nos 11 horários fixos da régua, mais uma passada por
+  hora como rede de segurança; sempre para todas as tarefas
 
 **Os dois caminhos executam o mesmo código.** O webhook não é uma via
 alternativa com lógica própria; é apenas um jeito de a varredura acontecer mais
@@ -88,7 +90,8 @@ cedo para uma tarefa.
 
 Essa é a redundância que o usuário pediu. Consequências práticas:
 
-- Webhook suspenso pelo ClickUp por falhas → a varredura pega em até 15 minutos
+- Webhook suspenso pelo ClickUp por falhas → a passada de segurança pega em até
+  1 hora
 - Deploy fora do ar por 2 horas → na volta, a varredura reconstrói tudo
 - Webhook duplicado (o ClickUp reenvia) → a comparação de estado não vê mudança
   e não gera nada
@@ -585,27 +588,53 @@ chegando.
 
 ## Relógio e monitoramento
 
-Um serviço externo gratuito (cron-job.org) chama, a cada 15 minutos:
+Um serviço externo gratuito (cron-job.org) chama:
 
 ```
 POST /api/clickup/sincronizar
 Header: X-Cron-Secret: <CLICKUP_CRON_SECRET>
 ```
 
-Todos os momentos da régua caem em `:00` ou `:30`, então uma varredura de 15 em
-15 minutos alcança todos.
+Em dois ritmos, por motivos diferentes:
 
-A varredura dispara **qualquer momento cujo horário já passou e que ainda não
-foi enviado**, não apenas o do minuto exato. Isso cobre varredura atrasada,
-deploy no meio, e servidor fora do ar por algumas horas.
+**Nos 11 horários exatos da régua** — para a mensagem sair no minuto certo, não
+"em algum momento nos próximos 15 minutos":
+
+```
+08:00  36h antes do vencimento
+09:00  dia D · 1º dia de atraso
+10:00  panorama
+12:00  cobranças de atraso (D+2, D+3, D+4)
+15:00  dia D · panorama
+16:00  cobrança (D+2)
+18:00  cobrança (D+1)
+19:30  último aviso do dia D
+20:00  24h antes · cobrança (D+3)
+20:30  panorama
+21:00  aviso de atraso (D) · cobrança (D+2)
+```
+
+**Mais uma passada a cada hora**, como rede de segurança. Ela normalmente não
+envia nada: existe para o caso de o webhook do ClickUp falhar. Sem ela, o
+buraco entre 12:00 e 15:00 deixaria um `demanda recusada` até 3 horas parado.
+
+São 24 chamadas por dia. Foi a alternativa escolhida em cima de uma varredura de
+15 em 15 minutos (96 chamadas), que daria a mesma cobertura com horários
+imprecisos.
+
+Em qualquer um dos dois ritmos, a sincronização dispara **todo momento cujo
+horário já passou e que ainda não foi enviado**, não apenas o do minuto exato.
+Isso cobre chamada atrasada, chamada perdida, deploy no meio e servidor fora do
+ar por algumas horas.
 
 Três camadas de monitoramento, deliberadamente fora umas das outras:
 
 1. **cron-job.org** avisa por e-mail quando o endpoint não responde. Vive fora
    da nossa infraestrutura — foi o que faltou no n8n, onde o alerta de que o n8n
    tinha caído morava dentro do próprio n8n.
-2. **`clickup_execucoes`** registra cada varredura. O panorama inclui uma linha
-   de alerta se a última sincronização foi há mais de 40 minutos.
+2. **`clickup_execucoes`** registra cada sincronização. O panorama inclui uma
+   linha de alerta se a última foi há mais de 90 minutos — com a passada de hora
+   em hora, o intervalo normal nunca passa de 60.
 3. **Falhas de envio** viram aviso no grupo, uma vez por dia.
 
 ## Segurança
@@ -682,10 +711,8 @@ Decisões ainda em aberto:
 10. Prazo do ciclo do Pedro no fluxo de copy — sem prazo, não há régua
 11. Se a tarefa de copy muda de lista/espaço, além de mudar de responsável
 12. Autorização explícita para as duas escritas no ClickUp
-13. **Confirmar o relógio externo.** A decisão 11 foi tomada por recomendação e
-    não chegou a ser confirmada pelo usuário. Se ele preferir o Vercel Cron,
-    muda-se o gatilho e perde-se o alarme de "sistema não respondeu" — o resto
-    do desenho não muda.
+13. Criar as 12 tarefas no cron-job.org (11 horários da régua + a de hora em
+    hora), apontando para o endpoint de sincronização com o segredo no header
 
 ## Fora de escopo, registrado para não se perder
 
