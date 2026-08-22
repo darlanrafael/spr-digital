@@ -108,6 +108,17 @@ vigia tem que ficar do lado de fora.
 `lib/telefone.ts`, não import. São 30 linhas. Assim um ajuste no fluxo dos
 pacientes não altera o robô sem ninguém perceber, e vice-versa.
 
+**Modo fila.** Decidido em 22/08, no lugar de remapear as 104 tarefas de uma
+vez. O status `para fazer` continua existindo e vira fila de espera: tarefa
+parada lá não gera aviso nem cobrança. O Darlan solta uma a uma para
+`demanda solicitada`, no ritmo dele, readequando o prazo na hora de soltar — sem
+prazo novo, a régua não dispara nada, porque nunca manda aviso de horário que já
+passou.
+
+**Marco zero.** Tudo que já existia no ClickUp antes de o módulo entrar no ar é
+registrado em silêncio, sem gerar aviso. Sem essa regra, o primeiro minuto do
+sistema mandaria mais de cem mensagens de uma vez.
+
 **O token do ClickUp lê E escreve.** Foi usado só para leitura em todo o
 desenho. A implementação escreve em exatamente dois pontos, ambos no fluxo de
 copy (reatribuir ao Pedro, voltar o status), e só com autorização explícita.
@@ -164,8 +175,10 @@ bloqueado por excesso de disparo, as duas coisas param juntas.
 
 No ClickUp:
 
-1. Apagar os status `para fazer` e `a fazer`, remapeando as 105 tarefas abertas
-   para `demanda solicitada`
+1. ~~Apagar os status `para fazer` e `a fazer`~~ — **cancelado em 22/08.** Eles
+   ficam como fila de espera (ver "Modo fila"). No lugar: readequar o prazo das
+   tarefas atrasadas e ir soltando para `demanda solicitada` conforme a
+   prioridade
 2. Colocar `demanda solicitada` no grupo "Not started" e `concluído` no grupo "Done"
 3. Criar a etiqueta `copy` nos **dois** spaces
 4. Cadastrar Caillan e Ana Américo como membros
@@ -188,6 +201,13 @@ Decisões ainda em aberto:
 ---
 
 ## 7. Histórico
+
+**22/08/2026** — Documentação separada em `clickup.md` (antes estava dentro do
+`spr-digital.md`) e regra escrita no `CLAUDE.md`: mudança de ClickUp atualiza
+este arquivo, nunca o outro. Modo fila e marco zero acrescentados à spec, no
+lugar do remapeamento em massa. Descoberto que `GET /groups` da D-API devolve
+500 na sessão atual, provavelmente por causa de `ignoreGroups: true` nas
+configurações da sessão.
 
 **21/08/2026** — Desenho completo levantado com o usuário ao longo de várias
 conversas. Auditoria do ClickUp por API, definição da régua de cobrança,

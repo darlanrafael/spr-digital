@@ -65,6 +65,8 @@ Está fora, e por quê:
 | 11 | **Relógio externo** (cron-job.org), não Vercel Cron | Funciona em qualquer plano Vercel, e avisa por e-mail quando o sistema não responde. Foi exatamente esse alarme que faltou quando o n8n caiu: o alerta morava dentro do próprio n8n. |
 | 11b | **Horários fixos** em vez de varredura de 15 em 15 minutos | A régua tem 11 horários conhecidos. Marcá-los faz a mensagem sair no minuto certo e cai de 96 para 24 chamadas por dia. A passada de hora em hora preserva a rede de segurança. |
 | 12 | Varredura é **redundância do webhook**, não complemento | Ver "Arquitetura". Se o webhook morrer, nada se perde — só deixa de ser instantâneo. |
+| 13 | **Modo fila**: `para fazer` continua existindo, como fila de espera | Decidido em 22/08, no lugar do remapeamento em massa das 104 tarefas. O Darlan solta demanda por demanda, no ritmo dele, e cada uma entra no fluxo quando ele quiser. |
+| 14 | **Marco zero**: o que já existia antes do robô entra em silêncio | Sem isso, ligar o sistema dispararia 104 mensagens de "nova demanda" de uma vez. |
 
 ## Arquitetura
 
@@ -222,6 +224,75 @@ janela; a regra existe para o caso de prazo com hora.
 
 Brasília é UTC-3 fixo (sem horário de verão desde 2019), mesma convenção já
 usada em `lib/terapeutas-auth.ts`.
+
+## Modo fila e marco zero
+
+Duas regras que governam a **entrada** de uma tarefa no sistema. Decididas em
+22/08/2026, depois que o desenho da régua já estava fechado.
+
+### Modo fila
+
+O status `para fazer` **não é apagado**. Ele vira a fila de espera.
+
+- Tarefa em `para fazer` não gera aviso nenhum, não é cobrada, não entra em
+  nenhum bloco de cobrança do panorama
+- Quando o Darlan move para `demanda solicitada`, o sistema detecta a mudança e
+  dispara o aviso normal no PV do responsável. Dali em diante a régua roda
+  inteira
+- O mesmo vale para `a fazer`, que hoje tem 5 tarefas
+
+Isso substitui o plano anterior de remapear as 104 tarefas de uma vez. É mais
+seguro: o Darlan controla o ritmo, e nada dispara antes de ele querer.
+
+**A fila não pode ficar invisível.** O panorama ganha um bloco no fim:
+
+```
+📥 NA FILA — 99
+   (em "para fazer", ainda não soltas no fluxo)
+```
+
+Só a contagem, sem lista. Não é cobrança — é para o tamanho da fila não sumir
+de vista.
+
+**Os contadores do bloco "PRECISA DE VOCÊ" passam a ignorar a fila.** Contar
+"44 sem prazo" incluindo tarefas que ele nem soltou ainda seria ruído.
+
+### Marco zero
+
+Na primeira vez que uma tarefa aparece em `clickup_tarefas_estado`, o sistema
+precisa decidir se ela é **nova** ou **pré-existente**. O critério é a data de
+criação da tarefa no ClickUp, comparada com um marco gravado no momento em que
+o módulo entra no ar.
+
+| Tarefa criada… | O que acontece |
+|---|---|
+| antes do marco zero | estado registrado **em silêncio**, nenhum aviso |
+| depois do marco zero | tratada como nova; dispara o que a régua mandar |
+
+Sem essa regra, o primeiro minuto do sistema geraria mais de cem mensagens de
+"nova demanda pra você" de uma só vez — e queimaria a automação antes de ela
+provar qualquer coisa.
+
+O marco zero fica numa linha de `clickup_execucoes` com origem `marco_zero`,
+gravada na primeira execução.
+
+Vale notar o que isso **não** faz: as tarefas pré-existentes não ficam imunes
+para sempre. Assim que uma delas mudar de status, de prazo ou de responsável, a
+mudança é detectada normalmente e a régua age. O silêncio vale só para a
+primeira leitura.
+
+### Prazo vencido na hora de soltar da fila
+
+Boa parte da fila tem prazo no passado — a mais antiga venceu em 04/08.
+
+Pela regra de "nada retroativo", soltar uma dessas para `demanda solicitada`
+dispara o aviso de nova demanda, mas **nenhuma cobrança de prazo**: todos os
+momentos da régua daquela data já passaram. A tarefa aparece apenas como
+atrasada no panorama.
+
+Para a régua valer, o prazo precisa ser readequado no momento de soltar. Aí a
+`referencia` muda, a régua re-arma inteira a partir da data nova, e a cobrança
+funciona. O usuário confirmou em 22/08 que é assim que pretende trabalhar.
 
 ## A régua
 
@@ -424,7 +495,8 @@ Blocos, nesta ordem:
 | 5 | ↩️ RECUSADAS, EM CORREÇÃO | status `demanda recusada` | 4 |
 | 6 | ✅ ENTREGUES DESDE `<hora>` | chegou em `demanda aprovada` ou `concluído` desde o panorama anterior | 4 |
 | 7 | ⚠️ ATRASADAS POR RESPONSÁVEL | agregado por pessoa | todos |
-| 8 | 📝 PRECISA DE VOCÊ | contagem de sem responsável e sem prazo | — |
+| 8 | 📝 PRECISA DE VOCÊ | contagem de sem responsável e sem prazo, **só entre as que já estão no fluxo** | — |
+| 9 | 📥 NA FILA | contagem das que estão em `para fazer` / `a fazer` | — |
 
 Ordem dentro de cada bloco: **mais urgente primeiro** — mais tempo parado, ou
 mais perto de estourar. O cabeçalho sempre mostra o total real, mesmo quando a
