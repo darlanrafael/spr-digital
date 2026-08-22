@@ -157,7 +157,7 @@ Header: `Authorization: <API_KEY>` — **sem** `Bearer`
 |---|---|
 | Enviar texto | `POST /messages/send/text` — `{sessionId, to, text}` |
 | Enviar pra grupo | mesmo endpoint, `to` = JID do grupo |
-| Listar grupos | `GET /groups` |
+| Listar grupos | `GET /groups/list?sessionId=…` — **não** é `/groups`, que devolve 500 |
 | Verificar número | `POST /contacts/verify` |
 | Status da sessão | `GET /sessions` |
 
@@ -165,6 +165,19 @@ Header: `Authorization: <API_KEY>` — **sem** `Bearer`
 Z-API**, então `normalizarTelefoneBR` serve sem alteração.
 
 Sessão em uso: **MARIANA - OFICIAL**, número `5511987420791`.
+
+Grupos existentes nessa sessão (levantados em 22/08):
+
+| Grupo | JID |
+|---|---|
+| **INFO - DEMANDAS** ← o do gestor de projetos | `120363429222458742@g.us` |
+| INFO - AGENDAMENTOS | `120363409734774299@g.us` |
+| BACKSTAGE COMERCIAL l MARI PIGASSI (YOGA) | `120363410879278302@g.us` |
+
+**Armadilha do Cloudflare.** A D-API fica atrás de Cloudflare, que bloqueia
+requisição sem `User-Agent` de navegador — o cliente padrão do Python toma
+`403 error code: 1010`. Pelo `curl` passa normal. A implementação precisa mandar
+um `User-Agent` comum em toda chamada, senão quebra em produção.
 
 Risco registrado e aceito: o número é compartilhado com outra operação. Se for
 bloqueado por excesso de disparo, as duas coisas param juntas.
@@ -201,6 +214,11 @@ Decisões ainda em aberto:
 ---
 
 ## 7. Histórico
+
+**22/08/2026, tarde** — Primeiro envio real pela D-API, no grupo INFO -
+DEMANDAS: panorama com o estado real, panorama simulado com o fluxo rodando, e
+os seis textos de privado para revisão. Nada enviado ao time. Confirmado que o
+envio funciona ponta a ponta.
 
 **22/08/2026** — Documentação separada em `clickup.md` (antes estava dentro do
 `spr-digital.md`) e regra escrita no `CLAUDE.md`: mudança de ClickUp atualiza
