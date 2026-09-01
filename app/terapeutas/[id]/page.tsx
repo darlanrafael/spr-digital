@@ -20,6 +20,7 @@ import AgendaDiaTerapeuta, {
 import { fimEfetivoSessao } from '@/lib/agenda-horarios'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
+import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -677,6 +678,24 @@ export default function PainelTerapeuta() {
           .map(t => t.nome.trim().split(' ')[0].toLowerCase())
         pendentes = pendentes.filter(v => !outrosNomes.some(n => v.produto.toLowerCase().includes(n)))
       }
+
+      // O Diagnostico Guiado nao tem nome de terapeuta no produto, entao a busca
+      // por nome nunca o encontra. Ele aparece so na tela do Pedro, que sempre
+      // comeca o pacote; agendar dali cria as sessoes dos dois.
+      if (primeiroNome.toLowerCase() === 'pedro') {
+        const { data: diag } = await client
+          .from('sales')
+          .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id')
+          .eq('status', 'aprovada')
+          .not('id', 'like', 'manual_%')
+        for (const v of (diag ?? []) as (SaleInfo & { order_id?: string })[]) {
+          if (!formatoDaVenda(v)) continue
+          if (saleIds.includes(v.id)) continue
+          if (pendentes.some(p => p.id === v.id)) continue
+          pendentes.push(v)
+        }
+      }
+
       setVendasPendentes(pendentes)
     }
 
