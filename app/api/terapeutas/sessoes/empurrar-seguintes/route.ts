@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   // pacote, ainda não entregues nem canceladas - sessão entregue é histórico,
   // não pode ser movida, e cancelada não existe mais pro paciente.
   const { data: seguintes, error: seguintesErr } = await client
-    .from('sessoes').select('id,terapeuta_id,numero_sessao')
+    .from('sessoes').select('id,terapeuta_id,numero_sessao,total_sessoes,paciente_nome,paciente_email')
     .eq('sale_id', sessao.sale_id)
     .gt('numero_sessao', sessao.numero_sessao as number)
     .not('status', 'in', '(entregue,cancelada)')
@@ -69,12 +69,41 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: mensagemConflito(conflitos), conflitos }, { status: 409 })
   }
 
-  for (let i = 0; i < seguintes.length; i++) {
-    const { error: updateErr } = await client.from('sessoes')
-      .update({ data_agendada: novasDatas[i], updated_at: new Date().toISOString() })
-      .eq('id', seguintes[i].id)
-    if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
-  }
+  // Uma única instrução em vez do for sequencial anterior: se uma sessão
+  // falhasse no meio do loop, metade do pacote ficava movida e metade não -
+  // exatamente o cenário que o dono do produto descreveu como pior que não
+  // mover nada. upsert com onConflict:'id' vira um único INSERT ... ON
+  // CONFLICT DO UPDATE, que o Postgres executa como uma instrução só: se
+  // qualquer linha do lote falhar, nenhuma é alterada (testado contra o banco
+  // real com um lote de 2 linhas, uma delas inválida de propósito - a outra,
+  // que seria aplicada sem erro sozinha, também não mudou).
+  //
+  // O payload de cada linha precisa incluir sale_id, terapeuta_id,
+  // numero_sessao, total_sessoes, paciente_nome e paciente_email (as colunas
+  // NOT NULL sem default da tabela) mesmo repassando o valor que a linha já
+  // tem: o Postgres valida essas colunas ao montar a linha ANTES de checar se
+  // há conflito, então omitir qualquer uma delas derruba o upsert inteiro com
+  // "violates not-null constraint", mesmo que o conflito vá cair sempre no
+  // UPDATE. Colunas fora do payload (status, comissão, link_meet etc.) não
+  // entram no SET do UPDATE e ficam intactas - confirmado numa linha
+  // sintética descartável criada e apagada pelo próprio teste, comparando
+  // todas as colunas antes/depois.
+  const agora = new Date().toISOString()
+  const { error: updateErr } = await client.from('sessoes').upsert(
+    seguintes.map((s, i) => ({
+      id: s.id,
+      sale_id: sessao.sale_id as string,
+      terapeuta_id: s.terapeuta_id as string,
+      numero_sessao: s.numero_sessao as number,
+      total_sessoes: s.total_sessoes as number,
+      paciente_nome: s.paciente_nome as string,
+      paciente_email: s.paciente_email as string,
+      data_agendada: novasDatas[i],
+      updated_at: agora,
+    })),
+    { onConflict: 'id' }
+  )
+  if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
 
   const usuarioNome = (usuario as Record<string, unknown>)?.nome as string ?? usuario_email
   const usuarioTipo = (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial'

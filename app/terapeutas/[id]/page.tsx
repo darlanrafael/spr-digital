@@ -3284,10 +3284,16 @@ export default function PainelTerapeuta() {
             <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-7 h-7 text-green-500" />
             </div>
-            <h3 className="text-base font-semibold text-white mb-1">Sessões remarcadas</h3>
+            <h3 className="text-base font-semibold text-white mb-1">
+              {avisoEmpurrarSucesso === 0 ? 'Nada para empurrar' : 'Sessões remarcadas'}
+            </h3>
+            {/* movidas=0 significa que não havia sessão seguinte no pacote -
+                nada mudou, então não faz sentido pedir pra avisar o paciente
+                de uma mudança que não aconteceu (achado da revisão). */}
             <p className="text-sm text-gray-400 mb-5">
-              {avisoEmpurrarSucesso} sessão(ões) seguinte(s) {avisoEmpurrarSucesso === 1 ? 'foi remarcada' : 'foram remarcadas'} pra
-              manter os 7 dias entre elas. Avise o paciente sobre as novas datas.
+              {avisoEmpurrarSucesso === 0
+                ? 'Não havia sessões seguintes neste pacote para mover. Nada foi alterado.'
+                : `${avisoEmpurrarSucesso} sessão(ões) seguinte(s) ${avisoEmpurrarSucesso === 1 ? 'foi remarcada' : 'foram remarcadas'} pra manter os 7 dias entre elas. Avise o paciente sobre as novas datas.`}
             </p>
             <button onClick={() => setAvisoEmpurrarSucesso(null)}
               className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
