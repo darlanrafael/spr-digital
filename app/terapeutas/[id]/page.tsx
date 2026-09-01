@@ -867,8 +867,18 @@ export default function PainelTerapeuta() {
     }
     for (const p of Object.values(map)) {
       const vendasDoPaciente = p.saleIds.map(sid => vendas[sid]).filter((v): v is SaleInfo => !!v)
-      p.bruto = vendasDoPaciente.reduce((a, v) => a + (v.valor_pago_cliente || 0), 0)
-      p.liquido = vendasDoPaciente.reduce((a, v) => a + (v.valor_liquido || 0), 0)
+      // O manual conta a SESSÃO, nunca o DINHEIRO — mesma regra do item 26 do
+      // spr-digital.md, aplicada em 10/08 no /api/terapeutas/dashboard e que
+      // tinha ficado de fora desta tela. Lançamento manual do módulo de
+      // terapeutas registra um atendimento de paciente que já tem a venda real
+      // gravada em outro lugar; somar os dois inflava o bruto por paciente
+      // (R$ 86.310 espalhados por 34 pacientes, medidos em 01/09/2026).
+      //
+      // As sessões continuam vindo de `p.sessoes`, que não é filtrado: o
+      // paciente lançado à mão segue aparecendo na agenda e no prontuário.
+      const vendasFaturamento = vendasDoPaciente.filter(v => !v.id.startsWith('manual_'))
+      p.bruto = vendasFaturamento.reduce((a, v) => a + (v.valor_pago_cliente || 0), 0)
+      p.liquido = vendasFaturamento.reduce((a, v) => a + (v.valor_liquido || 0), 0)
       p.dataCompraMaisRecente = vendasDoPaciente.length > 0
         ? [...vendasDoPaciente].sort((a, b) => b.data_hora.localeCompare(a.data_hora))[0].data_hora
         : ''
