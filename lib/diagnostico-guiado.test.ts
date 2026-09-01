@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO } from './diagnostico-guiado'
+import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo } from './diagnostico-guiado'
 
 const venda = (order_id: string | undefined, id = 'v1') => ({ id, order_id }) as never
 
@@ -75,4 +75,36 @@ test('numero_sessao vai de 1 a N, em ordem', () => {
 test('a primeira sessao cai exatamente na data pedida', () => {
   const p = montarPacote({ formato: F3, ...ARGS })
   assert.equal(p[0].data_agendada, '2026-09-08T14:00:00.000Z')
+})
+
+test('mover para menos de 7 dias da anterior quebra o intervalo', () => {
+  assert.equal(quebraIntervalo({
+    novaDataISO: '2026-09-10T14:00:00.000Z',
+    anteriorISO: '2026-09-08T14:00:00.000Z',
+  }), true)
+})
+
+test('exatamente 7 dias nao quebra', () => {
+  assert.equal(quebraIntervalo({
+    novaDataISO: '2026-09-15T14:00:00.000Z',
+    anteriorISO: '2026-09-08T14:00:00.000Z',
+  }), false)
+})
+
+test('mais de 7 dias nao quebra', () => {
+  assert.equal(quebraIntervalo({
+    novaDataISO: '2026-09-20T14:00:00.000Z',
+    anteriorISO: '2026-09-08T14:00:00.000Z',
+  }), false)
+})
+
+test('sem vizinhos nao ha o que quebrar', () => {
+  assert.equal(quebraIntervalo({ novaDataISO: '2026-09-10T14:00:00.000Z' }), false)
+})
+
+test('encostar na seguinte tambem quebra', () => {
+  assert.equal(quebraIntervalo({
+    novaDataISO: '2026-09-20T14:00:00.000Z',
+    seguinteISO: '2026-09-22T14:00:00.000Z',
+  }), true)
 })

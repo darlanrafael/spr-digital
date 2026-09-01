@@ -4,6 +4,7 @@ import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO, is
 import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
+import { quebraIntervalo } from '@/lib/diagnostico-guiado'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -57,6 +58,27 @@ export async function POST(req: NextRequest) {
   if (conflitos.length > 0) {
     return NextResponse.json({ error: mensagemConflito(conflitos), conflitos }, { status: 409 })
   }
+
+  // Aviso informativo sobre o intervalo de 7 dias do Diagnóstico Guiado, que
+  // vale pra qualquer produto porque a busca é só pelas vizinhas do mesmo
+  // sale_id: só quebra de fato quando o pacote segue essa regra. Não bloqueia
+  // nada, quem decide se mantém ou empurra as seguintes é o comercial, na
+  // tela. maybeSingle porque a primeira sessão não tem anterior e a última
+  // não tem seguinte.
+  const numeroSessaoAtual = sessao.numero_sessao as number
+  const [{ data: sessaoAnterior }, { data: sessaoSeguinte }] = await Promise.all([
+    client.from('sessoes').select('data_agendada')
+      .eq('sale_id', sessao.sale_id).eq('numero_sessao', numeroSessaoAtual - 1).maybeSingle(),
+    client.from('sessoes').select('data_agendada')
+      .eq('sale_id', sessao.sale_id).eq('numero_sessao', numeroSessaoAtual + 1).maybeSingle(),
+  ])
+  const avisoIntervalo = quebraIntervalo({
+    novaDataISO,
+    anteriorISO: sessaoAnterior?.data_agendada ?? undefined,
+    seguinteISO: sessaoSeguinte?.data_agendada ?? undefined,
+  })
+    ? 'Esta data deixa menos de 7 dias entre as sessões. Você pode manter assim ou empurrar as seguintes.'
+    : null
 
   // A tabela sessoes não tem coluna "observacoes" — motivo/histórico fica
   // só em ocorrencias_prontuario (inserido abaixo). Referenciar uma coluna
@@ -145,5 +167,5 @@ export async function POST(req: NextRequest) {
     dados_novos: { data_agendada: novaDataISO, status: 'agendada' },
   })
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ success: true, avisoIntervalo })
 }

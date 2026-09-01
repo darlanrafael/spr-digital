@@ -79,3 +79,23 @@ export function montarPacote(params: {
     }
   })
 }
+
+/**
+ * Diz se mover uma sessao para `novaDataISO` deixa menos de 7 dias entre ela e
+ * a sessao anterior ou a seguinte do mesmo pacote. Nao decide nada: quem decide
+ * e o comercial, na tela.
+ */
+export function quebraIntervalo(params: {
+  novaDataISO: string
+  anteriorISO?: string
+  seguinteISO?: string
+}): boolean {
+  const nova = new Date(params.novaDataISO).getTime()
+  if (params.anteriorISO) {
+    if (nova - new Date(params.anteriorISO).getTime() < SETE_DIAS_MS) return true
+  }
+  if (params.seguinteISO) {
+    if (new Date(params.seguinteISO).getTime() - nova < SETE_DIAS_MS) return true
+  }
+  return false
+}
