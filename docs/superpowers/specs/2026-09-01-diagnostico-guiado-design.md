@@ -54,12 +54,15 @@ O `preco_base` é estável hoje, mas cupom ou promoção o quebram.
 | Oferta | Formato |
 |---|---|
 | `WXwmPZfJxGqeXerA6dkO` | 1 |
+| `H8DA8U21x7Lmv3NreVMs` | 2 |
 | `qVvads7GKaI7lN1Kctrr` | 3 |
-| *a descobrir* | 2 |
 
 **Oferta desconhecida deste produto não vira palpite.** A venda fica pendente com
-um aviso pedindo a associação. O Formato 2 ainda não vendeu; na primeira venda o
-sistema pede o vínculo e o usuário associa uma vez.
+um aviso pedindo a associação.
+
+O produto tem uma quarta oferta, "Padrão" (`wd6AwMQIJGAekPCGCRsb`, R$ 10,00),
+que não corresponde a formato nenhum e **não é mapeada de propósito**. Compra por
+ela cai no aviso, em vez de montar um pacote errado.
 
 A tabela aceita **vários IDs por formato**: uma oferta nova (promoção, outra
 turma) nasce com ID diferente e precisa caber sem trocar código.
@@ -158,7 +161,5 @@ falha com o nome do paciente.
 - **Lançamento manual continua existindo.** Serve ao caso original (paciente que
   já estava em atendimento fora do sistema, 35 registros legados). Depois desta
   entrega ninguém precisa dele para o Diagnóstico, que era o uso indevido.
-- **ID da oferta do Formato 2**, que ainda não vendeu. O sistema pede o vínculo
-  na primeira venda.
 - **Os 19 pacientes com bruto R$ 0,00** na tela do terapeuta (item 35): efeito de
   lançamento manual sem venda real amarrada à sessão. Problema separado.

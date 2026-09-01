@@ -57,6 +57,15 @@ test('oferta desconhecida devolve null em vez de adivinhar', () => {
   assert.equal(formatoDaVenda(venda('11111111-2222-3333-4444-555555555555-OFERTANOVA')), null)
 })
 
+test('oferta Padrao de R$ 10,00 do mesmo produto nao vira pacote', () => {
+  assert.equal(formatoDaVenda(venda('11111111-2222-3333-4444-555555555555-wd6AwMQIJGAekPCGCRsb')), null)
+})
+
+test('oferta do Formato 2 devolve 4 sessoes, 1 do Pedro', () => {
+  const f = formatoDaVenda(venda('11111111-2222-3333-4444-555555555555-H8DA8U21x7Lmv3NreVMs'))
+  assert.deepEqual(f, { formato: 2, totalSessoes: 4, sessoesPedro: 1 })
+})
+
 test('lancamento manual nao tem order_id e devolve null', () => {
   assert.equal(formatoDaVenda(venda(undefined, 'manual_1788034875487_zrpmrz')), null)
 })
@@ -89,8 +98,13 @@ import type { Sale } from '@/types'
 // turma) nasce com ID diferente e precisa caber sem trocar codigo.
 export const OFERTAS_DIAGNOSTICO: Record<string, 1 | 2 | 3> = {
   WXwmPZfJxGqeXerA6dkO: 1,
+  H8DA8U21x7Lmv3NreVMs: 2,
   qVvads7GKaI7lN1Kctrr: 3,
 }
+
+// A oferta "Padrao" (wd6AwMQIJGAekPCGCRsb, R$ 10,00) existe no mesmo produto e
+// NAO e mapeada de proposito: nao corresponde a formato nenhum. Compra por ela
+// cai no aviso de oferta desconhecida em vez de montar um pacote errado.
 
 /** Regra do PRODUTO, nao da terapeuta: nos demais produtos a Denise segue com os 30%. */
 export const PAGAMENTO_DENISE_POR_SESSAO = 95
@@ -122,7 +136,7 @@ export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'>): FormatoDiag
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx tsx --test lib/diagnostico-guiado.test.ts`
-Expected: PASS, 5 testes
+Expected: PASS, 7 testes
 
 - [ ] **Step 5: Commit**
 
