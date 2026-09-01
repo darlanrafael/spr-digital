@@ -735,7 +735,7 @@ export default function PainelTerapeuta() {
           .ilike('produto', '%Diagnóstico Guiado%')
           .eq('status', 'aprovada')
           .not('id', 'like', 'manual_%')
-        // Mesmo corte de vendas_a_partir_de da consulta de cima — sem isso,
+        // Mesmo corte de vendas_a_partir_de da consulta de cima. Sem isso,
         // se o corte do Pedro for reajustado, uma venda do Diagnostico ja
         // encerrada volta a aparecer como pendente.
         if (terapeutaResp?.vendas_a_partir_de) {
