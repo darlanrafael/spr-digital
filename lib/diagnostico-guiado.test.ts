@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatoDaVenda } from './diagnostico-guiado'
+import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO } from './diagnostico-guiado'
 
 const venda = (order_id: string | undefined, id = 'v1') => ({ id, order_id }) as never
 
@@ -34,4 +34,45 @@ test('lancamento manual nao tem order_id e devolve null', () => {
 test('venda da Juliane (real, Formato 3)', () => {
   const f = formatoDaVenda(venda('347281e4-f007-44ac-9264-e41da730b2e4-qVvads7GKaI7lN1Kctrr'))
   assert.equal(f?.formato, 3)
+})
+
+const F1 = { formato: 1 as const, totalSessoes: 9, sessoesPedro: 2 }
+const F3 = { formato: 3 as const, totalSessoes: 2, sessoesPedro: 1 }
+const ARGS = { primeiraDataISO: '2026-09-08T14:00:00.000Z', pedroId: 'PEDRO', deniseId: 'DENISE' }
+
+test('Formato 1: 9 sessoes, as duas primeiras do Pedro', () => {
+  const p = montarPacote({ formato: F1, ...ARGS })
+  assert.equal(p.length, 9)
+  assert.deepEqual(p.map(s => s.terapeuta_id), ['PEDRO','PEDRO','DENISE','DENISE','DENISE','DENISE','DENISE','DENISE','DENISE'])
+})
+
+test('Formato 3: uma sessao para cada, Pedro primeiro', () => {
+  const p = montarPacote({ formato: F3, ...ARGS })
+  assert.deepEqual(p.map(s => s.terapeuta_id), ['PEDRO','DENISE'])
+})
+
+test('7 dias entre todas, inclusive na virada de terapeuta', () => {
+  const p = montarPacote({ formato: F1, ...ARGS })
+  const SETE = 7 * 24 * 60 * 60 * 1000
+  for (let i = 1; i < p.length; i++) {
+    const dif = new Date(p[i].data_agendada).getTime() - new Date(p[i-1].data_agendada).getTime()
+    assert.equal(dif, SETE, `intervalo errado entre a sessao ${i} e a ${i+1}`)
+  }
+})
+
+test('a Denise recebe R$ 95 por sessao dela e o Pedro zero', () => {
+  const p = montarPacote({ formato: F1, ...ARGS })
+  assert.deepEqual(p.filter(s => s.terapeuta_id === 'PEDRO').map(s => s.comissao_valor), [0, 0])
+  assert.equal(p.filter(s => s.terapeuta_id === 'DENISE').every(s => s.comissao_valor === PAGAMENTO_DENISE_POR_SESSAO), true)
+  assert.equal(p.reduce((a, s) => a + s.comissao_valor, 0), 7 * 95)
+})
+
+test('numero_sessao vai de 1 a N, em ordem', () => {
+  const p = montarPacote({ formato: F1, ...ARGS })
+  assert.deepEqual(p.map(s => s.numero_sessao), [1,2,3,4,5,6,7,8,9])
+})
+
+test('a primeira sessao cai exatamente na data pedida', () => {
+  const p = montarPacote({ formato: F3, ...ARGS })
+  assert.equal(p[0].data_agendada, '2026-09-08T14:00:00.000Z')
 })

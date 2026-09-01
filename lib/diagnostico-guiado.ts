@@ -45,3 +45,37 @@ export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'>): FormatoDiag
   if (!formato) return null
   return { formato, ...SESSOES_POR_FORMATO[formato] }
 }
+
+export type SessaoDoPacote = {
+  numero_sessao: number
+  terapeuta_id: string
+  data_agendada: string
+  comissao_valor: number
+}
+
+const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * Monta o pacote inteiro a partir de UMA data. O Pedro sempre comeca; a Denise
+ * pega o restante. Os 7 dias valem entre todas as sessoes, inclusive na virada
+ * de um terapeuta para o outro.
+ */
+export function montarPacote(params: {
+  formato: FormatoDiagnostico
+  primeiraDataISO: string
+  pedroId: string
+  deniseId: string
+}): SessaoDoPacote[] {
+  const { formato, primeiraDataISO, pedroId, deniseId } = params
+  const inicio = new Date(primeiraDataISO).getTime()
+
+  return Array.from({ length: formato.totalSessoes }, (_, i) => {
+    const doPedro = i < formato.sessoesPedro
+    return {
+      numero_sessao: i + 1,
+      terapeuta_id: doPedro ? pedroId : deniseId,
+      data_agendada: new Date(inicio + i * SETE_DIAS_MS).toISOString(),
+      comissao_valor: doPedro ? 0 : PAGAMENTO_DENISE_POR_SESSAO,
+    }
+  })
+}
