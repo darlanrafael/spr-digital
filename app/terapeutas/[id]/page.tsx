@@ -21,6 +21,7 @@ import { fimEfetivoSessao } from '@/lib/agenda-horarios'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -68,6 +69,11 @@ type SaleInfo = {
   valor_liquido: number
   data_hora: string
   status: string | null
+  // Precisa vir em toda consulta que popular SaleInfo — sem order_id,
+  // formatoDaVenda() nunca reconhece um pacote do Diagnostico Guiado e a
+  // etiqueta simplesmente nunca aparece, sem erro nenhum. Tipo igual ao de
+  // Sale ('@/types'): opcional sem null, pra formatoDaVenda() aceitar direto.
+  order_id?: string
 }
 
 type Ocorrencia = {
@@ -165,6 +171,9 @@ type ConsultaHoje = {
   status: string
   status_consulta: string
   iniciado_em: string | null
+  // Preenchido só quando a sessão faz parte de um pacote do Diagnóstico
+  // Guiado; null pra sessão avulsa.
+  rotulo_diagnostico?: string | null
   // Só preenchidos no quadrante "Consultas Entregues (hoje)" — os outros
   // dois quadrantes usam o mesmo tipo e nunca trazem sessão entregue.
   data_entrega?: string | null
@@ -233,6 +242,18 @@ function parseValorBR(val: string): number {
 function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+// Etiqueta do Diagnóstico Guiado pra uma linha que representa o PACIENTE
+// inteiro (aba Vendas: Pendentes/Ativos/Concluídos/Reembolsados), não uma
+// sessão isolada — mostra a posição atual do pacote (próxima sessão a
+// entregar, ou a última quando já concluído).
+function rotuloDiagnosticoAgregado(sale: SaleInfo | undefined, entregues: number, total: number): string | null {
+  if (!sale) return null
+  const formato = formatoDaVenda(sale)
+  if (!formato) return null
+  const totalSessoes = total || formato.totalSessoes
+  const numeroSessao = Math.min(entregues + 1, totalSessoes)
+  return rotuloDiagnostico({ formato: formato.formato, numeroSessao, totalSessoes })
 }
 const FECHAMENTO_SESSOES_PAGE_SIZE = 12
 function exportFechamentoCSV(f: FechamentoHistorico) {
@@ -599,8 +620,11 @@ export default function PainelTerapeuta() {
     const saleIds = [...new Set(sessoesTodas.map(s => s.sale_id))]
     const vendasMap: Record<string, SaleInfo> = {}
     if (saleIds.length > 0) {
+      // order_id entra no select por causa da etiqueta do Diagnostico Guiado:
+      // sem ele, formatoDaVenda() (usado no prontuário e na aba Vendas) nunca
+      // reconhece o pacote e a etiqueta nunca aparece, sem erro nenhum.
       const { data: vendasData } = await client
-        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status').in('id', saleIds)
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id').in('id', saleIds)
       for (const v of (vendasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
     }
     setVendas(vendasMap)
@@ -1594,6 +1618,11 @@ export default function PainelTerapeuta() {
                                       {s.paciente_nome}
                                     </button>
                                     <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                    {s.rotulo_diagnostico && (
+                                      <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                        {s.rotulo_diagnostico}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs px-2 py-0.5 rounded-full text-amber-300 bg-amber-500/15">
@@ -1654,6 +1683,11 @@ export default function PainelTerapeuta() {
                                     <td className="px-4 py-3 text-white">
                                       {s.paciente_nome}
                                       <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                      {s.rotulo_diagnostico && (
+                                        <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                          {s.rotulo_diagnostico}
+                                        </span>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3">
                                       <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
@@ -1737,6 +1771,11 @@ export default function PainelTerapeuta() {
                                       {s.paciente_nome}
                                     </button>
                                     <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                    {s.rotulo_diagnostico && (
+                                      <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                        {s.rotulo_diagnostico}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs px-2 py-0.5 rounded-full text-green-500 bg-green-500/10">
@@ -1798,6 +1837,11 @@ export default function PainelTerapeuta() {
                                         {s.paciente_nome}
                                       </button>
                                       <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                      {s.rotulo_diagnostico && (
+                                        <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                          {s.rotulo_diagnostico}
+                                        </span>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3">
                                       <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
@@ -1890,12 +1934,22 @@ export default function PainelTerapeuta() {
                         <tbody>
                           {pacientesPendentesAgrupados.length === 0 ? (
                             <tr><td colSpan={isTerapeutaSession ? 6 : 7} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhuma venda pendente de agendamento</td></tr>
-                          ) : pacientesPendentesAgrupados.map(p => (
+                          ) : pacientesPendentesAgrupados.map(p => {
+                            // Pacote ainda não agendado: nenhuma sessão entregue,
+                            // então a etiqueta mostra sempre "sessão 1 de N".
+                            const saleDiag = vendasPendentes.find(v => p.saleIds.includes(v.id) && formatoDaVenda(v))
+                            const rotulo = rotuloDiagnosticoAgregado(saleDiag, 0, 0)
+                            return (
                             <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                               <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
                               <td className="px-4 py-3">
                                 <p className="text-white font-medium">{p.nome}</p>
                                 <p className="text-xs text-gray-500">{p.email}</p>
+                                {rotulo && (
+                                  <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                    {rotulo}
+                                  </span>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{p.produtos.join(' + ')}</td>
                               <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.qtdVendas > 1 ? `${p.qtdVendas} vendas` : '1 venda'}</td>
@@ -1914,7 +1968,8 @@ export default function PainelTerapeuta() {
                                 </td>
                               )}
                             </tr>
-                          ))}
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1938,12 +1993,19 @@ export default function PainelTerapeuta() {
                           ) : (vendasSubTab === 'ativos' ? pacientesAtivos : pacientesConcluidos).map(p => {
                             const progresso = p.total > 0 ? Math.min((p.entregues / p.total) * 100, 100) : 0
                             const concluido = p.entregues === p.total && p.total > 0
+                            const saleDiag = p.saleIds.map(sid => vendas[sid]).find(v => v && formatoDaVenda(v))
+                            const rotulo = rotuloDiagnosticoAgregado(saleDiag, p.entregues, p.total)
                             return (
                               <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
                                 <td className="px-4 py-3">
                                   <p className="text-white font-medium">{p.nome}</p>
                                   <p className="text-xs text-gray-500">{p.email}</p>
+                                  {rotulo && (
+                                    <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                      {rotulo}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-gray-300">{p.total}</td>
                                 <td className="px-4 py-3 text-green-500 font-medium">{p.entregues}</td>
@@ -1990,12 +2052,20 @@ export default function PainelTerapeuta() {
                           ) : vendasReembolsadas.map(sale => {
                             const sessoesVenda = sessoes.filter(s => s.sale_id === sale.id)
                             const canceladas = sessoesVenda.filter(s => s.status === 'cancelada').length
+                            const entreguesVenda = sessoesVenda.filter(s => s.status === 'entregue').length
+                            const totalVenda = sessoesVenda[0]?.total_sessoes ?? 0
+                            const rotulo = rotuloDiagnosticoAgregado(sale, entreguesVenda, totalVenda)
                             return (
                               <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(sale.data_hora)}</td>
                                 <td className="px-4 py-3">
                                   <p className="text-white font-medium">{sale.nome}</p>
                                   <p className="text-xs text-gray-500">{sale.email}</p>
+                                  {rotulo && (
+                                    <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                      {rotulo}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate">{sale.produto}</td>
                                 <td className="px-4 py-3 text-red-400 whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
@@ -2399,6 +2469,10 @@ export default function PainelTerapeuta() {
                   ) : prontuarioSessoesOrdenadas.map(s => {
                     const badge = STATUS_LABEL[s.status] ?? { label: s.status, color: 'text-gray-400 bg-gray-400/10' }
                     const remarcacoesSessao = remarcacoes[s.id] ?? []
+                    // Diagnóstico Guiado é um pacote dividido entre dois
+                    // terapeutas — quem lê o prontuário precisa saber que essa
+                    // sessão não é avulsa, é parte de um bloco maior.
+                    const formatoSessao = formatoDaVenda(vendas[s.sale_id] ?? { id: s.sale_id, order_id: undefined })
                     return (
                       <div key={s.id} className="bg-gray-800/40 border border-white/5 rounded-xl p-4">
                         <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -2406,6 +2480,11 @@ export default function PainelTerapeuta() {
                           <span className={`text-[11px] px-2 py-0.5 rounded-full ${badge.color}`}>{badge.label}</span>
                           {s.numero_sessao === s.total_sessoes && (
                             <span className="text-[10px] text-red-400 border border-red-400/30 px-1.5 py-0.5 rounded">Última sessão</span>
+                          )}
+                          {formatoSessao && (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                              {rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })}
+                            </span>
                           )}
                         </div>
 

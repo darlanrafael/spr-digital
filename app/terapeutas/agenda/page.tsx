@@ -5,6 +5,8 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import { getSupabaseClient } from '@/lib/supabase'
+import { formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -43,6 +45,10 @@ export default function TerapeutasAgenda() {
   const [filtroTerapeuta, setFiltroTerapeuta] = useState('')
   const [detalhe, setDetalhe] = useState<Sessao | null>(null)
   const [loading, setLoading] = useState(true)
+  // Formato do Diagnostico Guiado por sale_id, pra identificar na agenda
+  // quais sessoes fazem parte de um pacote. So existe pra quem comprou
+  // Diagnostico; sessao avulsa nao entra aqui.
+  const [formatoPorSale, setFormatoPorSale] = useState<Record<string, 1 | 2 | 3>>({})
 
   useEffect(() => {
     async function load() {
@@ -72,12 +78,21 @@ export default function TerapeutasAgenda() {
       for (const t of terapeutasData) cortePorTerapeuta[t.id] = t.vendas_a_partir_de
       const saleIds = [...new Set(sessoesData.map(s => s.sale_id))]
       const dataHoraPorSale: Record<string, string> = {}
+      // order_id vai junto nesta mesma busca — sem ele formatoDaVenda() nunca
+      // reconhece um pacote do Diagnostico Guiado e a etiqueta nunca aparece,
+      // sem erro nenhum (lição da Task 5: consulta que passa em tsc/build mas
+      // fica muda contra o banco).
+      const formatoPorSaleNovo: Record<string, 1 | 2 | 3> = {}
       if (saleIds.length > 0) {
         const BATCH = 200
         for (let i = 0; i < saleIds.length; i += BATCH) {
           const batch = saleIds.slice(i, i + BATCH)
-          const { data } = await client.from('sales').select('id,data_hora').in('id', batch)
-          for (const v of (data ?? []) as { id: string; data_hora: string }[]) dataHoraPorSale[v.id] = v.data_hora
+          const { data } = await client.from('sales').select('id,data_hora,order_id').in('id', batch)
+          for (const v of (data ?? []) as { id: string; data_hora: string; order_id?: string }[]) {
+            dataHoraPorSale[v.id] = v.data_hora
+            const formato = formatoDaVenda(v)
+            if (formato) formatoPorSaleNovo[v.id] = formato.formato
+          }
         }
       }
       const sessoesFiltradasPorCorte = sessoesData.filter(s => {
@@ -89,6 +104,7 @@ export default function TerapeutasAgenda() {
 
       setSessoes(sessoesFiltradasPorCorte)
       setTerapeutas(terapeutasData)
+      setFormatoPorSale(formatoPorSaleNovo)
       setLoading(false)
     }
     load()
@@ -177,12 +193,20 @@ export default function TerapeutasAgenda() {
                           isHoje ? 'bg-indigo-600 text-white' : 'text-gray-400'
                         }`}>{dia}</span>
                         <div className="space-y-0.5">
-                          {ss.slice(0, 3).map(s => (
-                            <button key={s.id} onClick={() => setDetalhe(s)}
-                              className="w-full text-left text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 truncate transition-colors">
-                              {s.data_agendada ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''} {s.paciente_nome.split(' ')[0]}
-                            </button>
-                          ))}
+                          {ss.slice(0, 3).map(s => {
+                            const formato = formatoPorSale[s.sale_id]
+                            return (
+                              <button key={s.id} onClick={() => setDetalhe(s)}
+                                title={formato ? rotuloDiagnostico({ formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes }) : undefined}
+                                className={`w-full text-left text-[10px] px-1.5 py-0.5 rounded truncate transition-colors ${
+                                  formato
+                                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40 hover:bg-violet-500/30'
+                                    : 'bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30'
+                                }`}>
+                                {s.data_agendada ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''} {s.paciente_nome.split(' ')[0]}
+                              </button>
+                            )
+                          })}
                           {ss.length > 3 && (
                             <span className="text-[10px] text-gray-500">+{ss.length - 3} mais</span>
                           )}
@@ -206,6 +230,15 @@ export default function TerapeutasAgenda() {
               <button onClick={() => setDetalhe(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3 text-sm">
+              {formatoPorSale[detalhe.sale_id] && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                  {rotuloDiagnostico({
+                    formato: formatoPorSale[detalhe.sale_id],
+                    numeroSessao: detalhe.numero_sessao,
+                    totalSessoes: detalhe.total_sessoes,
+                  })}
+                </span>
+              )}
               <Row label="Paciente" value={detalhe.paciente_nome} />
               <Row label="Email" value={detalhe.paciente_email} />
               <Row label="Terapeuta" value={(detalhe.terapeutas as { nome: string } | null)?.nome ?? '—'} />

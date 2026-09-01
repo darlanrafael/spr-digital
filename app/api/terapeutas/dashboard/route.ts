@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 
 type SaleRow = {
   id: string
@@ -42,6 +44,7 @@ function saleAliquota(v: SaleRow): number {
 
 type SessaoHojeRow = {
   id: string
+  sale_id: string
   data_agendada: string | null
   paciente_nome: string
   paciente_email: string
@@ -73,8 +76,10 @@ function duracaoConsulta(iniciadoEm: string | null, concluidoEm: string | null):
 // Colunas comuns aos três quadrantes do Overview (hoje / entregues hoje /
 // próximas) — o mapper é compartilhado, então todas as queries precisam
 // trazer o mesmo conjunto, senão um quadrante devolve campo undefined.
+// sale_id entra aqui só pra buscar o order_id da venda depois (etiqueta do
+// Diagnóstico Guiado) — não aparece em nenhuma coluna da tela.
 const COLUNAS_SESSAO_QUADRANTE =
-  'id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,' +
+  'id,sale_id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,' +
   'link_meet,status,status_consulta,iniciado_em,concluido_em,data_entrega,' +
   'entregue_confirmado_por,terapeuta_id,terapeutas(nome)'
 
@@ -493,9 +498,38 @@ export async function GET(req: NextRequest) {
       hojeQ, proximasQ, entreguesAgendadasHojeQ, entreguesConfirmadasHojeQ, atrasadasQ,
     ])
 
+    // Etiqueta do Diagnóstico Guiado nos quatro quadrantes de atendimento.
+    // O order_id mora na venda, não na sessão — busca à parte pelos sale_id
+    // de tudo que veio nas cinco queries acima. Sem isso formatoDaVenda()
+    // nunca reconhece o pacote e a etiqueta some da tela sem erro nenhum
+    // (mesma armadilha que já pegou as Tasks 4 e 5 deste plano).
+    const saleIdsQuadrantes = [...new Set([
+      ...((hojeData ?? []) as unknown as SessaoHojeRow[]),
+      ...((proximasData ?? []) as unknown as SessaoHojeRow[]),
+      ...((entreguesAgendadasData ?? []) as unknown as SessaoHojeRow[]),
+      ...((entreguesConfirmadasData ?? []) as unknown as SessaoHojeRow[]),
+      ...((atrasadasData ?? []) as unknown as SessaoHojeRow[]),
+    ].map(s => s.sale_id))]
+    const formatoPorSaleQuadrante = new Map<string, 1 | 2 | 3>()
+    if (saleIdsQuadrantes.length > 0) {
+      const BATCH = 200
+      for (let i = 0; i < saleIdsQuadrantes.length; i += BATCH) {
+        const batch = saleIdsQuadrantes.slice(i, i + BATCH)
+        const { data } = await supabase.from('sales').select('id,order_id').in('id', batch)
+        for (const v of (data ?? []) as { id: string; order_id?: string }[]) {
+          const formato = formatoDaVenda(v)
+          if (formato) formatoPorSaleQuadrante.set(v.id, formato.formato)
+        }
+      }
+    }
+
     function mapSessaoHoje(s: SessaoHojeRow) {
+      const formatoDiagnostico = formatoPorSaleQuadrante.get(s.sale_id)
       return {
         id: s.id,
+        rotulo_diagnostico: formatoDiagnostico
+          ? rotuloDiagnostico({ formato: formatoDiagnostico, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })
+          : null,
         horario: s.data_agendada
           ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', {
               hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',

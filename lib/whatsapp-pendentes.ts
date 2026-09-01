@@ -1,5 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { normalizarTelefoneBR } from './terapeutas-auth'
+import { formatoDaVenda } from './diagnostico-guiado'
+import { rotuloDiagnostico } from './etiqueta-diagnostico'
 
 export type SessaoPendenteWhatsapp = {
   sessao_id: string
@@ -7,6 +9,10 @@ export type SessaoPendenteWhatsapp = {
   paciente_telefone: string | null
   numero_sessao: number
   total_sessoes: number
+  // Etiqueta do Diagnóstico Guiado (null pra sessão avulsa). Fica antes de
+  // data_agendada de propósito — o n8n monta o texto do lembrete nesta
+  // ordem, com a etiqueta antes do horário.
+  rotulo_diagnostico: string | null
   data_agendada: string
   link_meet: string | null
   grupo_ja_enviado: boolean
@@ -75,12 +81,18 @@ export async function buscarPendentes(
   const saleIds = [...new Set(linhas.map(s => s.sale_id))]
   const telefonePorSale: Record<string, string | null> = {}
   const dataHoraPorSale: Record<string, string> = {}
+  // order_id entra no select por causa da etiqueta do Diagnóstico Guiado:
+  // sem ele formatoDaVenda() nunca reconhece o pacote e o lembrete de
+  // WhatsApp nunca mostra a etiqueta, sem erro nenhum.
+  const formatoPorSale: Record<string, 1 | 2 | 3> = {}
   if (saleIds.length > 0) {
-    const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora').in('id', saleIds)
+    const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora,order_id').in('id', saleIds)
     if (salesErr) throw new Error(salesErr.message)
     for (const s of sales ?? []) {
       telefonePorSale[s.id as string] = normalizarTelefoneBR(s.telefone as string | null)
       dataHoraPorSale[s.id as string] = s.data_hora as string
+      const formato = formatoDaVenda({ id: s.id as string, order_id: (s.order_id as string | null) ?? undefined })
+      if (formato) formatoPorSale[s.id as string] = formato.formato
     }
   }
 
@@ -129,12 +141,16 @@ export async function buscarPendentes(
         sessoes: [],
       }
     }
+    const formatoSessao = formatoPorSale[s.sale_id]
     porTerapeuta[s.terapeuta_id].sessoes.push({
       sessao_id: s.id,
       paciente_nome: s.paciente_nome,
       paciente_telefone: telefonePorSale[s.sale_id] ?? null,
       numero_sessao: s.numero_sessao,
       total_sessoes: s.total_sessoes,
+      rotulo_diagnostico: formatoSessao
+        ? rotuloDiagnostico({ formato: formatoSessao, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })
+        : null,
       data_agendada: s.data_agendada,
       link_meet: s.link_meet,
       grupo_ja_enviado: !!s[params.colGrupo],
