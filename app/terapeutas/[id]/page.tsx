@@ -683,11 +683,26 @@ export default function PainelTerapeuta() {
       // por nome nunca o encontra. Ele aparece so na tela do Pedro, que sempre
       // comeca o pacote; agendar dali cria as sessoes dos dois.
       if (primeiroNome.toLowerCase() === 'pedro') {
-        const { data: diag } = await client
+        // O filtro por nome do produto aqui e so pre-filtro de desempenho e
+        // para escapar do corte de 1000 linhas do PostgREST (a tabela sales
+        // tem quase 10 mil vendas aprovadas nao-manuais; sem esse filtro a
+        // consulta vinha truncada e podia nao trazer nenhuma venda do
+        // Diagnostico). Quem decide o formato de verdade e o formatoDaVenda,
+        // pela oferta, porque os tres formatos do Diagnostico tem produto com
+        // nome identico.
+        let diagQuery = client
           .from('sales')
           .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id')
+          .ilike('produto', '%Diagnóstico Guiado%')
           .eq('status', 'aprovada')
           .not('id', 'like', 'manual_%')
+        // Mesmo corte de vendas_a_partir_de da consulta de cima — sem isso,
+        // se o corte do Pedro for reajustado, uma venda do Diagnostico ja
+        // encerrada volta a aparecer como pendente.
+        if (terapeutaResp?.vendas_a_partir_de) {
+          diagQuery = diagQuery.gte('data_hora', terapeutaResp.vendas_a_partir_de)
+        }
+        const { data: diag } = await diagQuery
         for (const v of (diag ?? []) as (SaleInfo & { order_id?: string })[]) {
           if (!formatoDaVenda(v)) continue
           if (saleIds.includes(v.id)) continue
