@@ -4,6 +4,8 @@ import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, 
 import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
+import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
+import { buscarConflitosMultiTerapeuta } from '@/lib/agenda-conflitos'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -36,13 +38,36 @@ export async function POST(req: NextRequest) {
 
   const client = getSupabaseAdmin()
 
+  // order_id entra na selecao so pra alimentar formatoDaVenda logo abaixo: os
+  // demais produtos nunca leem esse campo, entao acrescenta-lo aqui nao muda
+  // nada do caminho antigo.
   const { data: sale, error: saleErr } = await client
-    .from('sales').select('id,nome,email,telefone,produto,valor_liquido').eq('id', sale_id).single()
+    .from('sales').select('id,nome,email,telefone,produto,valor_liquido,order_id').eq('id', sale_id).single()
   if (saleErr || !sale) return NextResponse.json({ error: 'Venda não encontrada' }, { status: 404 })
 
   const { data: terapeuta, error: terapErr } = await client
     .from('terapeutas').select('id,percentual_comissao,grupo_whatsapp_id').eq('id', terapeuta_id).single()
   if (terapErr || !terapeuta) return NextResponse.json({ error: 'Terapeuta não encontrado' }, { status: 404 })
+
+  // Diagnostico Guiado: pacote com dois terapeutas. Detectado pela oferta.
+  const diagnostico = formatoDaVenda(sale as { id: string; order_id?: string })
+  let pedroId: string | null = null
+  let deniseId: string | null = null
+  if (diagnostico) {
+    const { data: ativos } = await client
+      .from('terapeutas').select('id,nome').eq('ativo', true)
+    for (const t of (ativos ?? []) as { id: string; nome: string }[]) {
+      const n = t.nome.toLowerCase()
+      if (n.includes('pedro')) pedroId = t.id
+      if (n.includes('denise')) deniseId = t.id
+    }
+    if (!pedroId || !deniseId) {
+      return NextResponse.json(
+        { error: 'Diagnostico Guiado precisa do Pedro e da Denise ativos como terapeutas.' },
+        { status: 409 },
+      )
+    }
+  }
 
   // O nome do produto nem sempre indica o pacote real (ex: "Mentoria Particular -
   // Pedro | Denise" é usado pra pacotes de 1/2/4/8 sessões sem diferenciação no
@@ -71,11 +96,25 @@ export async function POST(req: NextRequest) {
   // Trava de conflito ANTES de apagar qualquer coisa: um conflito no meio do
   // pacote não pode destruir o agendamento que já existia. Ignora as sessões
   // da própria venda, que são justamente as que serão recriadas logo abaixo.
-  const datasPedidas = Array.from({ length: numSessoes }, (_, i) =>
-    datasExplicitas ? datasExplicitas[i] : new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString())
-  const conflitos = await buscarConflitosAgenda({
-    terapeuta_id, datasISO: datasPedidas, ignorarSaleId: sale_id,
-  })
+  // primeiraDataMs já passou por brasiliaLocalToISO acima: usar
+  // data_primeira_sessao crua aqui reincidiria no mesmo bug que esse
+  // tratamento existe pra evitar (ambiguidade de fuso dependente do
+  // runtime do servidor).
+  const pacote = diagnostico
+    ? montarPacote({ formato: diagnostico, primeiraDataISO: new Date(primeiraDataMs).toISOString(), pedroId: pedroId!, deniseId: deniseId! })
+    : null
+
+  const conflitos = pacote
+    ? await buscarConflitosMultiTerapeuta({
+        itens: pacote.map(s => ({ terapeuta_id: s.terapeuta_id, dataISO: s.data_agendada })),
+        ignorarSaleId: sale_id,
+      })
+    : await buscarConflitosAgenda({
+        terapeuta_id,
+        datasISO: Array.from({ length: numSessoes }, (_, i) =>
+          datasExplicitas ? datasExplicitas[i] : new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString()),
+        ignorarSaleId: sale_id,
+      })
   if (conflitos.length > 0) {
     // Pacote inteiro recusado, nada criado: agendar só parte deixaria o
     // paciente com um pacote incompleto que alguém precisa lembrar de fechar.
@@ -86,25 +125,36 @@ export async function POST(req: NextRequest) {
   await client.from('sessoes').delete()
     .eq('sale_id', sale_id)
     .in('status', ['pendente', 'agendada', 'remarcada'])
-  const sessoes = Array.from({ length: numSessoes }, (_, i) => {
-    return {
-      sale_id,
-      terapeuta_id,
-      numero_sessao: i + 1,
-      total_sessoes: numSessoes,
-      status: 'agendada',
-      status_consulta: 'aguardando',
-      data_agendada: datasExplicitas ? datasExplicitas[i] : new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString(),
-      link_meet: null,
-      comissao_valor: comissao_por_sessao,
-      comissao_paga: false,
-      paciente_nome: sale.nome as string,
-      paciente_email: sale.email as string,
-      agendado_por: (usuario as Record<string, unknown>)?.nome as string ?? usuario_email,
-      vendedor_nome: (usuario as Record<string, unknown>)?.nome as string ?? usuario_email,
-      vendedor_email: usuario_email,
-    }
-  })
+  const base = {
+    sale_id,
+    status: 'agendada',
+    status_consulta: 'aguardando',
+    link_meet: null,
+    comissao_paga: false,
+    paciente_nome: sale.nome as string,
+    paciente_email: sale.email as string,
+    agendado_por: (usuario as Record<string, unknown>)?.nome as string ?? usuario_email,
+    vendedor_nome: (usuario as Record<string, unknown>)?.nome as string ?? usuario_email,
+    vendedor_email: usuario_email,
+  }
+
+  const sessoes = pacote
+    ? pacote.map(s => ({
+        ...base,
+        terapeuta_id: s.terapeuta_id,
+        numero_sessao: s.numero_sessao,
+        total_sessoes: pacote.length,
+        data_agendada: s.data_agendada,
+        comissao_valor: s.comissao_valor,
+      }))
+    : Array.from({ length: numSessoes }, (_, i) => ({
+        ...base,
+        terapeuta_id,
+        numero_sessao: i + 1,
+        total_sessoes: numSessoes,
+        data_agendada: datasExplicitas ? datasExplicitas[i] : new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString(),
+        comissao_valor: comissao_por_sessao,
+      }))
 
   const { error: insertErr } = await client.from('sessoes').insert(sessoes)
   if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
