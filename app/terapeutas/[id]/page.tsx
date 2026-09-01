@@ -429,6 +429,21 @@ export default function PainelTerapeuta() {
   const [remarcarErro, setRemarcarErro] = useState('')
   const [remarcarLoading, setRemarcarLoading] = useState(false)
 
+  // Aviso de intervalo quebrado (Diagnóstico Guiado) - populado pelas duas
+  // rotas de remarcar (modal rápido da Agenda e formulário de Ocorrências do
+  // prontuário) quando a API acusa menos de 7 dias entre sessões do mesmo
+  // pacote. Guarda o nome do paciente pra deixar claro no modal de quem se
+  // trata; a decisão (manter ou empurrar as seguintes) é do comercial.
+  const [avisoRemarcacao, setAvisoRemarcacao] = useState<{
+    sessaoId: string
+    paciente: string
+    mensagem: string
+  } | null>(null)
+  const [avisoEmpurrarSenhaOpen, setAvisoEmpurrarSenhaOpen] = useState(false)
+  const [avisoEmpurrarErro, setAvisoEmpurrarErro] = useState('')
+  const [avisoEmpurrarLoading, setAvisoEmpurrarLoading] = useState(false)
+  const [avisoEmpurrarSucesso, setAvisoEmpurrarSucesso] = useState<number | null>(null)
+
   // Visão terapeuta — tabs de página. Fica na URL (?tab=) pra sobreviver a
   // um refresh da página em vez de sempre voltar pra "overview".
   const [terapeutaTab, setTerapeutaTabState] = useState<TerapeutaTabType>(() => {
@@ -1117,6 +1132,14 @@ export default function PainelTerapeuta() {
     const json = await res.json()
     setRemarcarLoading(false)
     if (!res.ok) { setRemarcarErro(json.error ?? 'Erro'); return }
+    // Guarda o aviso de intervalo (se vier) antes de zerar remarcarSessaoId -
+    // é a chance de oferecer as duas saídas ao comercial. `sessoes` ainda tem
+    // a lista antiga (loadData é assíncrono e roda depois), então o paciente
+    // certo ainda está lá pelo id.
+    if (json.avisoIntervalo) {
+      const paciente = sessoes.find(s => s.id === remarcarSessaoId)?.paciente_nome ?? ''
+      setAvisoRemarcacao({ sessaoId: remarcarSessaoId, paciente, mensagem: json.avisoIntervalo })
+    }
     setRemarcarSenhaModal(false)
     setRemarcarSessaoId(null)
     loadData()
@@ -1174,8 +1197,40 @@ export default function PainelTerapeuta() {
     const json = await res.json()
     setRemLoading(false)
     if (!res.ok) { setRemErro(json.error ?? 'Erro'); return }
+    // Mesmo aviso de intervalo do handleRemarcar acima - aqui o paciente é
+    // sempre o do prontuário aberto, então não precisa buscar em lista nenhuma.
+    if (json.avisoIntervalo) {
+      setAvisoRemarcacao({ sessaoId: remSessaoId, paciente: prontuarioSaleMaisRecente?.nome ?? '', mensagem: json.avisoIntervalo })
+    }
     setRemSenhaOpen(false); setOcorrenciaTipo(null)
     setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
+    loadData()
+  }
+
+  // Segunda decisão do fluxo de remarcação do Diagnóstico Guiado: o comercial
+  // escolheu empurrar as sessões seguintes do pacote pra manter os 7 dias
+  // entre elas (rota da Task 9). Pede senha de novo porque é uma ação de
+  // agendamento própria - a senha digitada na remarcação não sobrevive ao
+  // fechamento daquele modal, e o token sozinho só autentica quem tem
+  // dispensa_senha_nas_acoes ligado (hoje, só o Pedro).
+  async function handleEmpurrarSeguintes(senha: string) {
+    if (!avisoRemarcacao) return
+    setAvisoEmpurrarLoading(true)
+    setAvisoEmpurrarErro('')
+    const res = await fetch('/api/terapeutas/sessoes/empurrar-seguintes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessao_id: avisoRemarcacao.sessaoId, usuario_email: adminEmail, senha, token: sessionToken }),
+    })
+    const json = await res.json()
+    setAvisoEmpurrarLoading(false)
+    // Conflito (409) chega com mensagem pronta dizendo qual data bateu em
+    // qual paciente. Nada foi alterado nesse caso - o comercial pode fechar
+    // e escolher manter como está.
+    if (!res.ok) { setAvisoEmpurrarErro(json.error ?? 'Não foi possível empurrar as seguintes.'); return }
+    setAvisoEmpurrarSenhaOpen(false)
+    setAvisoRemarcacao(null)
+    setAvisoEmpurrarSucesso(json.movidas)
     loadData()
   }
 
@@ -3172,6 +3227,72 @@ export default function PainelTerapeuta() {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Aviso de intervalo do Diagnóstico Guiado - aparece assim que uma
+          remarcação deixa menos de 7 dias até a sessão vizinha do pacote.
+          Sem restrição extra de papel: qualquer um que pôde remarcar (admin,
+          comercial ou o próprio terapeuta) também pode escolher aqui, porque
+          é a mesma ação de agendamento continuando. */}
+      {avisoRemarcacao && !avisoEmpurrarSenhaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-md mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Intervalo entre sessões</h3>
+            {avisoRemarcacao.paciente && (
+              <p className="text-xs text-gray-500 mb-3">{avisoRemarcacao.paciente}</p>
+            )}
+            <p className="text-sm text-gray-300 mb-4">{avisoRemarcacao.mensagem}</p>
+            {/* As duas opções têm custo real - o texto precisa deixar isso
+                explícito, sem eufemismo, porque quem decide é o comercial. */}
+            <p className="text-xs text-gray-500 mb-5 leading-relaxed">
+              <span className="text-gray-300 font-medium">Manter</span> deixa a próxima sessão a menos de 7 dias
+              desta. <span className="text-gray-300 font-medium">Empurrar</span> remarca todas as sessões
+              seguintes deste pacote, mantendo 7 dias entre elas, e o paciente precisa ser avisado.
+            </p>
+            {avisoEmpurrarErro && <p className="text-xs text-red-400 mb-3 whitespace-pre-line">{avisoEmpurrarErro}</p>}
+            <div className="flex gap-3">
+              <button onClick={() => { setAvisoRemarcacao(null); setAvisoEmpurrarErro('') }}
+                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 hover:bg-gray-700 border border-white/10 rounded-lg transition-colors">
+                Manter as demais como estão
+              </button>
+              <button onClick={() => { setAvisoEmpurrarErro(''); setAvisoEmpurrarSenhaOpen(true) }}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors">
+                Empurrar as seguintes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SenhaModal
+        dispensarSenha={dispensaSenha}
+        isOpen={avisoEmpurrarSenhaOpen}
+        onClose={() => { setAvisoEmpurrarSenhaOpen(false); setAvisoEmpurrarErro('') }}
+        onConfirm={handleEmpurrarSeguintes}
+        titulo="Empurrar sessões seguintes"
+        descricao="Digite sua senha para remarcar as sessões seguintes deste pacote"
+        loading={avisoEmpurrarLoading}
+        erro={avisoEmpurrarErro}
+      />
+
+      {/* Confirmação de sessões empurradas */}
+      {avisoEmpurrarSucesso !== null && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAvisoEmpurrarSucesso(null)}>
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-7 h-7 text-green-500" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1">Sessões remarcadas</h3>
+            <p className="text-sm text-gray-400 mb-5">
+              {avisoEmpurrarSucesso} sessão(ões) seguinte(s) {avisoEmpurrarSucesso === 1 ? 'foi remarcada' : 'foram remarcadas'} pra
+              manter os 7 dias entre elas. Avise o paciente sobre as novas datas.
+            </p>
+            <button onClick={() => setAvisoEmpurrarSucesso(null)}
+              className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+              OK
+            </button>
           </div>
         </div>
       )}
