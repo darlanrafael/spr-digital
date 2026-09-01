@@ -99,3 +99,14 @@ export function quebraIntervalo(params: {
   }
   return false
 }
+
+/**
+ * Datas das sessoes seguintes quando o comercial escolhe empurrar a cadeia.
+ * A base e a data NOVA da sessao remarcada, que ja foi salva: por isso ela
+ * nunca aparece no resultado.
+ */
+export function novasDatasSeguintes(params: { baseISO: string; quantidade: number }): string[] {
+  const base = new Date(params.baseISO).getTime()
+  return Array.from({ length: Math.max(0, params.quantidade) }, (_, i) =>
+    new Date(base + (i + 1) * SETE_DIAS_MS).toISOString())
+}

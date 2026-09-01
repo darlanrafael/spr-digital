@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo } from './diagnostico-guiado'
+import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes } from './diagnostico-guiado'
 
 const venda = (order_id: string | undefined, id = 'v1') => ({ id, order_id }) as never
 
@@ -107,4 +107,22 @@ test('encostar na seguinte tambem quebra', () => {
     novaDataISO: '2026-09-20T14:00:00.000Z',
     seguinteISO: '2026-09-22T14:00:00.000Z',
   }), true)
+})
+
+test('gera as datas seguintes de 7 em 7 dias a partir da base', () => {
+  const d = novasDatasSeguintes({ baseISO: '2026-09-08T14:00:00.000Z', quantidade: 3 })
+  assert.deepEqual(d, [
+    '2026-09-15T14:00:00.000Z',
+    '2026-09-22T14:00:00.000Z',
+    '2026-09-29T14:00:00.000Z',
+  ])
+})
+
+test('quantidade zero devolve lista vazia', () => {
+  assert.deepEqual(novasDatasSeguintes({ baseISO: '2026-09-08T14:00:00.000Z', quantidade: 0 }), [])
+})
+
+test('a base nunca aparece na lista, ela ja esta marcada', () => {
+  const d = novasDatasSeguintes({ baseISO: '2026-09-08T14:00:00.000Z', quantidade: 2 })
+  assert.equal(d.includes('2026-09-08T14:00:00.000Z'), false)
 })
