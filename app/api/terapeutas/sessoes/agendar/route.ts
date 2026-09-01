@@ -51,6 +51,21 @@ export async function POST(req: NextRequest) {
 
   // Diagnostico Guiado: pacote com dois terapeutas. Detectado pela oferta.
   const diagnostico = formatoDaVenda(sale as { id: string; order_id?: string })
+
+  // As datas do pacote do Diagnostico sao derivadas inteiramente da regua (7 em
+  // 7 dias) e do formato (montarPacote), a partir de UMA data. Aceitar
+  // datas_sessoes soltas aqui criaria um pacote com datas fora da regua que o
+  // resto do sistema (remarcacao, telas, notificacao) nao sabe interpretar.
+  // Recusa explicita em vez de ignorar em silencio: se o comercial digitou
+  // datas especificas, ele precisa saber que elas nao foram usadas, em vez de
+  // descobrir isso só olhando a agenda depois.
+  if (diagnostico && datas_sessoes && datas_sessoes.length > 0) {
+    return NextResponse.json(
+      { error: 'O Diagnóstico Guiado monta as datas sozinho a partir da primeira sessão, com 7 dias entre elas. Envie apenas data_primeira_sessao.' },
+      { status: 400 },
+    )
+  }
+
   let pedroId: string | null = null
   let deniseId: string | null = null
   if (diagnostico) {
@@ -159,6 +174,14 @@ export async function POST(req: NextRequest) {
   const { error: insertErr } = await client.from('sessoes').insert(sessoes)
   if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
 
+  // numSessoes continua sendo a entrada do calculo do caminho antigo (comissao
+  // por sessao, tamanho do array de datas) e não muda. totalCriado é o que
+  // realmente foi gravado: pro Diagnostico, pacote.length (2, 4 ou 9) nunca é
+  // igual a numSessoes (que vem de inferirNumeroSessoes/override e não
+  // enxerga o formato do pacote) - usar numSessoes aqui pra log/resposta
+  // reportaria um número de sessões que não bate com o que foi criado.
+  const totalCriado = sessoes.length
+
   // Link do Meet — não trava o agendamento se a API do Google falhar (ver
   // lib/google-meet.ts: sem credenciais configuradas, isso é um no-op).
   for (const s of sessoes) {
@@ -179,13 +202,15 @@ export async function POST(req: NextRequest) {
     // Sessão marcada pro mesmo dia — "venda de encaixe": o fluxo normal de
     // véspera (só olha "amanhã") nunca ia pegar essa. Avisa na hora, fora do
     // cron, com o link do Meet já embutido (evento acabou de ser criado acima).
-    // Só dispara quando é agendamento de sessão avulsa (numSessoes === 1) —
-    // agendar um pacote inteiro (numSessoes > 1) é reorganização de agenda,
+    // Só dispara quando é agendamento de sessão avulsa (totalCriado === 1) -
+    // agendar um pacote inteiro (totalCriado > 1) é reorganização de agenda,
     // não "última hora": se algumas datas do lote caírem em hoje (comum ao
     // recriar histórico ou preencher datas retroativas), isso já disparava
     // um "Venda de Encaixe" por sessão, alarme falso pra paciente que já
-    // existia — confundiu o terapeuta.
-    if (numSessoes === 1 && isHojeBrasilia(s.data_agendada)) {
+    // existia - confundiu o terapeuta. Usa totalCriado (não numSessoes) pra
+    // valer também pro Diagnóstico: o pacote nunca tem 1 sessão só (mínimo é
+    // 2), então esse gate corretamente nunca dispara pra ele.
+    if (totalCriado === 1 && isHojeBrasilia(s.data_agendada)) {
       const { data: sessaoCriada } = await client.from('sessoes')
         .select('id,link_meet').eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao).single()
       await notificarEncaixe({
@@ -207,11 +232,11 @@ export async function POST(req: NextRequest) {
     usuario_tipo: (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial',
     tipo_acao: 'agendamento',
     sale_id,
-    descricao: `${numSessoes} sessões agendadas para ${sale.nome} — primeira em ${new Date(primeiraDataMs).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
-    dados_novos: { numSessoes, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
+    descricao: `${totalCriado} sessões agendadas para ${sale.nome} - primeira em ${new Date(primeiraDataMs).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+    dados_novos: { numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
   })
 
-  return NextResponse.json({ success: true, sessoes_criadas: numSessoes })
+  return NextResponse.json({ success: true, sessoes_criadas: totalCriado })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
