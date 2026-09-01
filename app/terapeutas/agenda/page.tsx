@@ -45,9 +45,9 @@ export default function TerapeutasAgenda() {
   const [filtroTerapeuta, setFiltroTerapeuta] = useState('')
   const [detalhe, setDetalhe] = useState<Sessao | null>(null)
   const [loading, setLoading] = useState(true)
-  // Formato do Diagnostico Guiado por sale_id, pra identificar na agenda
-  // quais sessoes fazem parte de um pacote. So existe pra quem comprou
-  // Diagnostico; sessao avulsa nao entra aqui.
+  // Formato do Diagnóstico Guiado por sale_id, pra identificar na agenda
+  // quais sessões fazem parte de um pacote. Só existe pra quem comprou
+  // Diagnóstico; sessão avulsa não entra aqui.
   const [formatoPorSale, setFormatoPorSale] = useState<Record<string, 1 | 2 | 3>>({})
 
   useEffect(() => {
@@ -78,8 +78,8 @@ export default function TerapeutasAgenda() {
       for (const t of terapeutasData) cortePorTerapeuta[t.id] = t.vendas_a_partir_de
       const saleIds = [...new Set(sessoesData.map(s => s.sale_id))]
       const dataHoraPorSale: Record<string, string> = {}
-      // order_id vai junto nesta mesma busca — sem ele formatoDaVenda() nunca
-      // reconhece um pacote do Diagnostico Guiado e a etiqueta nunca aparece,
+      // order_id vai junto nesta mesma busca - sem ele formatoDaVenda() nunca
+      // reconhece um pacote do Diagnóstico Guiado e a etiqueta nunca aparece,
       // sem erro nenhum (lição da Task 5: consulta que passa em tsc/build mas
       // fica muda contra o banco).
       const formatoPorSaleNovo: Record<string, 1 | 2 | 3> = {}

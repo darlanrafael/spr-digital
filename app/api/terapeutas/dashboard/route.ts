@@ -77,7 +77,7 @@ function duracaoConsulta(iniciadoEm: string | null, concluidoEm: string | null):
 // próximas) — o mapper é compartilhado, então todas as queries precisam
 // trazer o mesmo conjunto, senão um quadrante devolve campo undefined.
 // sale_id entra aqui só pra buscar o order_id da venda depois (etiqueta do
-// Diagnóstico Guiado) — não aparece em nenhuma coluna da tela.
+// Diagnóstico Guiado) - não aparece em nenhuma coluna da tela.
 const COLUNAS_SESSAO_QUADRANTE =
   'id,sale_id,data_agendada,paciente_nome,paciente_email,numero_sessao,total_sessoes,' +
   'link_meet,status,status_consulta,iniciado_em,concluido_em,data_entrega,' +
@@ -499,7 +499,7 @@ export async function GET(req: NextRequest) {
     ])
 
     // Etiqueta do Diagnóstico Guiado nos quatro quadrantes de atendimento.
-    // O order_id mora na venda, não na sessão — busca à parte pelos sale_id
+    // O order_id mora na venda, não na sessão - busca à parte pelos sale_id
     // de tudo que veio nas cinco queries acima. Sem isso formatoDaVenda()
     // nunca reconhece o pacote e a etiqueta some da tela sem erro nenhum
     // (mesma armadilha que já pegou as Tasks 4 e 5 deste plano).

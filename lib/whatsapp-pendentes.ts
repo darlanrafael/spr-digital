@@ -10,7 +10,7 @@ export type SessaoPendenteWhatsapp = {
   numero_sessao: number
   total_sessoes: number
   // Etiqueta do Diagnóstico Guiado (null pra sessão avulsa). Fica antes de
-  // data_agendada de propósito — o n8n monta o texto do lembrete nesta
+  // data_agendada de propósito - o n8n monta o texto do lembrete nesta
   // ordem, com a etiqueta antes do horário.
   rotulo_diagnostico: string | null
   data_agendada: string

@@ -69,8 +69,8 @@ type SaleInfo = {
   valor_liquido: number
   data_hora: string
   status: string | null
-  // Precisa vir em toda consulta que popular SaleInfo — sem order_id,
-  // formatoDaVenda() nunca reconhece um pacote do Diagnostico Guiado e a
+  // Precisa vir em toda consulta que popular SaleInfo - sem order_id,
+  // formatoDaVenda() nunca reconhece um pacote do Diagnóstico Guiado e a
   // etiqueta simplesmente nunca aparece, sem erro nenhum. Tipo igual ao de
   // Sale ('@/types'): opcional sem null, pra formatoDaVenda() aceitar direto.
   order_id?: string
@@ -245,7 +245,7 @@ function fmtDt(iso: string | null) {
 }
 // Etiqueta do Diagnóstico Guiado pra uma linha que representa o PACIENTE
 // inteiro (aba Vendas: Pendentes/Ativos/Concluídos/Reembolsados), não uma
-// sessão isolada — mostra a posição atual do pacote (próxima sessão a
+// sessão isolada - mostra a posição atual do pacote (próxima sessão a
 // entregar, ou a última quando já concluído).
 function rotuloDiagnosticoAgregado(sale: SaleInfo | undefined, entregues: number, total: number): string | null {
   if (!sale) return null
@@ -2092,14 +2092,22 @@ export default function PainelTerapeuta() {
                   sessoes={sessoes
                     .filter(s => s.data_agendada && s.status !== 'cancelada'
                       && new Date(s.data_agendada).toDateString() === agendaDiaSelecionado.toDateString())
-                    .map((s): SessaoDia => ({
-                      id: s.id,
-                      paciente_nome: s.paciente_nome,
-                      numero_sessao: s.numero_sessao,
-                      total_sessoes: s.total_sessoes,
-                      status: s.status,
-                      data_agendada: s.data_agendada as string,
-                    }))}
+                    .map((s): SessaoDia => {
+                      // vendas ja traz order_id (correcao desta mesma task) - so
+                      // falta repassar o rotulo pro componente da agenda diaria.
+                      const formatoSessao = formatoDaVenda(vendas[s.sale_id] ?? { id: s.sale_id, order_id: undefined })
+                      return {
+                        id: s.id,
+                        paciente_nome: s.paciente_nome,
+                        numero_sessao: s.numero_sessao,
+                        total_sessoes: s.total_sessoes,
+                        status: s.status,
+                        data_agendada: s.data_agendada as string,
+                        rotulo_diagnostico: formatoSessao
+                          ? rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })
+                          : null,
+                      }
+                    })}
                   compromissos={compromissos.filter(c =>
                     new Date(c.inicio).toDateString() === agendaDiaSelecionado.toDateString())}
                   duracaoSessaoMinutos={terapeuta?.duracao_sessao_minutos ?? 60}
@@ -2470,7 +2478,7 @@ export default function PainelTerapeuta() {
                     const badge = STATUS_LABEL[s.status] ?? { label: s.status, color: 'text-gray-400 bg-gray-400/10' }
                     const remarcacoesSessao = remarcacoes[s.id] ?? []
                     // Diagnóstico Guiado é um pacote dividido entre dois
-                    // terapeutas — quem lê o prontuário precisa saber que essa
+                    // terapeutas - quem lê o prontuário precisa saber que essa
                     // sessão não é avulsa, é parte de um bloco maior.
                     const formatoSessao = formatoDaVenda(vendas[s.sale_id] ?? { id: s.sale_id, order_id: undefined })
                     return (
@@ -3094,6 +3102,19 @@ export default function PainelTerapeuta() {
               <button onClick={() => setAgendaDetalhe(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3 text-sm">
+              {(() => {
+                const formatoAgendaDetalhe = formatoDaVenda(vendas[agendaDetalhe.sale_id] ?? { id: agendaDetalhe.sale_id, order_id: undefined })
+                if (!formatoAgendaDetalhe) return null
+                return (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                    {rotuloDiagnostico({
+                      formato: formatoAgendaDetalhe.formato,
+                      numeroSessao: agendaDetalhe.numero_sessao,
+                      totalSessoes: agendaDetalhe.total_sessoes,
+                    })}
+                  </span>
+                )
+              })()}
               <div className="flex justify-between items-start gap-4">
                 <span className="text-gray-500 shrink-0">Paciente</span>
                 <span className="text-white text-right">{agendaDetalhe.paciente_nome}</span>

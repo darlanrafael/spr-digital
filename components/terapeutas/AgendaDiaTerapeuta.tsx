@@ -10,6 +10,9 @@ export type SessaoDia = {
   total_sessoes: number
   status: string
   data_agendada: string
+  // Preenchido só quando a sessão faz parte de um pacote do Diagnóstico
+  // Guiado; undefined/null pra sessão avulsa.
+  rotulo_diagnostico?: string | null
 }
 
 export type CompromissoDia = {
@@ -300,6 +303,11 @@ export default function AgendaDiaTerapeuta({
                           <span className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
                             <p className="text-[11px] text-indigo-400/80 truncate">Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+                            {sessao.rotulo_diagnostico && (
+                              <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40 truncate">
+                                {sessao.rotulo_diagnostico}
+                              </span>
+                            )}
                           </span>
                         </button>
                       )
@@ -359,6 +367,11 @@ export default function AgendaDiaTerapeuta({
                   style={{ top: (inicioClamp - JANELA_INICIO_MIN) * PX_POR_MIN, height: Math.max((fimClamp - inicioClamp) * PX_POR_MIN, 20) }}>
                   <p className="text-[11px] font-medium text-indigo-200 truncate">{sessao.paciente_nome}</p>
                   <p className="text-[10px] text-indigo-400/80 truncate">Sessão {sessao.numero_sessao}/{sessao.total_sessoes}</p>
+                  {sessao.rotulo_diagnostico && (
+                    <span className="inline-block mt-0.5 text-[9px] px-1 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40 truncate">
+                      {sessao.rotulo_diagnostico}
+                    </span>
+                  )}
                 </button>
               )
             })}
