@@ -143,6 +143,22 @@ export async function buscarConflitosAgenda(params: {
   return conflitos
 }
 
+/**
+ * Conflitos que vieram SO de compromissos da agenda (almoco, gravacao, ou um
+ * horario reservado a mao para este mesmo paciente), sem nenhuma consulta de
+ * outro paciente no meio.
+ *
+ * Existe por um caso real de 02/09/2026: a equipe bloqueia o horario na agenda
+ * do terapeuta ANTES de agendar, para segurar a vaga, e depois o agendamento
+ * era recusado pela propria reserva. Compromisso e bloqueio da propria equipe e
+ * pode ser passado por cima com confirmacao explicita; consulta de outro
+ * paciente, nunca - foi para isso que esta trava foi construida em 11/08/2026,
+ * depois de 25 duplas marcacoes reais.
+ */
+export function soCompromissos(conflitos: Conflito[]): boolean {
+  return conflitos.length > 0 && conflitos.every(c => c.tipo === 'compromisso')
+}
+
 /** Mensagem única pro front, listando cada data que bateu. */
 export function mensagemConflito(conflitos: Conflito[]): string {
   if (conflitos.length === 1) return `Conflito de horário: ${conflitos[0].descricao}`
