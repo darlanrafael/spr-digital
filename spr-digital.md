@@ -179,7 +179,7 @@ Em 14/08 o usuário exportou os estornos de **11/05 a 22/06** das duas plataform
 8. **Nada avisa quando o n8n para.** O `SPR Digital - Alerta Admin` mora no mesmo servidor que ele — cai junto. Em 17/08 isso custou 4 dias de silêncio total no WhatsApp sem ninguém perceber. Uma checagem externa (comparar "consultas de amanhã" com "lembretes enviados") resolveria; não construída.
 10. **A cadeia do "empurrar as seguintes" comprime quando ha sessao entregue no meio do pacote.** `empurrar-seguintes/route.ts:70-85` monta as datas novas com `novasDatasSeguintes`, que distribui 7, 14, 21 dias a partir da sessao remarcada, mas a consulta exclui as sessoes `entregue` e `cancelada`. Se a sessao 5 de um Formato 1 ja foi entregue e a 3 e remarcada, as sessoes 4, 6, 7, 8 e 9 recebem os deslocamentos 1, 2, 3, 4 e 5 - a 6 cai onde a 5 deveria estar, e o pacote inteiro fica com menos de 7 dias em relacao a entregue. **So ocorre com entrega fora de ordem**, que nao e o fluxo normal (a regra do produto e uma sessao por semana, em ordem), por isso ficou registrado em vez de corrigido. Conserto quando aparecer: contar o deslocamento pela posicao real (`numero_sessao`) em vez da posicao na lista filtrada.
 
-11. **17 eventos orfaos antigos no Google Calendar.** Residuo do bug ja corrigido em `8814615` (reagendamento total nunca cancelava os eventos das sessoes apagadas) mais um evento de teste antigo. Varredura completa e paginada do calendario "Atendimentos SPR Digital" em 02/09: 375 eventos, 358 casando com `sessoes.google_event_id`, **17 sem sessao nenhuma no banco** (Leone x2, Ingrid x8 - seis delas com data 01/01/2000, do bug de `data_agendada` nula -, Gerson x2, Gustavo, Kelly, Cesar, "Marido Vanessa Stefany" e um "Teste Meet Final" de julho). Nenhuma sessao do banco aponta hoje para evento inexistente. Sao convites que continuam na agenda de quem foi convidado, em horarios que nao existem mais. **Limpeza manual, fora desta branch:** apagar os 17 pelo `eventId`, um a um, conferindo antes que nenhum tem sessao correspondente.
+11. **~~17 eventos orfaos antigos no Google Calendar~~ - RESOLVIDO em 02/09/2026.** Eram residuo de dois bugs corrigidos no mesmo dia: o reagendamento total nunca cancelava os eventos das sessoes apagadas (`8814615`) e `data_agendada` nula mandava o pacote para 1970/2000. Varredura final: 403 eventos ativos no calendario "Atendimentos SPR Digital", 386 casando com `sessoes.google_event_id`, **17 sem sessao nenhuma** - Ingrid x8 (seis delas com data 01/01/2000), Leone x2, Gerson x2, Gustavo, Kelly, Cesar, "Marido Vanessa Stefany" e um "Teste Meet Final" de julho. Os 17 foram apagados pelo `eventId`, com os orfaos recalculados no mesmo passo do delete (usar uma lista de minutos antes poderia apagar evento criado no intervalo). Conferido depois: **0 orfaos restantes**. Como os dois bugs de origem estao corrigidos, nao aparecem novos.
 
 12. **Testar contra o banco real pode disparar WhatsApp de verdade.** `N8N_ENCAIXE_WEBHOOK_URL` **esta configurada** em `.env.local` e Pedro e Denise tem `grupo_whatsapp_id` real cadastrado. Qualquer agendamento de **1 sessao** com data de hoje (`totalCriado === 1` + `isHojeBrasilia`, em `/agendar`, e a remarcacao para hoje, em `/remarcar`) chama `notificarEncaixe`, que POSTa no n8n e manda mensagem no grupo real do terapeuta - com o nome do paciente sintetico. A rodada de 02/09 provavelmente fez exatamente isso ao exercitar o ramo da "venda de encaixe" com dado de teste. **Procedimento:** ao testar qualquer coisa que toque essas rotas, rodar com `N8N_ENCAIXE_WEBHOOK_URL=` e `N8N_ALERTA_WEBHOOK_URL=` vazias no ambiente (`notificarEncaixe` faz `if (!url) return`, entao string vazia neutraliza), e tratar toda variavel de `.env.local` como producao.
 
@@ -1023,14 +1023,28 @@ trabalho futuro neste projeto.
    (Formato 3, 2 sessoes), depois a **Gisela Palos** (Formato 2, 4 sessoes, que
    nunca foi exercitado com venda real).
 2. **Marcar o "Abater aqui"** dos R$ 1.560 do Miguel no proximo fechamento.
-3. **Atualizar o fluxo do n8n** para incluir a etiqueta do Diagnostico na
-   mensagem de lembrete. O sistema ja manda `rotulo_diagnostico` no payload, mas
-   quem monta o texto e o n8n.
-4. **Limpar os 17 eventos orfaos antigos** no Google Calendar (julho/2026 e
-   anterior: Leone, Ingrid, Gerson, Kelly e outros). Sao residuo do bug ja
-   corrigido; a branch impede novos mas nao limpa os antigos.
-5. **Conferir os grupos de WhatsApp** do Pedro e da Denise por causa do possivel
-   aviso de encaixe disparado com paciente sintetico em 01/09 por volta das 22h.
+3. **~~Atualizar o fluxo do n8n~~ - FEITO em 02/09/2026.** Os dois fluxos de
+   lembrete (`SPR Digital - Lembrete Vespera`, id `pXqglGimxGTMV7RC`, e
+   `SPR Digital - Lembrete 30 Minutos`, id `BUGfppZoi1xsZ0Tt`) passaram a
+   incluir a etiqueta no no `Montar Envios`, com uma linha
+   `if (s.rotulo_diagnostico) l += '\n🎯 ' + s.rotulo_diagnostico` logo antes do
+   telefone - a mesma ordem em que o payload entrega os campos. Nos demais
+   produtos o campo vem nulo e a mensagem fica identica ao que era. Alterado
+   pela API do n8n (`N8N_BASE_URL` + `N8N_API_KEY`), com backup dos tres fluxos
+   em `.superpowers/n8n-backup/` antes de qualquer escrita. Testado com mensagem
+   marcada como teste nos dois grupos reais, com a autorizacao do usuario, e
+   confirmado o recebimento. **Ficou de fora a "venda de encaixe"**
+   (id `Y75ek4m5YIX3KnJl`): `DadosEncaixe` em `lib/notificar-encaixe.ts` nao tem
+   `rotulo_diagnostico`, entao incluir ali exige mudanca de codigo, nao so de
+   fluxo.
+4. **~~Limpar os 17 eventos orfaos~~ - FEITO em 02/09/2026.** Os 17 foram
+   apagados e a conferencia posterior devolveu zero orfaos. Ver risco 11.
+5. **~~Conferir os grupos de WhatsApp~~ - CONFERIDO em 02/09/2026: nada foi
+   enviado.** O usuario verificou os dois grupos e o aviso de encaixe com
+   paciente sintetico **nao chegou em nenhum**. A regra criada por causa disso
+   (risco 12: nenhuma verificacao pode disparar efeito externo) continua
+   valendo - ela evitou o problema nas rodadas seguintes, e o susto foi o
+   suficiente para justifica-la.
 6. **Agendar as 7 vendas do Diagnostico** que estao esperando.
 
 **Riscos registrados sem correcao:**
