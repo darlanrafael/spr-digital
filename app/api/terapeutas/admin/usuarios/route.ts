@@ -97,7 +97,13 @@ export async function PUT(req: NextRequest) {
     descricao: ativo === false
       ? `Usuário "${data.nome}" desativado`
       : `Usuário "${data.nome}" editado`,
-    dados_novos: updates,
+    // `updates` cru incluiria `senha_hash` quando o PUT recebe `senha`, e o log
+    // de atividades e lido por uma rota sem autenticacao. Hash de senha em log
+    // e credencial exposta - vira material de ataque offline. Registra o QUE
+    // mudou, nunca o valor da senha.
+    dados_novos: Object.fromEntries(
+      Object.entries(updates).filter(([k]) => k !== 'senha_hash'),
+    ),
   })
 
   return NextResponse.json(data)

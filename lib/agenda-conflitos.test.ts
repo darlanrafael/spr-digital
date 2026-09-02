@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agruparPorTerapeuta , soCompromissos, mensagemConflito, tipoDoCompromisso, escolherConflito } from './agenda-conflitos'
+import { agruparPorTerapeuta , soCompromissos, mensagemConflito, tipoDoCompromisso, escolherConflito, montarConflitos } from './agenda-conflitos'
 
 test('agrupa as datas por terapeuta preservando a ordem', () => {
   const g = agruparPorTerapeuta([
@@ -161,4 +161,104 @@ test('o par completo: batida mista NAO libera o override', () => {
     { tipo: 'sessao' as const },
   ])!
   assert.equal(soCompromissos([{ dataISO: 'x', tipo: escolhido.tipo, descricao: 'y' }]), false)
+})
+
+// --- montarConflitos: a FIACAO. Antes de existir, dava para reverter o
+// `tipoDoCompromisso` e o `escolherConflito` no chamador e os 187 testes
+// continuavam verdes - o defeito de dupla marcacao voltava sem sinal nenhum.
+
+const UMA_HORA = 60 * 60 * 1000
+const fimFixo = (iso: string) => new Date(iso).getTime() + UMA_HORA
+const pedido = (iso: string) => [{ iso, inicio: new Date(iso).getTime() }]
+const base = { nomeTerapeuta: 'Pedro Roncada', fimRealMs: fimFixo }
+
+test('FIACAO: linha com categoria "sessao" sai com tipo sessao e NAO libera o override', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-07-21T12:40:00.000Z'),
+    sessoes: [],
+    compromissos: [{ titulo: 'Cris Polonine', inicio: '2026-07-21T12:40:00.000Z', fim: '2026-07-21T13:30:00.000Z', categoria: 'sessao' }],
+  })
+  assert.equal(c.length, 1)
+  assert.equal(c[0].tipo, 'sessao')
+  assert.equal(soCompromissos(c), false)
+  assert.ok(c[0].descricao.includes('consulta lançada na agenda'), 'nao pode chamar de bloqueio o que a equipe marcou como sessao')
+})
+
+test('FIACAO: bloqueio de verdade sai como compromisso e libera o override', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-05T14:20:00.000Z'),
+    sessoes: [],
+    compromissos: [{ titulo: 'ALMOÇO', inicio: '2026-09-05T14:00:00.000Z', fim: '2026-09-05T15:00:00.000Z', categoria: 'compromisso' }],
+  })
+  assert.equal(c[0].tipo, 'compromisso')
+  assert.equal(soCompromissos(c), true)
+})
+
+test('FIACAO CRITICA: batida dupla em ALMOCO + consulta lancada a mao reporta a CONSULTA', () => {
+  // O almoco comeca antes e ordena primeiro. Com `find`, ele era o reportado,
+  // soCompromissos dizia "e so bloqueio" e o agendamento entrava em cima da
+  // consulta real. O Pedro tem 209 pares de compromissos sobrepostos.
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-05T14:30:00.000Z'),
+    sessoes: [],
+    compromissos: [
+      { titulo: 'ALMOÇO', inicio: '2026-09-05T14:00:00.000Z', fim: '2026-09-05T15:00:00.000Z', categoria: 'compromisso' },
+      { titulo: 'Wagner Muller', inicio: '2026-09-05T14:20:00.000Z', fim: '2026-09-05T15:10:00.000Z', categoria: 'sessao' },
+    ],
+  })
+  assert.equal(c.length, 1)
+  assert.equal(c[0].tipo, 'sessao')
+  assert.equal(soCompromissos(c), false, 'o override NAO pode ser oferecido em cima de consulta real')
+})
+
+test('FIACAO: consulta da tabela sessoes sempre ganha do bloqueio', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-05T14:30:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana Silva', data_agendada: '2026-09-05T14:20:00.000Z', numero_sessao: 2, total_sessoes: 4 }],
+    compromissos: [{ titulo: 'ALMOÇO', inicio: '2026-09-05T14:00:00.000Z', fim: '2026-09-05T15:00:00.000Z', categoria: 'compromisso' }],
+  })
+  assert.equal(c[0].tipo, 'sessao')
+  assert.ok(c[0].descricao.includes('Ana Silva'))
+  assert.equal(soCompromissos(c), false)
+})
+
+test('FIACAO: horario livre nao gera conflito', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-05T20:00:00.000Z'),
+    sessoes: [],
+    compromissos: [{ titulo: 'ALMOÇO', inicio: '2026-09-05T14:00:00.000Z', fim: '2026-09-05T15:00:00.000Z', categoria: 'compromisso' }],
+  })
+  assert.deepEqual(c, [])
+})
+
+test('FIACAO: cada data do pacote e avaliada, e uma sessao no meio derruba o override inteiro', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: [
+      { iso: '2026-09-05T14:20:00.000Z', inicio: new Date('2026-09-05T14:20:00.000Z').getTime() },
+      { iso: '2026-09-12T14:20:00.000Z', inicio: new Date('2026-09-12T14:20:00.000Z').getTime() },
+    ],
+    sessoes: [],
+    compromissos: [
+      { titulo: 'ALMOÇO', inicio: '2026-09-05T14:00:00.000Z', fim: '2026-09-05T15:00:00.000Z', categoria: 'compromisso' },
+      { titulo: 'Jessica Moura', inicio: '2026-09-12T14:00:00.000Z', fim: '2026-09-12T15:00:00.000Z', categoria: 'sessao' },
+    ],
+  })
+  assert.equal(c.length, 2)
+  assert.equal(soCompromissos(c), false)
+})
+
+test('FIACAO: o nome do terapeuta aparece na mensagem, para o comercial saber de quem e a agenda', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-05T14:20:00.000Z'),
+    sessoes: [],
+    compromissos: [{ titulo: 'ALMOÇO', inicio: '2026-09-05T14:00:00.000Z', fim: '2026-09-05T15:00:00.000Z', categoria: 'compromisso' }],
+  })
+  assert.ok(c[0].descricao.includes('Pedro Roncada'))
 })
