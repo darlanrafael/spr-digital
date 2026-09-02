@@ -179,8 +179,14 @@ export async function POST(req: NextRequest) {
   // não incidente: sem as 3 variáveis de ambiente as sessões continuam sendo
   // movidas, só que sem link. Tratar esse null como erro fazia toda remarcação
   // em cadeia acusar N pacientes sem convite se uma variável sumisse da Vercel.
+  //
+  // O laço inteiro fica de fora nesse modo, e não só o aviso: rodando, ele
+  // gravaria link_meet e google_event_id nulos sem ter cancelado nada (o
+  // cancelamento também é no-op), apagando a referência de eventos que
+  // continuam existindo no Calendar - órfãos que ninguém mais consegue achar
+  // pra limpar. Não mexer preserva a informação até a integração voltar.
   const calendarAtivo = integracaoCalendarAtiva()
-  for (let inicio = 0; inicio < seguintes.length; inicio += LOTE_CALENDAR) {
+  for (let inicio = 0; calendarAtivo && inicio < seguintes.length; inicio += LOTE_CALENDAR) {
     const lote = seguintes.slice(inicio, inicio + LOTE_CALENDAR)
     const resultados = await Promise.allSettled(lote.map(async (s, j) => {
       const i = inicio + j
@@ -201,11 +207,11 @@ export async function POST(req: NextRequest) {
       // Evento novo já existe no Google nesse ponto - se salvar falhar, ele
       // fica órfão (existe no Calendar sem referência no banco).
       if (linkErr) throw new Error(`o link do Meet novo não foi salvo no banco (${linkErr.message})`)
-      // Aqui null só é falha quando a integração está ligada; desligada, é o
-      // no-op esperado. Evento sem link é caso à parte: o google_event_id já
-      // foi salvo no update acima, então não vira órfão.
-      if (!evento && calendarAtivo) throw new Error('o Google não devolveu o convite novo')
-      if (evento && !evento.meetLink) linksPendentes.push(s.numero_sessao as number)
+      // Aqui null é falha de verdade: o gate do laço já tirou o caso desligado.
+      // Evento sem link é caso à parte, e não falha: o google_event_id já foi
+      // salvo no update acima, então o evento não vira órfão.
+      if (!evento) throw new Error('o Google não devolveu o convite novo')
+      if (!evento.meetLink) linksPendentes.push(s.numero_sessao as number)
     }))
     resultados.forEach((r, j) => {
       if (r.status === 'rejected') {
