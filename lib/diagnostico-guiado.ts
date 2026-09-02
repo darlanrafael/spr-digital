@@ -91,19 +91,54 @@ export function montarPacote(params: {
   primeiraDataISO: string
   pedroId: string
   deniseId: string
+  /**
+   * Datas escolhidas a mao pelo comercial, uma por sessao, na ordem.
+   *
+   * A regua de 7 dias e o PADRAO, nao uma amarra: o comercial precisa poder
+   * acomodar viagem, feriado e indisponibilidade do paciente (decisao do
+   * usuario em 02/09/2026, depois de ver a tela funcionando). Quando vem
+   * preenchido, manda; quando nao vem, o pacote sai na regua a partir da
+   * primeira data.
+   *
+   * O que NAO e negociavel, e por isso nao entra aqui: a QUANTIDADE de sessoes
+   * e QUEM atende cada uma. As duas sao derivadas do formato, e deixar o
+   * comercial mexer nelas criaria pacote que o resto do sistema (comissao da
+   * Denise, etiqueta de progresso, empurrar as seguintes) nao sabe interpretar.
+   */
+  datasISO?: string[] | null
 }): SessaoDoPacote[] {
-  const { formato, primeiraDataISO, pedroId, deniseId } = params
+  const { formato, primeiraDataISO, pedroId, deniseId, datasISO } = params
   const inicio = new Date(primeiraDataISO).getTime()
+  // So aceita a lista se ela cobrir o pacote inteiro. Lista parcial cairia em
+  // `undefined` numa das sessoes e gravaria data invalida.
+  const explicitas = datasISO && datasISO.length === formato.totalSessoes ? datasISO : null
 
   return Array.from({ length: formato.totalSessoes }, (_, i) => {
     const doPedro = i < formato.sessoesPedro
     return {
       numero_sessao: i + 1,
       terapeuta_id: doPedro ? pedroId : deniseId,
-      data_agendada: new Date(inicio + i * SETE_DIAS_MS).toISOString(),
+      data_agendada: explicitas ? explicitas[i] : new Date(inicio + i * SETE_DIAS_MS).toISOString(),
       comissao_valor: doPedro ? 0 : PAGAMENTO_DENISE_POR_SESSAO,
     }
   })
+}
+
+/**
+ * Pares de sessoes consecutivas cujo intervalo nao e de 7 dias. Serve para a
+ * tela AVISAR, nunca para bloquear: fora da regua e escolha legitima do
+ * comercial. Devolve o numero da sessao seguinte de cada par, para a mensagem
+ * poder dizer "entre a 2 e a 3".
+ */
+export function intervalosForaDaRegua(datasISO: string[]): number[] {
+  const fora: number[] = []
+  for (let i = 1; i < datasISO.length; i++) {
+    const a = new Date(datasISO[i - 1]).getTime()
+    const b = new Date(datasISO[i]).getTime()
+    if (Number.isNaN(a) || Number.isNaN(b)) continue
+    if (b - a !== SETE_DIAS_MS) fora.push(i + 1)
+  }
+  return fora
 }
 
 /**

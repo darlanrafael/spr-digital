@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
-import { formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { formatoDaVenda, intervalosForaDaRegua } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 import { resumirReagendamentoTotal } from '@/lib/reagendamento-total'
 
@@ -549,13 +549,14 @@ export default function TerapeutasVendas() {
   const agendarVenda = agendarVendaId
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId)
     : null
-  // Diagnóstico Guiado: quantidade de sessões e datas são derivadas do
-  // FORMATO (2, 4 ou 9 sessões, 7 dias entre todas), não escolhidas na tela.
-  // Por isso o modal esconde os dois campos e o envio não manda nem
-  // numero_sessoes nem datas_sessoes - a rota recusa datas_sessoes com 400
-  // pro Diagnóstico, e era exatamente isso que travava todo agendamento:
-  // o efeito abaixo sempre preenchia agendarDatasEditadas, então o campo ia
-  // junto em toda requisição.
+  // Diagnóstico Guiado: a QUANTIDADE de sessões (2, 4 ou 9) e QUEM atende cada
+  // uma vêm do FORMATO e não são escolhidas na tela - mexer nelas criaria
+  // pacote que a comissão da Denise, a etiqueta de progresso e o empurrar as
+  // seguintes não sabem interpretar. As DATAS, ao contrário: nascem na régua de
+  // 7 dias e o comercial ajusta uma a uma se precisar (decisão do usuário em
+  // 02/09/2026, depois de ver a tela em uso - viagem, feriado e
+  // indisponibilidade do paciente são rotina, e travar isso obrigaria a agendar
+  // tudo e remarcar em seguida).
   const agendarDiagnostico = agendarVenda ? formatoDaVenda(agendarVenda) : null
   // Sessões que essa venda JÁ tem, de qualquer terapeuta (sessoes_por_venda
   // não é filtrado por terapeuta nesta API). O link "Agendar" da tela do
@@ -571,6 +572,12 @@ export default function TerapeutasVendas() {
   // Calculado antes do resumo: quantas sessões o pacote novo vai ter decide se
   // a numeração 1..N colide com sessão que sobrevive ao delete (cancelada, por
   // exemplo). Mudar a quantidade na tela muda a resposta, igual na rota.
+  // Avisa quais pares saíram dos 7 dias. É aviso, nunca trava: fora da régua é
+  // escolha legítima do comercial desde 02/09/2026.
+  const agendarForaDaRegua = agendarDiagnostico && agendarDatasEditadas.length > 1
+    ? intervalosForaDaRegua(agendarDatasEditadas.map(d => new Date(d).toISOString()))
+    : []
+
   const agendarNumSessoes = agendarDiagnostico
     ? agendarDiagnostico.totalSessoes
     : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
@@ -666,13 +673,16 @@ export default function TerapeutasVendas() {
       body: JSON.stringify({
         sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaEfetivo,
         data_primeira_sessao: agendarDataPrimeira,
-        // No Diagnóstico os dois campos ficam de fora: a rota deriva a
-        // quantidade do formato e as datas da régua de 7 dias. Mandar
-        // datas_sessoes ali é recusado com 400 (rede de segurança da rota).
+        // A QUANTIDADE continua fora no Diagnóstico: vem do formato, e deixar
+        // o comercial mexer nela criaria pacote que a comissão da Denise, a
+        // etiqueta de progresso e o empurrar as seguintes não sabem interpretar.
         numero_sessoes: agendarDiagnostico ? undefined : agendarNumSessoes,
-        datas_sessoes: agendarDiagnostico
-          ? undefined
-          : (agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined),
+        // O comercial pode ajustar sessao por sessao tambem no Diagnostico
+        // (decisao do usuario em 02/09/2026). A quantidade continua vindo do
+        // formato, entao a lista so vale se cobrir o pacote inteiro - do
+        // contrario a rota recusa, que e o comportamento certo: melhor recusar
+        // do que gravar metade do pacote com data errada.
+        datas_sessoes: agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined,
         usuario_email: adminEmail, senha,
       }),
     })
@@ -1244,25 +1254,44 @@ export default function TerapeutasVendas() {
               )}
               {agendarDatasEditadas.length > 0 && (
                 agendarDiagnostico ? (
-                  /* Prévia somente leitura: as datas são calculadas pela régua
-                     de 7 dias e não podem ser editadas uma a uma sem quebrar o
-                     pacote (a remarcação de uma sessão do meio tem fluxo
-                     próprio, com a escolha entre manter ou empurrar). */
+                  /* As datas nascem na régua de 7 dias e podem ser ajustadas uma
+                     a uma: viagem, feriado e indisponibilidade do paciente são
+                     rotina, e travar isso obrigaria o comercial a agendar tudo e
+                     remarcar em seguida. Quem atende cada sessão continua vindo
+                     do formato e não é editável. Mudar a 1ª data recalcula as
+                     demais pela régua, desfazendo ajustes manuais - por isso o
+                     aviso aparece assim que alguma sai dos 7 dias. */
                   <div className="bg-gray-800/60 rounded-lg p-3">
                     <p className="text-xs text-gray-400 mb-2 font-medium">
-                      Prévia das {agendarNumSessoes} sessões (7 dias entre todas, calculadas pelo sistema):
+                      As {agendarNumSessoes} sessões do pacote (7 dias entre todas por padrão, edite se precisar):
                     </p>
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       {agendarDatasEditadas.map((valor, i) => (
                         <div key={i} className="flex items-center gap-3 text-xs">
                           <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
-                          <span className="text-gray-200">{fmtDatetimeLocalBR(valor)}</span>
-                          <span className="text-[10px] text-gray-500">
+                          {i === 0 ? (
+                            <span className="flex-1 text-gray-300 py-1.5">{fmtDatetimeLocalBR(valor)} <span className="text-gray-600">(campo acima)</span></span>
+                          ) : (
+                            <input type="datetime-local" value={valor}
+                              onChange={e => setAgendarDatasEditadas(prev => prev.map((v, idx) => idx === i ? e.target.value : v))}
+                              className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                          )}
+                          <span className="text-[10px] text-gray-500 w-24 shrink-0">
                             {i < agendarDiagnostico.sessoesPedro ? (pedroTerapeuta?.nome ?? 'Pedro') : 'Denise'}
                           </span>
                         </div>
                       ))}
                     </div>
+                    {agendarForaDaRegua.length > 0 && (
+                      <p className="text-[11px] text-amber-400 mt-2">
+                        Fora do intervalo de 7 dias: {agendarForaDaRegua.length === 1
+                          ? `antes da sessão ${agendarForaDaRegua[0]}`
+                          : `antes das sessões ${agendarForaDaRegua.join(', ')}`}. Pode confirmar assim mesmo - é só um aviso.
+                      </p>
+                    )}
+                    <p className="text-[11px] text-gray-500 mt-2">
+                      Mudar a data da 1ª sessão recalcula as demais em 7 em 7 dias.
+                    </p>
                   </div>
                 ) : (
                   <div className="bg-gray-800/60 rounded-lg p-3">

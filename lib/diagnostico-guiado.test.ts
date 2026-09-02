@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes } from './diagnostico-guiado'
+import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes , intervalosForaDaRegua } from './diagnostico-guiado'
 
 const venda = (order_id: string | undefined, id = 'v1') => ({ id, order_id }) as never
 
@@ -189,4 +189,70 @@ test('a excecao nao contamina venda com o mesmo id em outra oferta', () => {
   // A excecao e por venda: o id e unico, entao o order_id nem importa.
   const f = formatoDaVenda({ id: '27a669a3-dad9-4c8f-ae93-bca82bb13e90', order_id: undefined })
   assert.equal(f?.formato, 1)
+})
+
+test('montarPacote respeita datas escolhidas a mao pelo comercial', () => {
+  // Regua de 7 dias e o padrao, nao amarra: viagem e feriado sao rotina.
+  const f = { formato: 3 as const, totalSessoes: 2, sessoesPedro: 1 }
+  const p = montarPacote({
+    formato: f, primeiraDataISO: '2026-09-02T14:20:00.000Z', pedroId: 'ped', deniseId: 'den',
+    datasISO: ['2026-09-02T14:20:00.000Z', '2026-09-20T18:00:00.000Z'],
+  })
+  assert.equal(p[0].data_agendada, '2026-09-02T14:20:00.000Z')
+  assert.equal(p[1].data_agendada, '2026-09-20T18:00:00.000Z')
+})
+
+test('quem atende cada sessao NAO muda por causa das datas manuais', () => {
+  const f = { formato: 1 as const, totalSessoes: 9, sessoesPedro: 2 }
+  const datas = Array.from({ length: 9 }, (_, i) => `2026-10-${String(i + 1).padStart(2, '0')}T10:00:00.000Z`)
+  const p = montarPacote({ formato: f, primeiraDataISO: datas[0], pedroId: 'ped', deniseId: 'den', datasISO: datas })
+  assert.deepEqual(p.slice(0, 2).map(x => x.terapeuta_id), ['ped', 'ped'])
+  assert.equal(p.slice(2).every(x => x.terapeuta_id === 'den'), true)
+  assert.equal(p.slice(0, 2).every(x => x.comissao_valor === 0), true)
+  assert.equal(p.slice(2).every(x => x.comissao_valor === 95), true)
+})
+
+test('lista de datas incompleta e IGNORADA: cai na regua em vez de gravar data invalida', () => {
+  const f = { formato: 3 as const, totalSessoes: 2, sessoesPedro: 1 }
+  const p = montarPacote({
+    formato: f, primeiraDataISO: '2026-09-02T14:20:00.000Z', pedroId: 'ped', deniseId: 'den',
+    datasISO: ['2026-09-02T14:20:00.000Z'],
+  })
+  assert.equal(p.length, 2)
+  assert.equal(p[1].data_agendada, '2026-09-09T14:20:00.000Z')
+})
+
+test('sem datasISO o pacote sai na regua de 7 dias, como sempre', () => {
+  const f = { formato: 3 as const, totalSessoes: 2, sessoesPedro: 1 }
+  const p = montarPacote({ formato: f, primeiraDataISO: '2026-09-02T14:20:00.000Z', pedroId: 'ped', deniseId: 'den' })
+  assert.equal(p[1].data_agendada, '2026-09-09T14:20:00.000Z')
+})
+
+test('intervalosForaDaRegua aponta o numero da sessao seguinte de cada par', () => {
+  const fora = intervalosForaDaRegua([
+    '2026-09-02T14:20:00.000Z',
+    '2026-09-09T14:20:00.000Z',
+    '2026-09-25T14:20:00.000Z',
+    '2026-10-02T14:20:00.000Z',
+  ])
+  assert.deepEqual(fora, [3])
+})
+
+test('pacote inteiro na regua nao gera aviso nenhum', () => {
+  const datas = Array.from({ length: 4 }, (_, i) => new Date(Date.UTC(2026, 8, 2, 14, 20) + i * 7 * 24 * 3600 * 1000).toISOString())
+  assert.deepEqual(intervalosForaDaRegua(datas), [])
+})
+
+test('varios pares fora da regua saem todos', () => {
+  const fora = intervalosForaDaRegua([
+    '2026-09-02T10:00:00.000Z',
+    '2026-09-04T10:00:00.000Z',
+    '2026-09-11T10:00:00.000Z',
+    '2026-09-30T10:00:00.000Z',
+  ])
+  assert.deepEqual(fora, [2, 4])
+})
+
+test('data invalida no meio nao quebra o aviso', () => {
+  assert.deepEqual(intervalosForaDaRegua(['2026-09-02T10:00:00.000Z', 'lixo', '2026-09-16T10:00:00.000Z']), [])
 })

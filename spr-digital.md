@@ -269,11 +269,32 @@ A divergencia entre os dois foi aceita **depois de conferir 2.605 `order_id`
 reais da Hubla: 100% no padrao, zero excecoes**.
 
 **Fluxo de agendamento:** a venda cai em Pendentes de Agendamento na tela do
-**Pedro** (so dele, porque e ele quem comeca). O comercial informa **apenas a
-data da primeira sessao** - nao ha campo de quantidade nem edicao de datas,
-porque as duas coisas sao derivadas do formato. O sistema monta o pacote
-inteiro nas duas agendas, com 7 dias entre cada sessao, cria os eventos no
-Google Calendar com link do Meet e grava a comissao da Denise.
+**Pedro** (so dele, porque e ele quem comeca). O comercial informa a **data da
+primeira sessao** e o sistema monta o pacote inteiro nas duas agendas, com 7
+dias entre cada sessao, cria os eventos no Google Calendar com link do Meet e
+grava a comissao da Denise.
+
+**As datas sao editaveis uma a uma; a quantidade e quem atende, nao.** Decisao
+do usuario em 02/09/2026, tomada depois de ver a tela em uso pelo comercial. A
+regua de 7 dias e o **padrao**, nao uma amarra: viagem, feriado e
+indisponibilidade do paciente sao rotina, e travar as datas obrigaria o
+comercial a agendar tudo na regua e remarcar em seguida, sessao por sessao. A
+tela mostra as N datas ja calculadas, deixa editar da 2a em diante (a 1a e o
+campo principal), e **avisa em ambar** quando algum intervalo sai dos 7 dias -
+aviso, nunca trava. Mudar a data da 1a sessao **recalcula as demais** pela
+regua, o que desfaz ajustes manuais, e a tela diz isso.
+
+O que continua fechado: a **quantidade** de sessoes e **quem atende cada uma**,
+porque as duas vem do formato. Deixar o comercial mexer nelas criaria pacote que
+a comissao da Denise, a etiqueta de progresso e o empurrar as seguintes nao
+sabem interpretar. Por isso a rota aceita `datas_sessoes` **so se a lista cobrir
+o pacote inteiro**: tamanho diferente e sinal de que a tela e a rota discordam
+sobre o formato, e e recusado com 400 em vez de gravar metade do pacote.
+
+**Historico desta decisao:** ate 02/09 a rota **recusava** `datas_sessoes` no
+Diagnostico com 400, e a tela mostrava a previa somente leitura. A recusa
+existia para proteger a regua, e chegou a ser um dos tres defeitos que travavam
+o agendamento (ver 0.1.5), porque a tela mandava as datas de qualquer jeito.
 
 **Remarcacao:** se o comercial remarcar uma sessao do meio e isso quebrar o
 intervalo de 7 dias, o sistema **pergunta** se ele quer manter as demais onde
