@@ -14,6 +14,15 @@ export const OFERTAS_DIAGNOSTICO: Record<string, 1 | 2 | 3> = {
   WXwmPZfJxGqeXerA6dkO: 1,
   H8DA8U21x7Lmv3NreVMs: 2,
   qVvads7GKaI7lN1Kctrr: 3,
+  // Venda da Paula Caroline (28/08/2026, R$ 4.997): o comercial fechou pela
+  // oferta do produto "Mentoria Particular - Pedro Roncada", mas o que ela
+  // comprou foi o Formato 1 do Diagnostico. Confirmado com o comercial em
+  // 02/09/2026. Mapear esta oferta e seguro porque ela e usada por UMA venda
+  // so em todo o banco (varredura das 10.022 linhas) - nao existe outra venda
+  // de Mentoria que passe a ser lida como Diagnostico por causa disto. O nome
+  // do produto na linha foi corrigido junto, para as consultas que filtram por
+  // nome (usadas para escapar do teto de 1000 do PostgREST) alcancarem a venda.
+  '4pv79AgzdiRoWeLm5gyT': 1,
 }
 
 // A oferta "Padrao" (wd6AwMQIJGAekPCGCRsb, R$ 10,00) existe no mesmo produto e

@@ -167,3 +167,13 @@ test('a base nunca aparece na lista, ela ja esta marcada', () => {
   const d = novasDatasSeguintes({ baseISO: '2026-09-08T14:00:00.000Z', quantidade: 2 })
   assert.equal(d.includes('2026-09-08T14:00:00.000Z'), false)
 })
+
+test('venda da Paula Caroline: fechada na oferta errada, corrigida para Formato 1', () => {
+  // O comercial fechou pela oferta do produto "Mentoria Particular - Pedro
+  // Roncada" em 28/08/2026 (R$ 4.997), mas era Diagnostico Formato 1. A oferta
+  // foi mapeada porque e usada por UMA venda so em todo o banco.
+  const f = formatoDaVenda({ id: '27a669a3-dad9-4c8f-ae93-bca82bb13e90', order_id: 'e3eada99-d9b2-4d72-9609-333af129cecf-4pv79AgzdiRoWeLm5gyT' })
+  assert.equal(f?.formato, 1)
+  assert.equal(f?.totalSessoes, 9)
+  assert.equal(f?.sessoesPedro, 2)
+})
