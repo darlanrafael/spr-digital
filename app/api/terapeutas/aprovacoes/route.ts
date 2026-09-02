@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
+import { cancelarEvento } from '@/lib/google-meet'
+import { planejarAprovacaoReembolso } from '@/lib/aprovacao-reembolso'
 
 type Solicitacao = {
   id: string
@@ -84,23 +86,67 @@ export async function PATCH(req: NextRequest) {
     const s = sol as Solicitacao
 
     if (acao === 'aprovar') {
-      await supabase.from('solicitacoes_reembolso').update({
+      // O que for cancelado de fato pode ser menor que o pedido: sessão que já
+      // estava cancelada não entra de novo. O prontuário registra o que
+      // aconteceu, não o que foi pedido.
+      let canceladas: string[] = []
+      let eventosACancelar: string[] = []
+
+      if (s.sessoes_ids.length > 0) {
+        const { data: alvo, error: lerErr } = await supabase
+          .from('sessoes')
+          .select('id, numero_sessao, status, google_event_id')
+          .in('id', s.sessoes_ids)
+        if (lerErr) return NextResponse.json({ error: lerErr.message }, { status: 500 })
+
+        const plano = planejarAprovacaoReembolso(alvo ?? [])
+        if (!plano.ok) {
+          return NextResponse.json({
+            error: `Esta solicitação está desatualizada: a sessão ${plano.numeros.join(', ')} já foi entregue depois que o pedido foi aberto. O valor de ${fmtBRL(s.valor_reembolso)} foi calculado contando com ela. Cancele esta solicitação e abra outra com as sessões que ainda faltam.`,
+          }, { status: 409 })
+        }
+        canceladas = plano.cancelar
+        eventosACancelar = plano.eventosACancelar
+      }
+
+      // Só marca como aprovado DEPOIS de validar. Na ordem anterior o update
+      // vinha primeiro, então uma recusa deixaria a solicitação como
+      // 'aprovado' com zero sessão cancelada: o pedido sumia da fila do CEO
+      // sem nada ter acontecido.
+      const { error: solErr } = await supabase.from('solicitacoes_reembolso').update({
         status: 'aprovado',
         aprovado_por_nome: usuario_nome,
         aprovado_por_email: usuario_email,
         updated_at: new Date().toISOString(),
       }).eq('id', id)
+      if (solErr) return NextResponse.json({ error: solErr.message }, { status: 500 })
 
-      if (s.sessoes_ids.length > 0) {
-        await supabase.from('sessoes').update({ status: 'cancelada' }).in('id', s.sessoes_ids)
+      if (canceladas.length > 0) {
+        // link_meet e google_event_id saem junto do status: sessão cancelada
+        // não existe mais para o paciente, e deixar o link na tela do
+        // terapeuta convida a entrar numa sala de sessão reembolsada.
+        const { error: updErr } = await supabase
+          .from('sessoes')
+          .update({ status: 'cancelada', link_meet: null, google_event_id: null })
+          .in('id', canceladas)
+        // Sem conferir o erro, um update que falhasse deixava o pedido marcado
+        // como aprovado e as sessões vivas na agenda, sem nada na tela.
+        if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
       }
+
+      // O convite continuava na agenda do PACIENTE com o link do Meet
+      // funcionando: do lado do sistema a sessão sumia, do lado dele não, e ele
+      // podia entrar na sala no horário de uma sessão reembolsada. Depois do
+      // update de propósito: o cancelamento no banco é o que vale, e evento no
+      // Google pode ser cancelado a qualquer momento depois.
+      for (const eventId of eventosACancelar) await cancelarEvento(eventId)
 
       await supabase.from('ocorrencias_prontuario').insert({
         sale_id: s.sale_id,
         tipo: 'reembolso_aprovado',
         titulo: 'Reembolso aprovado pelo CEO',
-        descricao: `Reembolso de ${fmtBRL(s.valor_reembolso)} aprovado por ${usuario_nome}. ${s.sessoes_ids.length} sessão(ões) cancelada(s).`,
-        dados_extras: { solicitacao_id: id, sessoes_ids: s.sessoes_ids, valor_reembolso: s.valor_reembolso },
+        descricao: `Reembolso de ${fmtBRL(s.valor_reembolso)} aprovado por ${usuario_nome}. ${canceladas.length} sessão(ões) cancelada(s).`,
+        dados_extras: { solicitacao_id: id, sessoes_ids: canceladas, valor_reembolso: s.valor_reembolso },
         criado_por_nome: usuario_nome,
         criado_por_tipo: 'admin',
         criado_por_email: usuario_email,
@@ -111,7 +157,7 @@ export async function PATCH(req: NextRequest) {
         usuario_tipo: 'admin',
         tipo_acao: 'reembolso_aprovado',
         sale_id: s.sale_id,
-        descricao: `Reembolso parcial aprovado — ${fmtBRL(s.valor_reembolso)} — paciente: ${s.paciente_nome}`,
+        descricao: `Reembolso parcial aprovado - ${fmtBRL(s.valor_reembolso)} - paciente: ${s.paciente_nome}`,
         dados_novos: { solicitacao_id: id, valor_reembolso: s.valor_reembolso },
       })
     } else {
