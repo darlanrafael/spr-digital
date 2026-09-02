@@ -241,7 +241,9 @@ export async function POST(req: NextRequest) {
   // conflito de sessão para a recusa valer, mesmo com a confirmação marcada. É
   // para isso que esta trava existe desde 11/08/2026, depois de 25 duplas
   // marcações reais.
-  const conflitosQueValem = ignorar_compromissos && soCompromissos(conflitos) ? [] : conflitos
+  const atropelouBloqueio = !!ignorar_compromissos && soCompromissos(conflitos)
+  const bloqueiosAtropelados = atropelouBloqueio ? conflitos.map(c => c.descricao) : []
+  const conflitosQueValem = atropelouBloqueio ? [] : conflitos
   if (conflitosQueValem.length > 0) {
     // Pacote inteiro recusado, nada criado: agendar só parte deixaria o
     // paciente com um pacote incompleto que alguém precisa lembrar de fechar.
@@ -249,7 +251,7 @@ export async function POST(req: NextRequest) {
       error: mensagemConflito(conflitosQueValem),
       conflitos: conflitosQueValem,
       // A tela só oferece "agendar assim mesmo" quando isto vem true.
-      soCompromissos: soCompromissos(conflitosQueValem),
+      soCompromissos: soCompromissos(conflitos),
     }, { status: 409 })
   }
 
@@ -441,8 +443,13 @@ export async function POST(req: NextRequest) {
     // No Diagnóstico o log grava o que foi realmente gravado em
     // sessoes.comissao_valor (um valor por terapeuta), não um "por sessão"
     // único que não existe nesse produto.
+    // Fica registrado QUANDO alguem passou por cima da trava de horario, e
+    // sobre o que. Sem isto, depois de uma dupla marcacao ninguem consegue
+    // responder "alguem forcou?" olhando o log: o registro fica indistinguivel
+    // de um agendamento comum.
     dados_novos: pacote
       ? {
+          ...(atropelouBloqueio ? { ignorou_bloqueio: true, bloqueios_atropelados: bloqueiosAtropelados } : {}),
           numSessoes: totalCriado,
           data_primeira_sessao,
           terapeuta_id,
@@ -451,7 +458,10 @@ export async function POST(req: NextRequest) {
           comissao_por_sessao_denise: pacote.find(s => s.terapeuta_id === deniseId)?.comissao_valor ?? 0,
           comissao_total_pacote: pacote.reduce((a, s) => a + s.comissao_valor, 0),
         }
-      : { numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
+      : {
+          ...(atropelouBloqueio ? { ignorou_bloqueio: true, bloqueios_atropelados: bloqueiosAtropelados } : {}),
+          numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao,
+        },
   })
 
   // Cancela no Google os eventos das sessões que sumiram. Sem isso o

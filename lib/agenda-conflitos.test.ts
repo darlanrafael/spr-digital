@@ -68,3 +68,28 @@ test('varios horarios ocupados saem em lista, com o total na frente', () => {
   assert.ok(m.includes('• em 02/09'))
   assert.ok(m.includes('• em 09/09'))
 })
+
+test('CRITICO: linha de compromisso com categoria "sessao" NAO pode ser passada por cima', () => {
+  // `compromissos_terapeuta` guarda os dois tipos: a tela de lancamento manual
+  // oferece "Categoria: Compromisso | Sessao". Classificar tudo como
+  // compromisso fazia uma CONSULTA REAL virar bloqueio, e o override ofereceria
+  // "Agendar assim mesmo" em cima dela. Ha 4 linhas assim no banco, com nome de
+  // paciente no titulo (Cris Polonine, Wagner Muller, Jessica Moura).
+  assert.equal(soCompromissos([
+    { dataISO: '2026-07-21T12:40:00.000Z', tipo: 'sessao', descricao: 'Pedro atende "Cris Polonine" das 09:40 às 10:30 (consulta lançada na agenda)' },
+  ]), false)
+})
+
+test('bloqueio de verdade continua podendo ser passado por cima', () => {
+  assert.equal(soCompromissos([
+    { dataISO: '2026-09-05T14:20:00.000Z', tipo: 'compromisso', descricao: 'bloqueio: ALMOÇO' },
+  ]), true)
+})
+
+test('consulta lancada a mao no meio de bloqueios derruba o override inteiro', () => {
+  assert.equal(soCompromissos([
+    { dataISO: 'a', tipo: 'compromisso', descricao: 'ALMOÇO' },
+    { dataISO: 'b', tipo: 'sessao', descricao: 'consulta lançada na agenda' },
+    { dataISO: 'c', tipo: 'compromisso', descricao: 'GRAVAÇÃO' },
+  ]), false)
+})
