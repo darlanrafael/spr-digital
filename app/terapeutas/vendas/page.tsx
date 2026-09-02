@@ -364,6 +364,18 @@ export default function TerapeutasVendas() {
   // é "criar", é "apagar e refazer". Só libera o botão depois de a pessoa
   // marcar que entendeu o que vai ser destruído.
   const [agendarSubstituicaoCiente, setAgendarSubstituicaoCiente] = useState(false)
+  // Sessões relidas do banco ao abrir o modal. O aviso de destruição saía de
+  // pageData.sessoes_por_venda, buscado no load da página: sessão criada por
+  // outra pessoa depois disso não aparecia e o modal chegava a mostrar botão
+  // verde de "Confirmar agendamento" pra venda que já tinha pacote. A rota
+  // ainda barra o caso destrutivo, então não havia perda de dado - o que
+  // ficava frouxo era a promessa de declarar ANTES de destruir.
+  // Guarda o sale_id junto com o resultado: assim "o que está na tela é desta
+  // venda?" é derivado, sem precisar zerar o estado dentro do efeito antes de
+  // disparar o fetch (o que faria a resposta de uma venda anterior aparecer
+  // como se fosse da venda aberta agora).
+  const [agendarSessoesLidas, setAgendarSessoesLidas] =
+    useState<{ saleId: string; sessoes: Sessao[] | null; erro: string } | null>(null)
 
   // Prontuário
   const [prontuarioVendaId, setProntuarioVendaId] = useState<string | null>(null)
@@ -562,9 +574,40 @@ export default function TerapeutasVendas() {
   const agendarNumSessoes = agendarDiagnostico
     ? agendarDiagnostico.totalSessoes
     : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
-  const agendarSessoesExistentes = agendarVendaId ? (pageData.sessoes_por_venda[agendarVendaId] ?? []) : []
+  // Enquanto a releitura não volta, usa o que veio do load: é melhor avisar com
+  // dado velho do que não avisar nada. O botão fica travado nesse intervalo.
+  const agendarLeituraDaVenda = agendarSessoesLidas?.saleId === agendarVendaId ? agendarSessoesLidas : null
+  const agendarSessoesCarregando = !!agendarVendaId && agendarLeituraDaVenda === null
+  const agendarSessoesErro = agendarLeituraDaVenda?.erro ?? ''
+  const agendarSessoesExistentes = agendarVendaId
+    ? (agendarLeituraDaVenda?.sessoes ?? pageData.sessoes_por_venda[agendarVendaId] ?? [])
+    : []
   const agendarResumo = resumirReagendamentoTotal(agendarSessoesExistentes, agendarNumSessoes)
   const agendarEhSubstituicao = agendarResumo.substituiveis > 0 || agendarResumo.bloqueado
+
+  // Relê as sessões da venda toda vez que o modal abre. `cancelado` evita que a
+  // resposta de uma venda anterior sobrescreva a da venda aberta agora, se
+  // alguém fechar e abrir outra antes da primeira responder.
+  useEffect(() => {
+    if (!agendarVendaId) return
+    const saleId = agendarVendaId
+    let cancelado = false
+    fetch(`/api/terapeutas/sessoes?sale_id=${encodeURIComponent(saleId)}`)
+      .then(async res => {
+        const json = await res.json()
+        if (!res.ok) throw new Error(json.error ?? 'erro')
+        if (!cancelado) setAgendarSessoesLidas({ saleId, sessoes: (json.sessoes ?? []) as Sessao[], erro: '' })
+      })
+      .catch(e => {
+        // Sem a releitura o modal continua mostrando o que veio do load - só
+        // não pode fingir que aquilo está atualizado.
+        if (!cancelado) setAgendarSessoesLidas({ saleId, sessoes: null, erro: String(e instanceof Error ? e.message : e) })
+      })
+    // Descarta a leitura ao fechar (ou ao trocar de venda): reabrir a MESMA
+    // venda tem que esperar uma leitura nova, senão o botão liberaria na hora
+    // com o resultado da abertura anterior.
+    return () => { cancelado = true; setAgendarSessoesLidas(null) }
+  }, [agendarVendaId])
 
   useEffect(() => {
     if (!agendarDataPrimeira || !agendarVenda) { setAgendarDatasEditadas([]); return }
@@ -1253,12 +1296,24 @@ export default function TerapeutasVendas() {
                   </span>
                 </label>
               )}
+              {agendarSessoesErro && (
+                /* A releitura falhou: o que está na tela veio do carregamento
+                   da página e pode estar velho. A rota ainda barra o caso
+                   destrutivo, mas quem confirma tem que saber disso. */
+                <p className="text-[11px] text-amber-400">
+                  Não deu pra conferir agora as sessões desta venda ({agendarSessoesErro}). O que aparece
+                  acima é do carregamento da página e pode estar desatualizado.
+                </p>
+              )}
               {agendarErro && <p className="text-xs text-red-400 whitespace-pre-line">{agendarErro}</p>}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setAgendarVendaId(null)}
                 className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
-              <button disabled={agendarResumo.bloqueado} onClick={() => {
+              {/* Travado enquanto a releitura das sessões não volta: confirmar
+                  antes disso é decidir com o dado do carregamento da página,
+                  que é exatamente o que essa releitura existe pra evitar. */}
+              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando} onClick={() => {
                 if (agendarDiagnostico && !pedroTerapeuta) {
                   setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
                   return
@@ -1281,12 +1336,14 @@ export default function TerapeutasVendas() {
                 }
                 setAgendarErro(''); setAgendarSenhaOpen(true)
               }} className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
-                agendarResumo.bloqueado
+                agendarResumo.bloqueado || agendarSessoesCarregando
                   ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   : agendarEhSubstituicao ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'}`}>
-                {agendarResumo.bloqueado
-                  ? 'Não é possível refazer'
-                  : agendarEhSubstituicao ? `Apagar e refazer as ${agendarResumo.substituiveis} sessões` : 'Confirmar agendamento'}
+                {agendarSessoesCarregando
+                  ? 'Conferindo as sessões desta venda...'
+                  : agendarResumo.bloqueado
+                    ? 'Não é possível refazer'
+                    : agendarEhSubstituicao ? `Apagar e refazer as ${agendarResumo.substituiveis} sessões` : 'Confirmar agendamento'}
               </button>
             </div>
           </div>

@@ -2,6 +2,41 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
 
+// Sessões de UMA venda, lidas na hora.
+//
+// Existe pro modal de agendamento poder reler antes de deixar alguém confirmar:
+// ele montava o aviso de "isto apaga o que existe" a partir do carregamento da
+// página, então sessão criada por outra pessoa depois disso não aparecia e o
+// modal chegava a mostrar o botão verde de "Confirmar agendamento" pra venda
+// que já tinha pacote. A rota /agendar barra o caso destrutivo de qualquer
+// jeito, mas a promessa da tela é declarar ANTES de destruir - e declarar com
+// dado velho não é declarar.
+//
+// Sem senha, como o GET de /api/terapeutas/vendas que já alimenta essa mesma
+// tela com as mesmas sessões: aqui é só um recorte por sale_id do que ela já
+// recebe, e nenhuma escrita acontece.
+export async function GET(req: NextRequest) {
+  try {
+    const saleId = req.nextUrl.searchParams.get('sale_id')
+    if (!saleId) return NextResponse.json({ error: 'sale_id obrigatório' }, { status: 400 })
+
+    const supabase = getSupabaseAdmin()
+    // Sem paginação de propósito: é uma venda só, e o maior pacote do sistema
+    // tem 9 sessões - longe do teto de 1000 linhas do PostgREST.
+    const { data, error } = await supabase
+      .from('sessoes')
+      .select('id,sale_id,terapeuta_id,numero_sessao,total_sessoes,status,status_consulta,data_agendada,data_entrega,link_meet,comissao_valor,comissao_paga,paciente_nome,paciente_email,agendado_por,vendedor_nome,vendedor_email,entregue_confirmado_por,iniciado_em,concluido_em,terapeutas(nome)')
+      .eq('sale_id', saleId)
+      .order('numero_sessao', { ascending: true })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    return NextResponse.json({ sessoes: data ?? [] })
+  } catch (err) {
+    console.error('[terapeutas/sessoes GET]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json() as {
