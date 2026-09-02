@@ -18,8 +18,9 @@
 > **O relato completo e detalhado de 01 e 02/09/2026 esta na secao 0.1**, com
 > a cronologia dos 4 deploys, o bug do lancamento manual, os achados de cada
 > rodada de revisao, o caso do Miguel Pires ponta a ponta, a venda da Paula
-> Caroline, os metodos de verificacao, **as 17 regras suas consolidadas** e as
-> 10 licoes. Esta secao 0 continua sendo o resumo operacional.
+> Caroline, os metodos de verificacao, **as 17 regras suas consolidadas**, as
+> 10 licoes e as decisoes tecnicas. Sao 16 subsecoes. Esta secao 0 continua
+> sendo o resumo operacional.
 
 > **Leia esta seção antes de qualquer coisa.** Ela resume o que as sessões de 13-14/08, 17/08, 21/08 e 01/09 resolveram e o que ficou aberto.
 
@@ -863,7 +864,78 @@ gravado, a varredura diaria preventiva nunca construida, e o custo de trafego do
 Perpetuo CCC nunca lancado (R$ 3.234,23 x 1,1385 = **R$ 3.682,17**, fechamento
 `close_1786731068074`).
 
-### 0.1.15 Modulos criados nestas 48 horas
+### 0.1.15 Decisoes tecnicas que valem registro
+
+Detalhes de implementacao que nao aparecem no comportamento visivel, mas que
+existem por um motivo e nao devem ser desfeitos sem entender qual.
+
+**Documentos que guiaram o trabalho.** A feature foi desenhada e planejada antes
+de ser escrita:
+
+- Spec: `docs/superpowers/specs/2026-09-01-diagnostico-guiado-design.md`
+- Plano de implementacao: `docs/superpowers/plans/2026-09-01-diagnostico-guiado.md`
+- Relatorios de cada rodada de correcao e revisao:
+  `.superpowers/sdd/2026-09-01-diagnostico-guiado/`
+
+**Escrita atomica em `empurrar-seguintes`.** Mover a cadeia de sessoes usa um
+**`upsert` unico** com todas as linhas, e nao um `update` por sessao em
+sequencia. Com updates sequenciais, uma falha no meio deixaria metade do pacote
+na regua nova e metade na antiga, sem nada na tela dizendo onde parou. O payload
+do upsert cobre exatamente as colunas `NOT NULL` sem default de `sessoes`
+(`sale_id`, `terapeuta_id`, `numero_sessao`, `total_sessoes`, `paciente_nome`,
+`paciente_email`), conferido contra o schema real pelo OpenAPI do PostgREST -
+faltar uma delas faria o upsert virar insert e explodir.
+
+**Chamadas ao Google em lotes paralelos de 4, com `Promise.allSettled`.** Tanto
+a criacao quanto o cancelamento de eventos. Tres razoes, nesta ordem:
+
+1. **Tempo:** e o que tirou o agendamento de um Formato 1 de 9,9 s para 5,5 s,
+   e o empurrar de 6 sessoes para menos de 4 s. Sequencial estourava o teto da
+   Vercel.
+2. **`allSettled` e nao `all`:** uma sessao que falhe no Google nao pode impedir
+   as outras de ganharem convite.
+3. **Lote de 4** para nao disparar rate limit da API do Google.
+
+O que falhou volta **na resposta** (`calendario_falhas` e `calendario_links_pendentes`),
+e as duas telas mostram o aviso ambar no modal de sucesso. Antes, a tela dizia
+"confirmado" com o paciente sem convite nenhum.
+
+**Codigos de erro do Postgres que este projeto ja encontrou, e o que significam
+aqui:**
+
+| Codigo | Onde apareceu | Significado pratico |
+|---|---|---|
+| `23514` | `atividades_log.tipo_acao` | check constraint: `tipo_acao` novo sem migration. **Ja quebrou tres vezes neste projeto** |
+| `23503` | `ocorrencias_prontuario.sessao_id` | chave estrangeira bloqueando o delete de uma sessao que tem ocorrencia no prontuario |
+| `23505` | `sessoes_sale_id_numero_sessao_key` | unique violado: o reagendamento recria `numero_sessao` a partir de 1 e colide com sessao que sobreviveu ao delete |
+| `42P10` | sonda de constraint | usado para **provar** que um unique existe, sem escrever nada: `on_conflict` com colunas erradas devolve este erro |
+
+**`ON DELETE` das duas chaves estrangeiras que apontam para `sessoes`**, medido
+no banco e nao presumido: `ocorrencias_prontuario.sessao_id` **bloqueia** o
+delete, e `atividades_log.sessao_id` e **`SET NULL`**, entao nao bloqueia. Nao
+existe nenhum outro FK apontando para `sessoes`.
+
+**Corte de data por terapeuta (`vendas_a_partir_de`).** A consulta do Diagnostico
+respeita a data de corte configurada no cadastro do terapeuta, para nao fazer
+aparecerem em Pendentes vendas anteriores a entrada dele no sistema. Detalhe que
+importou no caso do produto "Mentoria Particular - Pedro | Denise": **o Pedro tem
+`vendas_a_partir_de` configurado e a Denise nao**, e foi por isso que uma venda
+desse produto apareceria em Pendentes dela - ver o achado da Revisao 1 em 0.1.6.
+
+**Filtro de produto na consulta, para escapar do teto de 1000.** A tela do
+terapeuta busca as vendas do Diagnostico com
+`.ilike('produto', '%Diagnóstico Guiado%')`. Sem esse filtro, a consulta traria
+as 1000 primeiras de 10.022 e **nenhuma** das vendas do Diagnostico entraria -
+foi um dos defeitos que passou em `tsc`, teste e build e devolvia zero de 5
+vendas em producao. E a mesma razao pela qual o campo `produto` da venda da
+Paula precisou ser corrigido no banco, e nao so a classificacao no codigo
+(ver 0.1.10).
+
+**Tipo de ocorrencia no prontuario ao empurrar a cadeia:** `remarcacao`, que e o
+unico que o check constraint da tabela conhece. Inventar um tipo novo repetiria
+exatamente o erro do `atividades_log`.
+
+### 0.1.16 Modulos criados nestas 48 horas
 
 | Arquivo | O que decide | Testes |
 |---|---|---|
