@@ -44,7 +44,15 @@ async function getCalendarId(calendar: ReturnType<typeof google.calendar>): Prom
       const { data: novo } = await calendar.calendars.insert({
         requestBody: { summary: CALENDARIO_NOME },
       })
-      return novo.id as string
+      // Validado DENTRO da promessa. Sem isso, um corpo sem `id` fazia a
+      // promessa RESOLVER com undefined e ficar em cache para sempre: o
+      // `if (!calendarIdPromise)` acima nunca mais dava verdadeiro e toda
+      // chamada seguinte mandava `calendarId: undefined` até o processo
+      // reciclar. O cache de string de antes se recuperava sozinho, então
+      // isso era regressão. Lançando aqui, cai no catch abaixo, que zera o
+      // cache e deixa a próxima chamada tentar de novo.
+      if (!novo.id) throw new Error('o Google criou o calendário mas não devolveu o id')
+      return novo.id
     })()
   }
   try {
