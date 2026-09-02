@@ -7,6 +7,8 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
+import { formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 
 type TerapeutaSession = { nome: string; email: string; tipo: string }
 
@@ -37,6 +39,10 @@ type Sale = {
   preco_base: number
   data_hora: string
   status: string | null
+  // Precisa vir da API em toda venda: sem order_id, formatoDaVenda() nunca
+  // reconhece um pacote do Diagnóstico Guiado e a tela trata os três formatos
+  // como um produto qualquer de 1 sessão, sem erro nenhum.
+  order_id?: string
 }
 
 type Sessao = {
@@ -137,6 +143,16 @@ function dateToDatetimeLocal(date: Date): string {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
   return d.toISOString().slice(0, 16)
 }
+// Formata "2026-09-08T14:00" como "08/09/2026 14:00" sem passar por Date: a
+// prévia precisa mostrar exatamente o mesmo horário que será enviado, e
+// reconverter pra Date aqui reintroduziria a ambiguidade de fuso que o resto
+// da tela já evita tratando o datetime-local como horário de Brasília.
+function fmtDatetimeLocalBR(valor: string): string {
+  const [data, hora] = valor.split('T')
+  if (!data || !hora) return valor
+  const [ano, mes, dia] = data.split('-')
+  return `${dia}/${mes}/${ano} ${hora.slice(0, 5)}`
+}
 
 // data_agendada vem do banco em UTC (ex.: "2026-07-13T18:00:00+00:00"). Pra
 // pré-preencher um <input type="datetime-local"> mostrando o horário real de
@@ -165,6 +181,12 @@ const TABELA_SESSOES_POR_VALOR: { pedro: Record<number, number>; denise: Record<
   denise: { 550: 1, 790: 2, 1400: 4, 2640: 8 },
 }
 function inferirNumeroSessoesPorValor(sale: Sale, todasVendas: Sale[]): number {
+  // O Diagnóstico Guiado não está na tabela de preços e o nome do produto não
+  // diz quantas sessões são, então sem esta linha ele caía no fallback de 1
+  // sessão. A quantidade é derivada do FORMATO (2, 4 ou 9), nunca do valor: o
+  // valor_pago_cliente varia com parcelamento e o preco_base quebra com cupom.
+  const diagnostico = formatoDaVenda(sale)
+  if (diagnostico) return diagnostico.totalSessoes
   const tabela = sale.produto.toLowerCase().includes('denise') ? TABELA_SESSOES_POR_VALOR.denise : TABELA_SESSOES_POR_VALOR.pedro
   if (tabela[sale.preco_base]) return tabela[sale.preco_base]
   const irmas = todasVendas.filter(v => v.email === sale.email && v.produto === sale.produto)
@@ -433,9 +455,16 @@ export default function TerapeutasVendas() {
     if (autoAgendarRef.current || loading) return
     const saleId = searchParams.get('agendar')
     if (!saleId) return
-    const venda = pageData.vendas_pendentes.find(v => v.id === saleId)
-    if (!venda) return
+    // Procura também em Ativos: a venda pode já ter sessões (reagendamento
+    // total). Antes olhava só vendas_pendentes e, quando não achava, o efeito
+    // saía calado - a pessoa clicava em "Agendar" na tela do terapeuta, caía
+    // aqui e não acontecia absolutamente nada, sem erro nenhum na tela.
+    const venda = [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === saleId)
     autoAgendarRef.current = true
+    if (!venda) {
+      setErro('A venda que você tentou agendar não está nesta lista. Atualize a página; se continuar assim, avise o time técnico (a venda pode estar fora do filtro de produto ou do corte de data).')
+      return
+    }
     setAbaAtiva('aprovadas')
     setSubAba('pendentes')
     setAgendarVendaId(saleId)
@@ -476,7 +505,21 @@ export default function TerapeutasVendas() {
   const agendarVenda = agendarVendaId
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId)
     : null
-  const agendarNumSessoes = parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
+  // Diagnóstico Guiado: quantidade de sessões e datas são derivadas do
+  // FORMATO (2, 4 ou 9 sessões, 7 dias entre todas), não escolhidas na tela.
+  // Por isso o modal esconde os dois campos e o envio não manda nem
+  // numero_sessoes nem datas_sessoes - a rota recusa datas_sessoes com 400
+  // pro Diagnóstico, e era exatamente isso que travava todo agendamento:
+  // o efeito abaixo sempre preenchia agendarDatasEditadas, então o campo ia
+  // junto em toda requisição.
+  const agendarDiagnostico = agendarVenda ? formatoDaVenda(agendarVenda) : null
+  // O Pedro sempre começa o pacote; a Denise pega o restante. Quem monta a
+  // divisão é a rota, mas ela ainda exige um terapeuta_id no corpo.
+  const pedroTerapeuta = pageData.terapeutas.find(t => t.nome.trim().toLowerCase().startsWith('pedro')) ?? null
+  const agendarTerapeutaEfetivo = agendarDiagnostico ? (pedroTerapeuta?.id ?? '') : agendarTerapeutaId
+  const agendarNumSessoes = agendarDiagnostico
+    ? agendarDiagnostico.totalSessoes
+    : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
 
   useEffect(() => {
     if (!agendarDataPrimeira || !agendarVenda) { setAgendarDatasEditadas([]); return }
@@ -524,16 +567,21 @@ export default function TerapeutasVendas() {
 
   // ── Handlers ──
   async function handleAgendar(senha: string) {
-    if (!agendarVendaId || !agendarTerapeutaId || !agendarDataPrimeira) return
+    if (!agendarVendaId || !agendarTerapeutaEfetivo || !agendarDataPrimeira) return
     setAgendarLoading(true); setAgendarErro('')
     const res = await fetch('/api/terapeutas/sessoes/agendar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaId,
+        sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaEfetivo,
         data_primeira_sessao: agendarDataPrimeira,
-        numero_sessoes: agendarNumSessoes,
-        datas_sessoes: agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined,
+        // No Diagnóstico os dois campos ficam de fora: a rota deriva a
+        // quantidade do formato e as datas da régua de 7 dias. Mandar
+        // datas_sessoes ali é recusado com 400 (rede de segurança da rota).
+        numero_sessoes: agendarDiagnostico ? undefined : agendarNumSessoes,
+        datas_sessoes: agendarDiagnostico
+          ? undefined
+          : (agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined),
         usuario_email: adminEmail, senha,
       }),
     })
@@ -978,40 +1026,85 @@ export default function TerapeutasVendas() {
               <button onClick={() => setAgendarVendaId(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Terapeuta <span className="text-red-400">*</span></label>
-                <select value={agendarTerapeutaId} onChange={e => setAgendarTerapeutaId(e.target.value)}
-                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
-                  {pageData.terapeutas.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
-                </select>
-              </div>
+              {agendarDiagnostico ? (
+                /* Pacote conjunto: quem faz cada sessão é regra do produto, não
+                   escolha da tela. Mostrar um seletor de terapeuta aqui daria a
+                   impressão de que dá pra mandar as 9 sessões pra uma pessoa só. */
+                <div className="bg-violet-500/10 border border-violet-500/30 rounded-lg p-3">
+                  <p className="text-xs font-semibold text-violet-300">
+                    Diagnóstico Guiado · Formato {agendarDiagnostico.formato} · {agendarDiagnostico.totalSessoes} sessões
+                  </p>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Pacote conjunto: {pedroTerapeuta?.nome ?? 'Pedro'} faz {agendarDiagnostico.sessoesPedro === 1 ? 'a 1ª sessão' : `as ${agendarDiagnostico.sessoesPedro} primeiras sessões`} e a Denise as demais,
+                    com 7 dias entre todas. A quantidade e as datas vêm do formato: aqui você escolhe só a data da 1ª sessão.
+                  </p>
+                  {!pedroTerapeuta && (
+                    <p className="text-[11px] text-red-400 mt-1">
+                      Pedro não aparece como terapeuta ativo - o pacote não pode ser montado até isso ser corrigido no cadastro.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Terapeuta <span className="text-red-400">*</span></label>
+                  <select value={agendarTerapeutaId} onChange={e => setAgendarTerapeutaId(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
+                    {pageData.terapeutas.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Data e horário da 1ª sessão <span className="text-red-400">*</span></label>
                 <input type="datetime-local" value={agendarDataPrimeira} onChange={e => setAgendarDataPrimeira(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões <span className="text-red-400">*</span></label>
-                <input type="number" min={1} value={agendarNumSessoesInput} onChange={e => setAgendarNumSessoesInput(e.target.value)}
-                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
-                <p className="text-[10px] text-gray-600 mt-1">
-                  Sugerido a partir do nome do produto — confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
-                </p>
-              </div>
-              {agendarDatasEditadas.length > 0 && (
-                <div className="bg-gray-800/60 rounded-lg p-3">
-                  <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {agendarNumSessoes} sessões (intervalo de 7 dias — edite se alguma sessão real sair da regra):</p>
-                  <div className="space-y-1.5">
-                    {agendarDatasEditadas.map((valor, i) => (
-                      <div key={i} className="flex items-center gap-3 text-xs">
-                        <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
-                        <input type="datetime-local" value={valor}
-                          onChange={e => setAgendarDatasEditadas(prev => prev.map((v, idx) => idx === i ? e.target.value : v))}
-                          className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
-                      </div>
-                    ))}
-                  </div>
+              {!agendarDiagnostico && (
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões <span className="text-red-400">*</span></label>
+                  <input type="number" min={1} value={agendarNumSessoesInput} onChange={e => setAgendarNumSessoesInput(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                  <p className="text-[10px] text-gray-600 mt-1">
+                    Sugerido a partir do nome do produto - confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
+                  </p>
                 </div>
+              )}
+              {agendarDatasEditadas.length > 0 && (
+                agendarDiagnostico ? (
+                  /* Prévia somente leitura: as datas são calculadas pela régua
+                     de 7 dias e não podem ser editadas uma a uma sem quebrar o
+                     pacote (a remarcação de uma sessão do meio tem fluxo
+                     próprio, com a escolha entre manter ou empurrar). */
+                  <div className="bg-gray-800/60 rounded-lg p-3">
+                    <p className="text-xs text-gray-400 mb-2 font-medium">
+                      Prévia das {agendarNumSessoes} sessões (7 dias entre todas, calculadas pelo sistema):
+                    </p>
+                    <div className="space-y-1">
+                      {agendarDatasEditadas.map((valor, i) => (
+                        <div key={i} className="flex items-center gap-3 text-xs">
+                          <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
+                          <span className="text-gray-200">{fmtDatetimeLocalBR(valor)}</span>
+                          <span className="text-[10px] text-gray-500">
+                            {i < agendarDiagnostico.sessoesPedro ? (pedroTerapeuta?.nome ?? 'Pedro') : 'Denise'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-gray-800/60 rounded-lg p-3">
+                    <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {agendarNumSessoes} sessões (intervalo de 7 dias - edite se alguma sessão real sair da regra):</p>
+                    <div className="space-y-1.5">
+                      {agendarDatasEditadas.map((valor, i) => (
+                        <div key={i} className="flex items-center gap-3 text-xs">
+                          <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
+                          <input type="datetime-local" value={valor}
+                            onChange={e => setAgendarDatasEditadas(prev => prev.map((v, idx) => idx === i ? e.target.value : v))}
+                            className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
               )}
               {/* whitespace-pre-line: o conflito de agenda pode listar uma
                   data por linha quando várias sessões do pacote batem. */}
@@ -1021,7 +1114,14 @@ export default function TerapeutasVendas() {
               <button onClick={() => setAgendarVendaId(null)}
                 className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
               <button onClick={() => {
-                if (!agendarTerapeutaId || !agendarDataPrimeira) { setAgendarErro('Selecione o terapeuta e a data'); return }
+                if (agendarDiagnostico && !pedroTerapeuta) {
+                  setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
+                  return
+                }
+                if (!agendarTerapeutaEfetivo || !agendarDataPrimeira) {
+                  setAgendarErro(agendarDiagnostico ? 'Informe a data da 1ª sessão' : 'Selecione o terapeuta e a data')
+                  return
+                }
                 setAgendarErro(''); setAgendarSenhaOpen(true)
               }} className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg transition-colors">
                 Confirmar agendamento
