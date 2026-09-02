@@ -5,6 +5,7 @@ import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
+import { validarDatasDoPacote, mensagemDoProblema } from '@/lib/datas-do-pacote'
 import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagendamento-total'
 
 // Sem `maxDuration` declarado, a Vercel corta a função em 10 s. Um
@@ -62,16 +63,18 @@ export async function POST(req: NextRequest) {
   // Diagnostico Guiado: pacote com dois terapeutas. Detectado pela oferta.
   const diagnostico = formatoDaVenda(sale as { id: string; order_id?: string })
 
-  // As datas do pacote do Diagnostico sao derivadas inteiramente da regua (7 em
-  // 7 dias) e do formato (montarPacote), a partir de UMA data. Aceitar
-  // datas_sessoes soltas aqui criaria um pacote com datas fora da regua que o
-  // resto do sistema (remarcacao, telas, notificacao) nao sabe interpretar.
-  // Recusa explicita em vez de ignorar em silencio: se o comercial digitou
-  // datas especificas, ele precisa saber que elas nao foram usadas, em vez de
-  // descobrir isso só olhando a agenda depois.
-  if (diagnostico && datas_sessoes && datas_sessoes.length > 0) {
+  // O Diagnostico ACEITA datas soltas desde 02/09/2026. A regua de 7 dias
+  // continua sendo o padrao que a tela calcula, mas o comercial pode ajustar
+  // sessao por sessao para acomodar viagem, feriado ou indisponibilidade do
+  // paciente - decisao do usuario depois de ver a tela em uso.
+  //
+  // O que continua fechado: a QUANTIDADE de sessoes e QUEM atende cada uma, que
+  // vem do formato. Por isso a lista precisa cobrir o pacote inteiro; lista de
+  // tamanho diferente e sinal de que a tela e a rota discordam sobre o formato,
+  // e gravar assim criaria pacote pela metade ou sessao com data invalida.
+  if (diagnostico && datas_sessoes && datas_sessoes.length > 0 && datas_sessoes.length !== diagnostico.totalSessoes) {
     return NextResponse.json(
-      { error: 'O Diagnóstico Guiado monta as datas sozinho a partir da primeira sessão, com 7 dias entre elas. Envie apenas data_primeira_sessao.' },
+      { error: `O Formato ${diagnostico.formato} tem ${diagnostico.totalSessoes} sessões, mas foram enviadas ${datas_sessoes.length} datas. Recarregue a tela e tente de novo.` },
       { status: 400 },
     )
   }
@@ -140,13 +143,33 @@ export async function POST(req: NextRequest) {
   // horário de verão) — new Date(string sem timezone) direto é ambíguo e
   // depende do TZ do runtime do servidor, causando horários errados.
   // Regra padrão: 7 em 7 dias a partir da primeira. `datas_sessoes` (opcional,
-  // um datetime-local por sessão) deixa o comercial corrigir pontualmente uma
-  // sessão que sai da regra — sem mudar como as demais são calculadas.
+  // um datetime-local por sessão) substitui essa régua pelas datas que o
+  // comercial escolheu - no Diagnóstico a lista cobre o pacote inteiro, e nos
+  // demais produtos serve para corrigir pontualmente uma sessão fora da regra.
   const primeiraDataMs = new Date(brasiliaLocalToISO(data_primeira_sessao)).getTime()
   const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
-  const datasExplicitas = datas_sessoes && datas_sessoes.length === numSessoes
+  // Quantas datas a lista precisa ter para valer. No Diagnostico quem manda e o
+  // FORMATO (2, 4 ou 9), e nao numSessoes, que vem de inferirNumeroSessoes e
+  // nao enxerga o pacote: comparar com numSessoes descartaria a lista em
+  // silencio e o comercial veria a regua de 7 dias no lugar das datas que ele
+  // acabou de escolher.
+  const datasEsperadas = diagnostico ? diagnostico.totalSessoes : numSessoes
+  const datasExplicitas = datas_sessoes && datas_sessoes.length === datasEsperadas
     ? datas_sessoes.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
     : null
+
+  // Validacao das datas digitadas, ANTES de qualquer escrita. A decisao vive
+  // em lib/datas-do-pacote.ts, pura e testada, pelo mesmo motivo de
+  // lib/reagendamento-total.ts: `npm test` roda so `lib/*.test.ts`, entao regra
+  // dentro do handler e regra sem teste - e foi assim que passou o defeito em
+  // que limpar um campo de data derrubava a tela inteira.
+  if (datasExplicitas) {
+    const problema = validarDatasDoPacote({ datasISO: datasExplicitas, ehDiagnostico: !!diagnostico })
+    if (problema) {
+      const { texto, status } = mensagemDoProblema(problema)
+      return NextResponse.json({ error: texto }, { status })
+    }
+  }
 
   // Montado ANTES da trava do reagendamento total porque `pacote.length` é o
   // número de sessões que o insert vai gravar, e a trava precisa dele pra
@@ -157,8 +180,17 @@ export async function POST(req: NextRequest) {
   // data_primeira_sessao crua aqui reincidiria no mesmo bug que esse
   // tratamento existe pra evitar (ambiguidade de fuso dependente do
   // runtime do servidor).
+  // datasExplicitas ja passou por brasiliaLocalToISO acima, entao chega aqui em
+  // ISO real. Sem esse tratamento, a data digitada pelo comercial entraria com
+  // 3 horas de diferenca, que e um bug que este projeto ja teve.
   const pacote = diagnostico
-    ? montarPacote({ formato: diagnostico, primeiraDataISO: new Date(primeiraDataMs).toISOString(), pedroId: pedroId!, deniseId: deniseId! })
+    ? montarPacote({
+        formato: diagnostico,
+        primeiraDataISO: new Date(primeiraDataMs).toISOString(),
+        pedroId: pedroId!,
+        deniseId: deniseId!,
+        datasISO: datasExplicitas,
+      })
     : null
   // Quantas sessões serão criadas de fato, numeradas de 1 até esse número. No
   // Diagnóstico é o formato quem manda (2, 4 ou 9), não numSessoes.

@@ -77,6 +77,10 @@ export async function buscarConflitosAgenda(params: {
 
   // Janela única cobrindo todas as datas pedidas, folgada em uma duração pros
   // dois lados — um item que começa antes da primeira data ainda pode invadi-la.
+  // Teto explicito por consulta. Se bater nele, a janela pedida e larga demais
+  // para a trava ser confiavel, e o chamador precisa saber - ver `truncou` no
+  // retorno.
+  const LIMITE_LINHAS = 900
   const menor = Math.min(...pedidos.map(p => p.inicio)) - duracaoMs
   const maior = Math.max(...pedidos.map(p => p.inicio)) + duracaoMs
 
@@ -90,6 +94,14 @@ export async function buscarConflitosAgenda(params: {
     .lte('data_agendada', new Date(maior).toISOString())
   if (ignorarSaleId) sessoesQ = sessoesQ.neq('sale_id', ignorarSaleId)
   if (ignorarSessaoId) sessoesQ = sessoesQ.neq('id', ignorarSessaoId)
+  // `order` + `limit` explicitos. Sem eles vale o teto de 1000 do PostgREST,
+  // que corta EM SILENCIO e sem ordem definida - e a trava simplesmente para de
+  // enxergar parte dos horarios ocupados, que e o problema que este modulo
+  // existe para resolver. A janela era estreita enquanto as datas vinham da
+  // regua de 7 dias (56 dias num Formato 1); com datas digitadas a mao ela
+  // passou a ser o que a pessoa escrever. O Pedro ja tem 740 compromissos
+  // cadastrados, contra o teto de 1000.
+  sessoesQ = sessoesQ.order('data_agendada', { ascending: true }).limit(LIMITE_LINHAS)
 
   const compromissosQ = client
     .from('compromissos_terapeuta')
@@ -97,6 +109,8 @@ export async function buscarConflitosAgenda(params: {
     .eq('terapeuta_id', terapeuta_id)
     .gte('inicio', new Date(menor).toISOString())
     .lte('inicio', new Date(maior).toISOString())
+    .order('inicio', { ascending: true })
+    .limit(LIMITE_LINHAS)
 
   const [{ data: sessoes }, { data: compromissos }] = await Promise.all([sessoesQ, compromissosQ])
 

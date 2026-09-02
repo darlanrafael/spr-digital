@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes } from './diagnostico-guiado'
+import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes , avisosDasDatas } from './diagnostico-guiado'
 
 const venda = (order_id: string | undefined, id = 'v1') => ({ id, order_id }) as never
 
@@ -189,4 +189,142 @@ test('a excecao nao contamina venda com o mesmo id em outra oferta', () => {
   // A excecao e por venda: o id e unico, entao o order_id nem importa.
   const f = formatoDaVenda({ id: '27a669a3-dad9-4c8f-ae93-bca82bb13e90', order_id: undefined })
   assert.equal(f?.formato, 1)
+})
+
+test('montarPacote respeita datas escolhidas a mao pelo comercial', () => {
+  // Regua de 7 dias e o padrao, nao amarra: viagem e feriado sao rotina.
+  const f = { formato: 3 as const, totalSessoes: 2, sessoesPedro: 1 }
+  const p = montarPacote({
+    formato: f, primeiraDataISO: '2026-09-02T14:20:00.000Z', pedroId: 'ped', deniseId: 'den',
+    datasISO: ['2026-09-02T14:20:00.000Z', '2026-09-20T18:00:00.000Z'],
+  })
+  assert.equal(p[0].data_agendada, '2026-09-02T14:20:00.000Z')
+  assert.equal(p[1].data_agendada, '2026-09-20T18:00:00.000Z')
+})
+
+test('quem atende cada sessao NAO muda por causa das datas manuais', () => {
+  const f = { formato: 1 as const, totalSessoes: 9, sessoesPedro: 2 }
+  const datas = Array.from({ length: 9 }, (_, i) => `2026-10-${String(i + 1).padStart(2, '0')}T10:00:00.000Z`)
+  const p = montarPacote({ formato: f, primeiraDataISO: datas[0], pedroId: 'ped', deniseId: 'den', datasISO: datas })
+  assert.deepEqual(p.slice(0, 2).map(x => x.terapeuta_id), ['ped', 'ped'])
+  assert.equal(p.slice(2).every(x => x.terapeuta_id === 'den'), true)
+  assert.equal(p.slice(0, 2).every(x => x.comissao_valor === 0), true)
+  assert.equal(p.slice(2).every(x => x.comissao_valor === 95), true)
+})
+
+test('lista de datas incompleta e IGNORADA: cai na regua em vez de gravar data invalida', () => {
+  const f = { formato: 3 as const, totalSessoes: 2, sessoesPedro: 1 }
+  const p = montarPacote({
+    formato: f, primeiraDataISO: '2026-09-02T14:20:00.000Z', pedroId: 'ped', deniseId: 'den',
+    datasISO: ['2026-09-02T14:20:00.000Z'],
+  })
+  assert.equal(p.length, 2)
+  assert.equal(p[1].data_agendada, '2026-09-09T14:20:00.000Z')
+})
+
+test('sem datasISO o pacote sai na regua de 7 dias, como sempre', () => {
+  const f = { formato: 3 as const, totalSessoes: 2, sessoesPedro: 1 }
+  const p = montarPacote({ formato: f, primeiraDataISO: '2026-09-02T14:20:00.000Z', pedroId: 'ped', deniseId: 'den' })
+  assert.equal(p[1].data_agendada, '2026-09-09T14:20:00.000Z')
+})
+
+// --- avisosDasDatas: roda a cada render do modal e NAO pode lancar em nenhuma
+// entrada. Os testes usam o formato cru do campo datetime-local, que e o que a
+// tela realmente entrega.
+
+test('CRITICO: campo limpo pelo comercial NAO lanca, sai como invalida', () => {
+  // new Date('').toISOString() lanca RangeError. Como isto roda a cada render,
+  // a excecao derrubava a pagina inteira e apagava os ajustes ja feitos nas
+  // outras sessoes. O teste antigo passava 'lixo' direto pra funcao e nao
+  // pegava o caso, porque quem convertia era a tela, ANTES de chamar.
+  const a = avisosDasDatas(['2026-09-02T14:20', '', '2026-09-16T14:20'])
+  assert.deepEqual(a.invalidas, [2])
+})
+
+test('undefined e null tambem saem como invalidas, sem lancar', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', undefined, null])
+  assert.deepEqual(a.invalidas, [2, 3])
+})
+
+test('string sem sentido sai como invalida', () => {
+  assert.deepEqual(avisosDasDatas(['2026-09-02T14:20', 'lixo']).invalidas, [2])
+})
+
+test('CRITICO: duas sessoes do pacote no mesmo horario sao apontadas', () => {
+  // A trava de conflito da rota compara as datas pedidas contra o BANCO e
+  // ignora as sessoes desta venda, entao duas datas iguais do pacote novo
+  // passariam batido: dois convites pro paciente na mesma hora.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-20T15:00', '2026-09-20T15:00'])
+  assert.deepEqual(a.duplicadas, [3])
+})
+
+test('tres no mesmo horario apontam as duas repetidas', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-02T14:20', '2026-09-02T14:20'])
+  assert.deepEqual(a.duplicadas, [2, 3])
+})
+
+test('data fora de ordem e apontada como fora de ordem, nao como fora da regua', () => {
+  // Sessao 3 antes da 2: quase sempre erro de digitacao, e o aviso generico de
+  // "fora dos 7 dias" fazia o comercial ler como ajuste normal e confirmar.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-30T14:20', '2026-09-20T14:20'])
+  assert.deepEqual(a.foraDeOrdem, [3])
+  assert.equal(a.foraDaRegua.includes(3), false)
+})
+
+test('MENOR: mudar so o horario nao dispara o aviso de intervalo', () => {
+  // "essa fica 15h em vez de 14h" e o ajuste mais comum. Comparacao exata em
+  // milissegundos fazia 7d+1h virar aviso, virando ruido.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-09T15:20', '2026-09-16T14:20'])
+  assert.deepEqual(a.foraDaRegua, [])
+})
+
+test('pacote inteiro na regua nao gera aviso nenhum', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-09T14:20', '2026-09-16T14:20'])
+  assert.deepEqual(a, { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] })
+})
+
+test('intervalo de dias diferente de 7 e apontado', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-04T14:20', '2026-09-11T14:20', '2026-09-30T14:20'])
+  assert.deepEqual(a.foraDaRegua, [2, 4])
+})
+
+test('data invalida no meio nao impede o aviso das demais', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', '', '2026-09-30T14:20'])
+  assert.deepEqual(a.invalidas, [2])
+  assert.deepEqual(a.foraDaRegua, [])
+})
+
+test('lista vazia e lista de um item nao quebram', () => {
+  assert.deepEqual(avisosDasDatas([]), { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] })
+  assert.deepEqual(avisosDasDatas(['2026-09-02T14:20']).foraDaRegua, [])
+})
+
+test('CRITICO: sessoes que se SOBREPOEM sao apontadas, nao so as identicas', () => {
+  // A Denise atende 60 minutos e nao tem grade de horarios: 14:00 e 14:30 no
+  // mesmo dia ja empilha duas consultas na agenda dela. A trava de conflito da
+  // rota ignora as sessoes da propria venda, entao ninguem mais pega isso.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-11-10T14:00', '2026-11-10T14:30'])
+  assert.deepEqual(a.duplicadas, [3])
+})
+
+test('exatamente 60 minutos de diferenca NAO e sobreposicao', () => {
+  const a = avisosDasDatas(['2026-09-02T14:00', '2026-11-10T14:00', '2026-11-10T15:00'])
+  assert.deepEqual(a.duplicadas, [])
+})
+
+test('59 minutos e sobreposicao', () => {
+  const a = avisosDasDatas(['2026-09-02T14:00', '2026-11-10T14:00', '2026-11-10T14:59'])
+  assert.deepEqual(a.duplicadas, [3])
+})
+
+test('a sobreposicao aponta a sessao POSTERIOR na lista, nao a primeira', () => {
+  // A primeira e a referencia; quem precisa mudar e a que veio depois.
+  const a = avisosDasDatas(['2026-09-02T10:00', '2026-09-02T10:30', '2026-09-02T10:40'])
+  assert.deepEqual(a.duplicadas, [2, 3])
+})
+
+test('sobreposicao continua valendo com as datas fora de ordem', () => {
+  const a = avisosDasDatas(['2026-09-02T14:00', '2026-09-20T14:30', '2026-09-20T14:00'])
+  assert.deepEqual(a.duplicadas, [3])
+  assert.deepEqual(a.foraDeOrdem, [3])
 })
