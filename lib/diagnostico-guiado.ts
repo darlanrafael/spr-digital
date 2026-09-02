@@ -3,9 +3,12 @@ import type { Sale } from '@/types'
 // O formato vem da OFERTA da Hubla, nunca do preco nem do nome.
 //
 // Nome: identico nos tres formatos.
-// Preco: valor_pago_cliente varia com parcelamento e juros (Francisco pagou
-// R$ 6.201,72 e Bruno R$ 4.997,00 no mesmo formato), e preco_base quebra com
-// cupom ou promocao.
+// Preco: nao serve de identificador. Conferido nas 7 vendas reais,
+// valor_pago_cliente e preco_base sao iguais em todas do mesmo formato
+// (4997 no F1), mas valor_com_juros e valor_liquido variam com parcelamento -
+// Francisco fechou 6.201,72 com juros e Bruno 4.997,00 no mesmo Formato 1, e a
+// Paula 5.813,20. Filtrar por qualquer campo de valor quebra: os de juros
+// variam por venda, e preco_base quebra com cupom ou promocao.
 // Oferta: estavel. Na Hubla o order_id e "{idDaFatura}-{idDaOferta}".
 //
 // Aceita varios IDs por formato de proposito: uma oferta nova (promocao, outra

@@ -1001,7 +1001,7 @@ export default function PainelTerapeuta() {
       // tinha ficado de fora desta tela. Lançamento manual do módulo de
       // terapeutas registra um atendimento de paciente que já tem a venda real
       // gravada em outro lugar; somar os dois inflava o bruto por paciente
-      // (R$ 86.310 espalhados por 34 pacientes, medidos em 01/09/2026).
+      // (R$ 86.310 espalhados por 29 pacientes, medidos em 01/09/2026).
       //
       // As sessões continuam vindo de `p.sessoes`, que não é filtrado: o
       // paciente lançado à mão segue aparecendo na agenda e no prontuário.
