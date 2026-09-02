@@ -15,6 +15,11 @@
 
 ## 0. Estado atual e pendências - atualizado 02/09/2026
 
+> **O relato completo e detalhado de 01 e 02/09/2026 esta na secao 0.1**, com
+> a cronologia dos 4 deploys, os achados de cada rodada de revisao, o caso do
+> Miguel Pires ponta a ponta, a venda da Paula Caroline, os metodos de
+> verificacao e as 10 licoes. Esta secao 0 continua sendo o resumo operacional.
+
 > **Leia esta seção antes de qualquer coisa.** Ela resume o que as sessões de 13-14/08, 17/08, 21/08 e 01/09 resolveram e o que ficou aberto.
 
 ### Gestor de Projetos (ClickUp) — documentado à parte
@@ -183,6 +188,545 @@ Em 14/08 o usuário exportou os estornos de **11/05 a 22/06** das duas plataform
 1. Corrigir o fuso do fechamento (risco 1) — 516 de 1.892 vendas Hubla no dia errado é o maior problema aberto
 2. Gravar o `order_ref` da Kiwify (risco 7) — sem isso toda reconciliação futura da Kiwify continua frágil
 3. Construir a varredura diária (risco 6) — é o que substitui a conferência manual
+
+
+---
+
+## 0.1 Diario detalhado de 01 e 02/09/2026
+
+Registro completo e redundante das 48 horas em que o **Diagnostico Guiado** foi
+lancado e o fluxo de **reembolso** foi corrigido. Escrito de forma que cada
+bloco se explique sozinho: fatos importantes aparecem repetidos onde importam,
+de proposito, para nao depender de ler o documento inteiro na ordem.
+
+**Resumo em uma frase:** 58 commits, 4 deploys, 133 testes automatizados (eram
+71 no inicio), um produto novo em producao, tres defeitos que teriam custado
+dinheiro real barrados por revisao antes do deploy, e um caso de paciente
+resolvido ponta a ponta.
+
+### 0.1.1 Cronologia dos deploys
+
+| Deploy | Commit | O que subiu |
+|---|---|---|
+| 1 | `8257f05` | Diagnostico Guiado completo (merge da branch `feat/diagnostico-guiado`, 36 commits) |
+| 2 | `4d090d0` | Aprovar reembolso cancela o convite do paciente e recusa pedido vencido |
+| 3 | `5ce6bf2` | Reembolso parcial aprovado entra como deducao no fechamento seguinte |
+| 4 | `152b54d` e `236b661` | Venda da Paula Caroline reconhecida como Diagnostico, e alerta de conferencia com a plataforma |
+
+Antes do deploy 1 foi necessario aplicar a migration
+`supabase/migrations/20260901000000_atividades_log_empurrar_seguintes.sql`, que
+adiciona `empurrar_seguintes` ao check constraint de `atividades_log.tipo_acao`.
+O usuario rodou o SQL no Supabase em 02/09 e a aplicacao foi confirmada por
+teste: insert com `tipo_acao = 'empurrar_seguintes'` devolve 201, insert com
+tipo inventado devolve `23514`, e os tipos antigos continuam valendo (testado
+com `remarcacao`). **Era a terceira vez neste projeto que um `tipo_acao` novo
+violava esse constraint** - ver a licao correspondente mais abaixo.
+
+### 0.1.2 O produto: Diagnostico Guiado
+
+Produto vendido na Hubla, com tres formatos. As sessoes de cada pacote sao
+divididas entre **dois** terapeutas: o **Pedro sempre comeca** e a **Denise
+atende o resto**. Sao **7 dias entre todas as sessoes**, sem excecao.
+
+| Formato | Oferta na Hubla | Preco de tabela | Total | Pedro | Denise |
+|---|---|---|---|---|---|
+| 1 | `WXwmPZfJxGqeXerA6dkO` | R$ 4.997 | 9 sessoes | 2 | 7 |
+| 2 | `H8DA8U21x7Lmv3NreVMs` | R$ 2.497 | 4 sessoes | 1 | 3 |
+| 3 | `qVvads7GKaI7lN1Kctrr` | R$ 1.697 | 2 sessoes | 1 | 1 |
+
+Existe ainda a oferta **"Padrao"** (`wd6AwMQIJGAekPCGCRsb`, R$ 10,00) dentro do
+mesmo produto, que **nao e mapeada de proposito**: nao corresponde a formato
+nenhum. Compra por ela cai no aviso de "oferta desconhecida" em vez de montar
+um pacote errado.
+
+**Regra de comissao, que e do PRODUTO e nao da pessoa:** a Denise recebe
+**R$ 95 por sessao** no Diagnostico Guiado. Nos demais produtos ela continua com
+os 30% de sempre. O Pedro nao tem repasse, porque e socio. O valor de R$ 95 e
+gravado em `sessoes.comissao_valor` no momento do agendamento, e o fechamento
+de terapeutas **le essa coluna** em vez de recalcular - por isso a regra chega
+ao fechamento sem nenhuma alteracao no calculo de comissao.
+
+**Identificacao do produto: sempre pela OFERTA, nunca pelo preco nem pelo nome.**
+Regra dada pelo usuario. O nome e identico nos tres formatos. O preco varia com
+parcelamento e juros: o Francisco pagou R$ 6.201,72 e o Bruno R$ 4.997,00 no
+mesmo Formato 1, e a Paula Caroline tem `valor_com_juros` de R$ 5.813,20 contra
+`valor_pago_cliente` de R$ 4.997. Na Hubla o `order_id` e
+`{uuidDaFatura}-{idDaOferta}`, e `ofertaDoOrderId()` extrai a segunda parte.
+
+**Fluxo de agendamento:** a venda cai em Pendentes de Agendamento na tela do
+**Pedro** (so dele, porque e ele quem comeca). O comercial informa **apenas a
+data da primeira sessao** - nao ha campo de quantidade nem edicao de datas,
+porque as duas coisas sao derivadas do formato. O sistema monta o pacote
+inteiro nas duas agendas, com 7 dias entre cada sessao, cria os eventos no
+Google Calendar com link do Meet e grava a comissao da Denise.
+
+**Remarcacao:** se o comercial remarcar uma sessao do meio e isso quebrar o
+intervalo de 7 dias, o sistema **pergunta** se ele quer manter as demais onde
+estao ou empurrar as seguintes para restaurar a regua. A escolha e dele - foi
+requisito explicito do usuario: *"O comercial decide, como ele quer seguir"*.
+
+### 0.1.3 As vendas reais do Diagnostico
+
+Sete vendas ate 02/09/2026, todas ainda sem sessao criada:
+
+| Cliente | Data | Valor | Formato | Sessoes |
+|---|---|---|---|---|
+| Paula Caroline | 28/08 | R$ 4.997 | 1 | 9 (2 Pedro / 7 Denise) |
+| Rafaela Pires Anchieta | 28/08 | R$ 4.997 | 1 | 9 |
+| Juliane Eller | 29/08 | R$ 1.697 | 3 | 2 (1 Pedro / 1 Denise) |
+| Francisco Geraldo Silveira | 31/08 | R$ 4.997 | 1 | 9 |
+| Bruno Cavallini de Queiroz | 31/08 | R$ 4.997 | 1 | 9 |
+| Valdir Sabino | 01/09 | R$ 4.997 | 1 | 9 |
+| Gisela Palos | 01/09 | R$ 2.497 | 2 | 4 (1 Pedro / 3 Denise) |
+
+A spec original falava em 4 vendas esperando agendamento; quando a feature foi
+para producao ja eram 7. Todas estao cobertas por teste nomeado em
+`lib/diagnostico-guiado.test.ts`, com o nome do paciente - se alguem reintroduzir
+um bug de classificacao, o teste quebra dizendo de quem e a venda.
+
+### 0.1.4 O que a auditoria da branch encontrou: a feature estava pronta e nao funcionava
+
+A branch tinha 17 commits, todos os testes passando, `tsc` e `build` limpos. E
+**agendar um Diagnostico pela interface era impossivel**, por tres defeitos
+empilhados que nenhum teste unitario deste projeto alcanca:
+
+1. O botao "Agendar" da tela do terapeuta e um `Link` para `/terapeutas/vendas`
+   - **outra pagina, com outra API**. E essa API filtrava `sales` so por
+   primeiro nome de terapeuta ativo (`produto.ilike.%pedro%`), que o produto do
+   Diagnostico nao tem. A venda nunca entrava em `vendas_pendentes`.
+2. O efeito que abre o modal com `?agendar=<id>` procurava a venda nessa lista
+   e, ao nao achar, **saia calado**. A pessoa clicava, a pagina abria, e nada
+   acontecia. Sem erro, sem mensagem, sem nada.
+3. O efeito que preenche as datas rodava sempre, entao `datas_sessoes` ia em
+   toda requisicao e a rota respondia 400 no Diagnostico - a recusa correta,
+   que existia justamente para proteger a regua de 7 dias.
+
+Somando: `inferirNumeroSessoesPorValor` nao conhecia o produto e sugeria 1
+sessao.
+
+**Outros achados da mesma auditoria, todos corrigidos:**
+
+- **Empurrar as seguintes nunca chamava `cancelarEvento`/`criarEventoComMeet`**:
+  o paciente ficava com convite e link do Meet no horario ANTIGO de cada sessao
+  movida. Num Formato 1 sao ate 8 de uma vez.
+- **Empurrar nao tinha trava de produto.** Medido no banco: 123 pacotes de
+  outros produtos tem 2 ou mais sessoes, e **41 deles (33%) ja tem par com
+  menos de 7 dias** - exemplo real, pacote
+  `1eac8d7e-78a0-4f63-ba81-3431b34daf87`, sessoes em 21/07 14:20 e 22/07 13:30.
+  Ou seja: remarcar uma Mentoria Particular disparava o modal com frequencia, e
+  um clique reescreveria as datas dela para uma regua que aquele produto nunca
+  seguiu.
+- **Etiqueta de progresso errada na tela do terapeuta**: vinha do agregado por
+  e-mail, que soma todas as vendas do paciente com aquele terapeuta, e as
+  sessoes carregadas ali sao so as dele. Quando o Pedro entregava as 2 sessoes
+  dele de um Formato 1, a linha mostrava "sessao 2 de 2", barra em 100% e
+  "Concluido", com 7 sessoes ainda por fazer com a Denise.
+- **Venda com oferta fora do mapa sumia da tela em silencio** por causa de um
+  `continue`. Agora aparece com aviso pedindo a associacao e o botao "Agendar"
+  bloqueado.
+- **Sem guarda para `data_agendada` nula**, que mandava o pacote para 1970 via
+  `new Date(null)`.
+
+**Dois defeitos ANTIGOS, de caminho compartilhado por todos os produtos,
+achados so porque a verificacao foi feita contra o banco real:**
+
+1. `ocorrencias_prontuario.sessao_id` tem chave estrangeira para `sessoes`.
+   Qualquer sessao que ja tivesse remarcacao, orientacao ou "nao compareceu"
+   registrados **travava o `delete` do reagendamento total com `23503`**. O erro
+   nao era conferido, o delete seguia sem apagar nada, e o insert seguinte batia
+   no unique `(sale_id, numero_sessao)` devolvendo "duplicate key value violates
+   unique constraint" - mensagem que nao diz nada para quem esta na tela.
+2. As sessoes apagadas no reagendamento **nunca tinham o evento do Google
+   cancelado**. As novas nasciam com eventos novos e os velhos ficavam para
+   sempre no calendario, com o pacote inteiro duplicado na data antiga e na
+   nova. Medido criando e refazendo pacotes de teste: 9 eventos orfaos.
+
+### 0.1.5 As tres rodadas de revisao, e o que cada uma pegou
+
+O padrao que se repetiu: **compilar nao e evidencia de nada**. Cinco defeitos
+desta feature passaram limpos em `tsc`, `npm test` e `npm run build` e
+quebravam em producao. Toda revisao rodou com acesso ao banco real e ao Google
+Calendar de producao.
+
+**Revisao 1, da branch inteira (25 commits).** Liberou a branch e provou que nao
+havia regressao: varreu as 10.020 vendas rodando `formatoDaVenda` em cada uma e
+achou exatamente 6 classificadas, as 6 do Diagnostico, com zero falso positivo -
+o que significa que, para produto antigo, todo ramo `if (diagnostico)` e codigo
+morto. Provou tambem que a tela do comercial nao perdeu venda: o criterio antigo
+trazia 279 vendas, o novo traz 285, com **zero perdidas** e as 6 ganhas.
+Mesmo assim deixou dois achados importantes:
+
+- O link "Agendar" tinha virado **caminho destrutivo sem aviso**. O commit que
+  destravou o agendamento passou a procurar a venda tambem em `vendas_ativos`, e
+  venda em Ativos e venda que JA tem sessoes, que a rota trata como
+  reagendamento total: apaga as nao entregues, cancela os eventos e recria tudo.
+  Cenario medido: existem 18 vendas de "Mentoria Particular - Pedro | Denise", a
+  Denise nao tem `vendas_a_partir_de` configurado, e uma venda desse produto
+  agendada pelo Pedro aparece em Pendentes da Denise com o botao "Agendar".
+  Antes da branch clicar nao fazia nada; depois dela, apagaria as sessoes do
+  Pedro, cancelaria os convites do paciente e recriaria o pacote na Denise, com
+  a comissao de 30% dela. Instancias vivas no dia: zero. Armava na proxima venda.
+- **Risco de timeout.** Nenhuma rota declarava `maxDuration` e nao existe
+  `vercel.json`, entao valia o teto padrao de 10 s da Vercel. Medido contra o
+  Google real: **agendar um Formato 1 levava 9,9 s**, e empurrar as seguintes de
+  um Formato 1 dava de 10 a 13 s.
+
+**Revisao 2, escopada (9 commits de correcao).** Liberou, e achou **dois pontos
+que reabriam a destruicao de pacote dada por fechada**:
+
+- **A trava so olhava `entregue`; `cancelada` reabria tudo.** Sessao cancelada
+  sobrevive ao delete e nao bloqueava. O caminho e todo de producao: pacote de 4
+  sessoes, o paciente pede reembolso parcial de 2, o CEO aprova, e
+  `app/api/terapeutas/aprovacoes/route.ts` marca as duas como `cancelada` sem
+  mexer no `numero_sessao`. Sobra `cancelada 1,2` + `agendada 3,4`. Abrir o deep
+  link "Agendar" apagaria as sessoes 3 e 4, cancelaria os convites e o insert
+  bateria no unique: **pacote destruido, nada recriado**. Pior: o teste
+  `'cancelada nao bloqueia nem entra na lista de substituicao'` **cristalizava o
+  buraco como comportamento esperado**, com exatamente o caso que destroi.
+- **A inversao de ordem da rodada anterior criou uma janela de destruicao.**
+  Entre o delete e o insert a venda ficava com ZERO sessoes durante ate 8 idas e
+  voltas ao Google (~350 ms cada). Um stall do Calendar levava a funcao ao teto
+  de 60 s com as sessoes ja apagadas e nenhuma criada.
+
+**Revisao 3, escopada (9 commits).** Liberou sem critico e sem importante. Tres
+menores, dos quais um foi corrigido por ser regressao real: com o laco de
+cancelamento no fim absoluto da rota, o **ramo de erro do insert passou a pular
+o cancelamento**, deixando evento fantasma na agenda do terapeuta.
+
+**Revisao 4, do reembolso parcial.** **BLOQUEOU** - ver 0.1.7.
+
+### 0.1.6 Reembolso: convites e pedido vencido (deploy `4d090d0`)
+
+**O furo:** aprovar um reembolso so marcava as sessoes como `cancelada` no
+banco. As sessoes sumiam da grade da agenda, da visao do dia, da checagem de
+conflito de horario e dos lembretes de WhatsApp (`lib/whatsapp-pendentes.ts`
+filtra `status = 'agendada'`), **mas o evento no Google continuava existindo**.
+Do lado do sistema a sessao nao existia mais; do lado do paciente, o convite
+estava la com o link do Meet funcionando, e ele podia entrar na sala no horario
+de uma sessao reembolsada. No caso do Miguel Pires eram tres convites, um deles
+no dia seguinte.
+
+**Corrigido:** `link_meet` e `google_event_id` saem junto do status, e os
+eventos sao cancelados no Google.
+
+**Dois problemas de ordem, achados revisando o proprio codigo antes do deploy:**
+
+1. A solicitacao era marcada como `aprovado` **antes** de qualquer validacao.
+   Uma recusa deixaria o pedido aprovado com zero sessao cancelada, sumindo da
+   fila do CEO sem nada ter acontecido.
+2. O erro do update das sessoes nao era conferido, entao uma falha deixaria o
+   pedido aprovado e as sessoes vivas na agenda, sem nada na tela.
+
+**Recusa de pedido vencido:** a solicitacao fica parada esperando o CEO, e nesse
+intervalo uma das sessoes pedidas pode ser ENTREGUE. O valor do reembolso foi
+calculado contando com ela, e aprovar reescreveria para `cancelada` um
+atendimento que aconteceu. Quanto devolver por sessao ja prestada e decisao de
+negocio, entao a rota devolve **409** dizendo qual sessao mudou.
+
+A decisao vive em `lib/aprovacao-reembolso.ts`, **pura e com 8 testes**, pelo
+mesmo motivo de `lib/reagendamento-total.ts`: so tirando a decisao de dentro da
+rota da para provar num teste automatizado que a recusa acontece ANTES de
+cancelar qualquer coisa.
+
+### 0.1.7 Reembolso parcial no fechamento (deploy `5ce6bf2`)
+
+**O furo:** aprovar um reembolso parcial mexia em quatro lugares -
+`solicitacoes_reembolso`, `sessoes`, `ocorrencias_prontuario` e
+`atividades_log` - e **em nenhum momento no financeiro**. A venda continuava
+`aprovada` com o `valor_liquido` cheio, e o fechamento soma exatamente isso
+(`app/fechamentos/page.tsx`, filtro `s.status === 'aprovada'`), sem ler a tabela
+de solicitacoes em lugar nenhum. Os socios retirariam sobre dinheiro que ja
+tinha voltado para o cliente.
+
+**Nunca causou estrago** porque **nenhuma solicitacao havia sido aprovada ate
+02/09**: o historico tinha 3, uma pendente do Miguel Pires e duas rejeitadas do
+Fabio Nery. E nenhuma venda no banco estava com reembolso parcial mal
+registrado.
+
+**Decisao do usuario, textual:** *"Minha ideia quando o reembolso for aprovado
+nao e nem mexer na venda original. E so lancar no proximo fechamento financeiro
+uma aba de custos a serem deduzidos. Assim como e mostrado quando uma venda e
+reembolsada, e ja havia sido repassada anteriormente."*
+
+Entao **a venda original nao e alterada**. Mexer no `valor_liquido` faria o
+faturamento historico mudar de valor depois de fechado, e os fechamentos ja
+confirmados deixariam de bater com o que foi realmente repassado. O parcial
+entra como **deducao no fechamento seguinte**, na mesma tabela e com o mesmo
+"Abater aqui" que ja existe para estorno de venda repassada, com etiqueta ambar
+**"Parcial"**.
+
+**REGRA DO VALOR (usuario, 02/09):** o abatimento e sempre sobre o **valor pago
+pelo cliente**, nunca sobre o liquido depois das taxas. *"O lead pagou dois
+oitocentos e sessenta, fez uma sessao, descontamos apenas mil e trezentos e
+reenviamos pra ele a diferenca."* Ou seja: R$ 2.860 - R$ 1.300 = **R$ 1.560**.
+
+**QUEM ABSORVE (usuario, 02/09):** *"esses mil quinhentos e sessenta nao saem do
+caixa da empresa. Eles sao descontados no proximo repasse financeiro, dos
+socios, na proporcao ja combinada antes, de trinta e cinco por cento para a SPR,
+sessenta e cinco por cento para o Pedro."* Com 35/65: **SPR absorve R$ 546 e o
+Pedro R$ 1.014**. Isso ja era o comportamento da tela para qualquer alerta
+(`deducoes` e `repasse_final` por socio), e e justamente por isso que o parcial
+entra nessa lista em vez de virar um custo a parte: o rateio vem de graca.
+Confirmado no banco que os dois percentuais existem de verdade - o fechamento
+`close_1786718768403` de 14/08 rodou com 35/65, e outros do mesmo dia com 50/50.
+
+**O CRITICO que a revisao pegou antes do deploy, e que 113 testes verdes nao
+pegaram:** a mesma venda podia ser deduzida **duas vezes**.
+
+- Se o parcial fosse abatido e a venda inteira fosse estornada depois - e o
+  webhook da Hubla marca `reembolsada` no evento `invoice.refunded` **sem
+  distinguir parcial de integral** - a tela ofereceria R$ 1.560 do parcial MAIS
+  R$ 2.758,70 do estorno: **R$ 4.318,70 sobre uma venda que gerou R$ 2.758,70**,
+  com o Pedro perdendo R$ 1.014 sobre dinheiro que nunca saiu.
+- Variante que atingia o Miguel diretamente: a venda dele nao entrou em
+  fechamento nenhum, entao se virasse `reembolsada` o filtro
+  `status === 'aprovada'` tiraria a receita e o alerta de parcial continuaria
+  pedindo os R$ 1.560 - os socios pagando por dinheiro que jamais receberam.
+
+**Por que os testes nao pegaram:** eles verificavam que o alerta **aparece**,
+nunca **quanto ele vale**.
+
+**Corrigido dos dois lados:** o parcial so gera deducao enquanto a venda esta
+`aprovada`, e `calcularAlertasPendentes` passou a emitir `valor_liquido`
+**menos** o parcial ja abatido daquela venda, sem alerta nenhum se o parcial ja
+cobriu tudo.
+
+**Outro achado corrigido:** duas solicitacoes aprovadas cobrindo a MESMA sessao
+deduziam duas vezes. O banco **ja tem esse par**: `57bbdc78` e `ae08b8ac`, mesma
+venda, mesma sessao, R$ 700 cada. Salvou-se ate hoje so porque as duas foram
+rejeitadas pelo CEO, nao porque o codigo impedia.
+
+**Chave de identidade:** o parcial se identifica pela **solicitacao**
+(`ClosingAlert.solicitacaoId`) e o estorno inteiro pela **venda** (`saleId`). Se
+a chave fosse so o `saleId`, abater o parcial do Miguel faria um estorno
+integral posterior da mesma venda **nunca mais aparecer** para deducao, porque
+`jaDeduzidos` acharia que ela ja tinha sido descontada. Sao dinheiros diferentes
+e cada um e deduzido uma vez.
+
+**Robustez da consulta:** ganhou `order` e `limit` (o teto de 1000 do PostgREST
+esta ativo neste projeto - conferido: `sales?select=id` devolve 1000 de 10.020) e
+o **erro passou a ser tratado e exibido em bloco ambar**. Lista vazia por falha
+de leitura era indistinguivel de "nao ha nada a deduzir": bastaria alguem ligar
+RLS nessa tabela para o PostgREST devolver 200 com `[]` e o fechamento sair sem
+o desconto, em silencio.
+
+**Fuso:** a data do alerta e convertida para BRT. Cortar a string do
+`timestamptz` direto jogava uma aprovacao das 21h30 para o dia seguinte.
+
+### 0.1.8 O caso do Miguel Pires, ponta a ponta
+
+Historia completa, reconstruida a partir do prontuario e das colunas de tempo:
+
+| Quando | O que aconteceu |
+|---|---|
+| 19/08 | Venda de R$ 2.860 (liquido R$ 2.758,70), pacote de 4 sessoes criado |
+| 20/08 21:15 | Sessao 1 realizada; entrega confirmada pelo Pedro em 21/08 |
+| 25/08 17:18 | Felipe Vieira abre o pedido de reembolso: *"Miguel fez a primeira sessao com o Pedro e nao gostou, mandamos treinamento pra ver se ele se adaptava mas ainda assim optou pelo estorno, segundo ele nao teve conexao com o Pedro"*. Conta: comprou 4 por R$ 2.860, fez 1, equivale ao plano de 1 sessao (R$ 1.300), **reembolso R$ 1.560**. Sessoes a cancelar: 2, 3 e 4 |
+| 27/08 12:07 | Sessao 2 remarcada, com o motivo *"Esse paciente solicitou reembolso"*, de 27/08 11:20 para **02/08** 11:20 - data no passado, anterior a criacao do pacote. Digito trocado, provavelmente 02/09 |
+| 27/08 12:33 | Sessao 2 marcada como concluida pelo Pedro |
+| 02/09 ~10:39 | **A trava nova recusou a aprovacao**, apontando que a sessao 2 estava entregue |
+| 02/09 ~10:39 | Apurado com o comercial: **a sessao 2 nao aconteceu**, foi marcada por engano. Sessao anulada (acao `anular`, que devolve para `agendada`, limpa a data de entrega e registra o motivo no prontuario) |
+| 02/09 08:21 BRT (11:21 UTC) | Reembolso aprovado pelo CEO |
+
+**Resultado verificado no banco e no Google apos a aprovacao:**
+
+- Sessoes 2, 3 e 4 com `status = 'cancelada'`, `link_meet` e `google_event_id`
+  nulos
+- Sessao 1 intacta, `entregue`, com evento e link
+- No calendario **"Atendimentos SPR Digital"** (que e o calendario secundario
+  dedicado, e nao a agenda pessoal): os tres eventos com `status = cancelled`, e
+  o da sessao 1 com `status = confirmed`
+- Prontuario com o registro do reembolso aprovado e o da anulacao da sessao 2,
+  com motivo
+
+**Nenhuma comissao havia sido paga:** as 4 sessoes estao com `comissao_valor`
+zero e `comissao_paga` falso, e o pacote e do Pedro, que nao tem repasse.
+
+**Falta:** marcar o "Abater aqui" dos R$ 1.560 no proximo fechamento.
+
+### 0.1.9 A venda da Paula Caroline e o alerta de conferencia (deploy `152b54d` e `236b661`)
+
+**O caso:** o comercial vendeu um Diagnostico Guiado mas fechou por uma oferta
+criada dentro do produto **"Mentoria Particular - Pedro Roncada"**. Venda de
+28/08/2026, R$ 4.997, `sale_id` `27a669a3-dad9-4c8f-ae93-bca82bb13e90`,
+`order_id` terminando em `4pv79AgzdiRoWeLm5gyT`.
+
+Como `formatoDaVenda` identifica o produto pela OFERTA, a venda era **invisivel**
+para o Diagnostico: nao aparecia em Pendentes de Agendamento e nao dava para
+montar o pacote.
+
+**Primeira tentativa, ERRADA, e por que:** mapear a oferta
+`4pv79AgzdiRoWeLm5gyT` em `OFERTAS_DIAGNOSTICO`. O usuario apontou o erro na
+hora: **oferta na Hubla e link reutilizavel**, e aquela oferta pertence ao
+produto de Mentoria. Declarar que ela significa Diagnostico faria a proxima
+Mentoria vendida pelo mesmo link virar um pacote de 9 sessoes com a Denise, em
+silencio. A oferta do Formato 1 de verdade e `WXwmPZfJxGqeXerA6dkO`, dentro do
+produto Diagnostico - **sao ofertas diferentes, em produtos diferentes**.
+
+**Correcao final, em duas partes, porque uma so nao resolvia:**
+
+1. A venda entrou em **`EXCECOES_DIAGNOSTICO`**, mapeada **por `sale_id`**, como
+   Formato 1. A excecao morre com a venda que a originou, e ha teste garantindo
+   que **outra venda pela mesma oferta continua devolvendo `null`**.
+2. O campo `produto` da linha foi corrigido no banco para o nome exato das
+   outras seis (`Diagnóstico Guiado: Programa de acompanhamento Individual`),
+   porque as consultas das telas filtram por **nome** para escapar do teto de
+   1000 do PostgREST. Sem isso o formato seria reconhecido e a venda nunca
+   chegaria na tela - **exatamente a classe de defeito descrita em 0.1.4**.
+
+**O formato foi confirmado com o usuario, nao deduzido.** Como a venda saiu na
+oferta errada, a oferta nao diz nada, e sobraria o preco - que a regra do
+projeto proibe usar como identificador.
+
+**Seguranca da correcao:** a venda **nao havia entrado em nenhum fechamento** (a
+ultima confirmacao foi 14/08 e a venda e de 28/08), entao o faturamento apenas
+passa a ser atribuido ao produto certo no proximo. Registrado em
+`ocorrencias_prontuario` e em `atividades_log` com o valor anterior.
+
+**Conferencia final:** varridas as 10.022 vendas com a excecao ativa,
+**exatamente 7** classificam como Diagnostico (5 F1, 1 F2, 1 F3), e o filtro por
+nome alcanca as 7. Nenhuma das 279 vendas de Mentoria foi afetada.
+
+**O alerta de conferencia com a plataforma (pedido do usuario):** na apuracao do
+fechamento ele cruza os numeros do sistema com o painel da plataforma. Uma venda
+que muda de produto aqui e nao la faz os dois nunca baterem - filtrar "Mentoria
+Particular - Pedro Roncada" na Hubla mostra a Paula, e no sistema ela nao esta
+mais ali. Sem aviso, isso vira meia hora procurando um erro que nao existe.
+
+Criado `lib/readequacoes-produto.ts` com a lista das vendas readequadas, e um
+bloco azul na tela de fechamento, **filtrado pela janela do periodo**, dizendo o
+que a plataforma ainda mostra, o que o sistema conta e por que mudou. A lista e
+escrita a mao de proposito: readequacao e evento raro, manual e auditado. Um
+teste exige que toda entrada tenha o produto da plataforma, o motivo e a data no
+formato certo.
+
+### 0.1.10 Metodos de verificacao usados, e por que
+
+Compilar nao provou nada nesta feature. O que efetivamente pegou defeito:
+
+- **Varredura completa do banco com paginacao por cursor.** O teto de 1000
+  linhas do PostgREST esta ativo: `sales?select=id` sem `limit` devolve 1000 de
+  10.022. Toda apuracao tem que paginar, senao trunca calado.
+- **Rodar o codigo real contra o dado real.** Importar `formatoDaVenda` e roda-la
+  nas 10.022 vendas foi o que provou que produto antigo nao regride.
+- **Comparar o modulo de antes e o de depois lado a lado**, sobre os mesmos
+  dados, exigindo JSON identico. Foi assim que se provou que nenhum fechamento
+  muda de valor.
+- **Medir latencia real do Google**, e nao estimar: foi o que revelou os 9,9 s
+  contra o teto de 10 s da Vercel.
+- **Consultar o `functions-config-manifest.json` gerado pelo build** para provar
+  que `maxDuration = 60` foi realmente capturado, em vez de confiar no `export`.
+- **Criar dado sintetico, exercitar o fluxo inteiro e apagar depois**,
+  conferindo a remocao com consulta posterior - inclusive os eventos criados no
+  Google Calendar.
+
+**REGRA NOVA, criada em 02/09 depois de um incidente:** toda variavel de
+`.env.local` e de **producao**. Uma rodada de verificacao exercitou o ramo de
+"venda de encaixe" com paciente sintetico e **provavelmente disparou um aviso
+real de WhatsApp para o grupo do Pedro ou da Denise**, por volta das 22h de
+01/09. `N8N_ENCAIXE_WEBHOOK_URL` esta configurada e os dois terapeutas tem
+`grupo_whatsapp_id` real. A partir dai, toda verificacao passou a rodar com
+`N8N_ENCAIXE_WEBHOOK_URL` e `N8N_ALERTA_WEBHOOK_URL` apagadas do `process.env`
+logo apos o `dotenv.config`, e sem POST contra rotas que escrevem.
+
+### 0.1.11 Licoes destas 48 horas
+
+1. **Compilar, passar nos testes e buildar nao prova que funciona.** Cinco
+   defeitos desta feature passaram nos tres e quebravam em producao. Tres eram
+   falhas de **integracao entre telas** - o botao de uma pagina chamando a API
+   de outra - que nenhum teste unitario deste projeto alcanca, e dois eram do
+   banco.
+2. **Um teste pode fixar o erro como comportamento esperado.** Aconteceu duas
+   vezes: o teste `'cancelada nao bloqueia'` e os testes de reembolso parcial
+   que checavam se o alerta aparece, mas nunca quanto ele valia. E o jeito mais
+   eficiente de fazer um buraco durar.
+3. **Decisao enterrada dentro de um handler nao da para testar.** Sempre que a
+   ordem importava - recusar antes de destruir, validar antes de marcar - a
+   solucao foi extrair para modulo puro (`lib/reagendamento-total.ts`,
+   `lib/aprovacao-reembolso.ts`). So assim da para provar a ordem num teste.
+4. **A trava certa olha a propriedade que importa, nao o nome do status.** A
+   trava do reagendamento estava certa no mecanismo e errada no criterio:
+   olhava se o status era `entregue` em vez de olhar se a sessao **sobrevive ao
+   delete e ocupa um numero**. Trocar para sobrevivencia + faixa `1..N` cobriu
+   `cancelada` e cobre qualquer status futuro sem alterar codigo.
+5. **Uma correcao pode criar o defeito seguinte.** Destravar o agendamento criou
+   um caminho destrutivo. Inverter a ordem para proteger o delete criou uma
+   janela de destruicao. Mover o cancelamento para o fim fez o ramo de erro
+   pular o cancelamento. Cada rodada de revisao existiu porque a anterior mexeu
+   em caminho compartilhado.
+6. **Chave de identidade errada esconde dinheiro.** Identificar o alerta de
+   reembolso pelo `saleId` faria um estorno integral posterior desaparecer para
+   sempre. Duas coisas diferentes precisam de chaves diferentes.
+7. **Lista vazia por erro e identica, na tela, a lista vazia por nao haver
+   nada.** Toda consulta que alimenta decisao financeira precisa distinguir os
+   dois casos e dizer qual e.
+8. **Fuso:** o banco guarda UTC. Cortar `slice(0, 10)` de um `timestamptz` joga
+   qualquer coisa depois das 21h para o dia seguinte. Relatar hora ao usuario
+   sem converter tambem erra - aconteceu nesta sessao, ao dizer "11:21" para uma
+   aprovacao das 08:21 BRT.
+9. **Oferta e link reutilizavel, nao identidade de produto.** Excecao de venda
+   individual pertence a venda, nunca a oferta.
+10. **`atividades_log.tipo_acao` tem check constraint e ja quebrou tres vezes
+    neste projeto.** Todo `tipo_acao` novo precisa de migration antes do deploy,
+    senao o log falha em silencio com `23514`.
+
+### 0.1.12 O que ficou pendente ao fim de 02/09
+
+**Do usuario:**
+
+1. **Testar o agendamento de um Diagnostico pela tela**, de verdade. Nenhum
+   clique real foi dado na interface - e foi exatamente ai que os tres defeitos
+   de integracao se esconderam. Sugerido comecar pela **Juliane Eller**
+   (Formato 3, 2 sessoes), depois a **Gisela Palos** (Formato 2, 4 sessoes, que
+   nunca foi exercitado com venda real).
+2. **Marcar o "Abater aqui"** dos R$ 1.560 do Miguel no proximo fechamento.
+3. **Atualizar o fluxo do n8n** para incluir a etiqueta do Diagnostico na
+   mensagem de lembrete. O sistema ja manda `rotulo_diagnostico` no payload, mas
+   quem monta o texto e o n8n.
+4. **Limpar os 17 eventos orfaos antigos** no Google Calendar (julho/2026 e
+   anterior: Leone, Ingrid, Gerson, Kelly e outros). Sao residuo do bug ja
+   corrigido; a branch impede novos mas nao limpa os antigos.
+5. **Conferir os grupos de WhatsApp** do Pedro e da Denise por causa do possivel
+   aviso de encaixe disparado com paciente sintetico em 01/09 por volta das 22h.
+6. **Agendar as 7 vendas do Diagnostico** que estao esperando.
+
+**Riscos registrados sem correcao:**
+
+- A cadeia do empurrar **comprime quando ha entrega fora de ordem** no meio do
+  pacote: se a sessao 5 de um Formato 1 estiver entregue e alguem remarcar a 3,
+  a sessao 6 assume a data que seria da 5. So ocorre com entrega fora de ordem.
+- Com o Google desligado, `/empurrar-seguintes` **preserva o `link_meet`** junto
+  com o `google_event_id`, entao a data muda no banco e o link continua sendo o
+  da reuniao no horario velho. Nao e regressao: antes o paciente tambem ficava
+  com o convite no horario velho, so que sem o link aparecendo na tela.
+- A releitura das sessoes no modal **nao tem timeout nem `AbortController`**: um
+  `fetch` pendurado deixa o botao em "Conferindo as sessoes desta venda" ate a
+  pessoa fechar e reabrir o modal.
+- A deducao do parcial e sobre o **bruto** e a receita do fechamento e o
+  **liquido**, entao a taxa proporcional que a plataforma reteve na venda
+  original nao e redistribuida. Diferenca pequena, e depende de como a Hubla
+  trata a taxa no estorno parcial.
+
+**Continuam abertos, de antes destas 48 horas:** o fuso da tela de fechamento
+(516 de 1.892 vendas Hubla no dia errado), o `order_ref` da Kiwify nunca
+gravado, a varredura diaria preventiva nunca construida, e o custo de trafego do
+Perpetuo CCC nunca lancado (R$ 3.234,23 x 1,1385 = **R$ 3.682,17**, fechamento
+`close_1786731068074`).
+
+### 0.1.13 Modulos criados nestas 48 horas
+
+| Arquivo | O que decide | Testes |
+|---|---|---|
+| `lib/diagnostico-guiado.ts` | formato pela oferta, excecao por venda, montagem do pacote, regua de 7 dias | sim, com as 7 vendas reais nomeadas |
+| `lib/etiqueta-diagnostico.ts` | texto e progresso da etiqueta | sim |
+| `lib/reagendamento-total.ts` | recusar reagendamento ANTES de destruir | sim |
+| `lib/aprovacao-reembolso.ts` | o que cancelar e o que recusar ao aprovar reembolso | 8 |
+| `lib/alertas-reembolso-parcial.ts` | deducao do parcial no fechamento seguinte | 17 |
+| `lib/readequacoes-produto.ts` | avisar que a plataforma mostra outro produto | 7 |
+
+Todos puros, sem acesso a banco, pelo mesmo motivo: **decisao dentro de handler
+nao da para testar**, e foi so extraindo que se conseguiu provar a ordem das
+operacoes.
 
 ---
 
