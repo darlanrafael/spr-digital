@@ -33,6 +33,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
   }
 
+  // try/catch externo, igual ao que /agendar e /remarcar ganharam nesta
+  // branch. Sem ele, qualquer exceção não prevista (rede caindo no meio de
+  // uma consulta, resposta estranha do Google, erro de tipo) virava um 500
+  // sem JSON: a tela caía no `json.error ?? 'Não foi possível empurrar as
+  // seguintes.'` e a pessoa ficava sem saber o que aconteceu nem o que já
+  // tinha sido movido.
+  try {
   const acesso = await verificarAcesso({ usuario_email, senha, token })
   const { valido, usuario } = acesso
   if (!valido) {
@@ -252,4 +259,8 @@ export async function POST(req: NextRequest) {
     calendario_falhas: falhasCalendar,
     aviso: falhasCalendar.length === 0 ? null : `As datas foram salvas, mas o convite do Google não foi refeito em ${falhasCalendar.length} sessão(ões) (sessão ${numerosComFalha.join(', ')}). Esse(s) paciente(s) pode(m) estar sem convite na data nova: remarque essa(s) sessão(ões) de novo ou avise o time técnico.`,
   })
+  } catch (err) {
+    console.error('[empurrar-seguintes]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }
