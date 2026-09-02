@@ -38,10 +38,16 @@ export function calcularAlertasPendentes({
   sales: Sale[]
 }): ClosingAlert[] {
   // Vendas cujo estorno já foi descontado em algum fechamento.
+  //
+  // Alerta com `solicitacaoId` é reembolso PARCIAL (ver
+  // lib/alertas-reembolso-parcial.ts) e fica de fora: ele também carrega o
+  // saleId, então contá-lo aqui faria uma devolução parcial já abatida
+  // esconder o estorno INTEGRAL da mesma venda, que é outro dinheiro e
+  // precisa ser deduzido por conta própria.
   const jaDeduzidos = new Set<string>()
   for (const c of closings) {
     for (const a of c.alertas ?? []) {
-      if (a.saleId) jaDeduzidos.add(a.saleId)
+      if (a.saleId && !a.solicitacaoId) jaDeduzidos.add(a.saleId)
     }
   }
 

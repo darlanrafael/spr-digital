@@ -133,3 +133,18 @@ test('prazo de garantia: compra de 13/08 repassada e estornada em 20/08 vira ale
   assert.equal(a.length, 1)
   assert.equal(a[0].data, '2026-08-20')
 })
+
+test('deducao de reembolso PARCIAL nao esconde o estorno integral da mesma venda', () => {
+  // O parcial guarda o saleId junto do solicitacaoId. Se `jaDeduzidos` olhasse
+  // só o saleId, devolver R$ 1.560 de um pacote hoje faria o estorno dos
+  // R$ 2.758,70 restantes, se viesse depois, nunca aparecer para dedução.
+  const a = calcularAlertasPendentes({
+    closings: [
+      fechamento('c1', ['v1']),
+      fechamento('c2', [], [{ solicitacaoId: 'sol1', saleId: 'v1', nome: 'Miguel', produto: 'x', valor: 1560, data: '2026-09-02' }]),
+    ],
+    sales: [venda({ status: 'reembolsada', data_reembolso: '2026-09-20' })],
+  })
+  assert.equal(a.length, 1)
+  assert.equal(a[0].saleId, 'v1')
+})
