@@ -28,6 +28,34 @@ function horaBRT(iso: string): string {
   })
 }
 
+/**
+ * Tipo de um item da tabela `compromissos_terapeuta`.
+ *
+ * Vive numa funcao pura porque e DECISAO DE SEGURANCA: `soCompromissos` usa o
+ * tipo para liberar o "Agendar assim mesmo", e classificar errado uma consulta
+ * real permite dupla marcacao. Enterrada no meio de `buscarConflitosAgenda`,
+ * que fala com o Supabase, ela ficava fora do alcance de qualquer teste - e os
+ * testes escritos junto com a correcao passavam contra o codigo com o defeito,
+ * porque exercitavam `soCompromissos` (que nao mudou) em vez deste mapeamento.
+ */
+export function tipoDoCompromisso(categoria: string | null | undefined): 'sessao' | 'compromisso' {
+  return String(categoria ?? '').trim().toLowerCase() === 'sessao' ? 'sessao' : 'compromisso'
+}
+
+/**
+ * Qual item ocupado reportar quando a data pedida bate em mais de um.
+ *
+ * Reporta SEMPRE uma sessao quando houver uma, mesmo que um compromisso comece
+ * antes. Escolher o primeiro do array fazia um horario que bate ao mesmo tempo
+ * num ALMOCO e numa consulta lancada a mao reportar o almoco - e ai
+ * `soCompromissos` dizia "e so bloqueio", a tela oferecia "Agendar assim mesmo"
+ * e o agendamento entrava em cima da consulta real. O Pedro tem 209 pares de
+ * compromissos sobrepostos, entao a configuracao e rotineira.
+ */
+export function escolherConflito<T extends { tipo: 'sessao' | 'compromisso' }>(batidas: T[]): T | undefined {
+  return batidas.find(b => b.tipo === 'sessao') ?? batidas[0]
+}
+
 function fmt(iso: string): string {
   const d = new Date(iso)
   const data = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })
@@ -55,8 +83,14 @@ export async function buscarConflitosAgenda(params: {
 
   const client = getSupabaseAdmin()
 
-  const { data: terapeuta } = await client
+  const { data: terapeuta, error: errTerapeuta } = await client
     .from('terapeutas').select('nome,duracao_sessao_minutos,horarios_fixos').eq('id', terapeuta_id).single()
+  // Mesma razao do fail-closed abaixo: sem o cadastro, a trava calcularia a
+  // ocupacao com duracao de 60 min e sem a grade de horarios. Para o Pedro
+  // (40 min, 14 horarios) isso faz a consulta das 13:30 "terminar" 14:30 em vez
+  // de 14:10 e recusar um horario que a agenda oferece como livre. Falha para o
+  // lado conservador, mas continua sendo a trava decidindo com dado errado.
+  if (errTerapeuta) throw new Error(`não foi possível ler o cadastro do terapeuta: ${errTerapeuta.message}`)
   // Nome do terapeuta na mensagem: sem ele o comercial nao sabe DE QUEM e a
   // agenda que esta ocupada, e num pacote com dois terapeutas isso e a primeira
   // coisa que ele precisa saber.
@@ -90,8 +124,9 @@ export async function buscarConflitosAgenda(params: {
   // Janela única cobrindo todas as datas pedidas, folgada em uma duração pros
   // dois lados — um item que começa antes da primeira data ainda pode invadi-la.
   // Teto explicito por consulta. Se bater nele, a janela pedida e larga demais
-  // para a trava ser confiavel, e o chamador precisa saber - ver `truncou` no
-  // retorno.
+  // para a trava ser confiavel, e a funcao LANCA - ver a checagem depois das
+  // consultas. Folga hoje: 453 linhas no pior caso medido, 736 no total do
+  // Pedro, mas 592 foram criadas so em agosto.
   const LIMITE_LINHAS = 900
   const menor = Math.min(...pedidos.map(p => p.inicio)) - duracaoMs
   const maior = Math.max(...pedidos.map(p => p.inicio)) + duracaoMs
@@ -113,7 +148,7 @@ export async function buscarConflitosAgenda(params: {
   // regua de 7 dias (56 dias num Formato 1); com datas digitadas a mao ela
   // passou a ser o que a pessoa escrever. O Pedro ja tem 740 compromissos
   // cadastrados, contra o teto de 1000.
-  sessoesQ = sessoesQ.order('data_agendada', { ascending: true }).limit(LIMITE_LINHAS)
+  sessoesQ = sessoesQ.order('data_agendada', { ascending: true }).limit(LIMITE_LINHAS + 1)
 
   const compromissosQ = client
     .from('compromissos_terapeuta')
@@ -127,7 +162,7 @@ export async function buscarConflitosAgenda(params: {
     .lte('inicio', new Date(maior).toISOString())
     .gte('fim', new Date(menor).toISOString())
     .order('inicio', { ascending: true })
-    .limit(LIMITE_LINHAS)
+    .limit(LIMITE_LINHAS + 1)
 
   const [{ data: sessoes, error: errSessoes }, { data: compromissos, error: errCompromissos }] =
     await Promise.all([sessoesQ, compromissosQ])
@@ -137,6 +172,12 @@ export async function buscarConflitosAgenda(params: {
   // erro visivel do que marcar dois pacientes no mesmo horario em silencio.
   if (errSessoes) throw new Error(`não foi possível conferir a agenda: ${errSessoes.message}`)
   if (errCompromissos) throw new Error(`não foi possível conferir os compromissos: ${errCompromissos.message}`)
+  // Pede LIMITE+1 justamente para SABER que passou do teto, em vez de receber
+  // uma lista cortada que parece completa. Cortar em silencio e falhar aberto:
+  // a trava simplesmente para de enxergar parte dos horarios ocupados.
+  if ((sessoes?.length ?? 0) > LIMITE_LINHAS || (compromissos?.length ?? 0) > LIMITE_LINHAS) {
+    throw new Error(`a janela pedida tem mais de ${LIMITE_LINHAS} compromissos e a conferência de horário não é confiável nela. Agende em datas mais próximas entre si.`)
+  }
 
   const ocupados = [
     ...((sessoes ?? []) as { paciente_nome: string; data_agendada: string; numero_sessao: number; total_sessoes: number }[])
@@ -156,7 +197,7 @@ export async function buscarConflitosAgenda(params: {
         // ofereceria "Agendar assim mesmo" em cima dela. Dupla marcacao, que e
         // exatamente o que esta trava existe para impedir. Ha 4 linhas assim no
         // banco, com nome de paciente no titulo.
-        const ehSessao = c.categoria === 'sessao'
+        const ehSessao = tipoDoCompromisso(c.categoria) === 'sessao'
         return {
         inicio: new Date(c.inicio).getTime(),
         fim: new Date(c.fim).getTime(),
@@ -180,7 +221,8 @@ export async function buscarConflitosAgenda(params: {
   for (const p of pedidos) {
     // A data pedida também ocupa só até o próximo horário da grade.
     const fimPedido = fimRealMs(p.iso)
-    const bateu = ocupados.find(o => p.inicio < o.fim && fimPedido > o.inicio)
+    // TODAS as batidas, e a sessao ganha. Ver escolherConflito.
+    const bateu = escolherConflito(ocupados.filter(o => p.inicio < o.fim && fimPedido > o.inicio))
     if (bateu) {
       conflitos.push({ dataISO: p.iso, tipo: bateu.tipo, descricao: `em ${fmt(p.iso)}: ${bateu.rotulo}` })
     }

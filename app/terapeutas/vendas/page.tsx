@@ -1927,18 +1927,27 @@ export default function TerapeutasVendas() {
               Se for compromisso de verdade, cancele e escolha outro horário.
             </p>
             <div className="flex gap-2">
-              <button onClick={() => { setAgendarConflitoCompromisso(null); setAgendarErro('') }}
+              {/* Fecha o modal de senha JUNTO e mantém a mensagem. O formulário
+                  de datas só renderiza com `!agendarSenhaOpen`, então limpar só
+                  este modal devolvia o comercial para um pedido de senha em
+                  branco, sem contexto e sem caminho para o campo de data - no
+                  exato momento em que ele precisa saber qual horário estava
+                  ocupado para escolher outro. */}
+              <button onClick={() => { setAgendarConflitoCompromisso(null); setAgendarSenhaOpen(false) }}
                 className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">
                 Escolher outro horário
               </button>
-              <button disabled={agendarLoading}
-                onClick={() => {
+              {/* Sem `disabled={agendarLoading}`: o modal desmonta na linha
+                  abaixo, antes de `agendarLoading` virar true, então o disabled
+                  seria código morto dando falsa sensação de proteção contra
+                  clique duplo. O que impede o clique duplo é o desmonte. */}
+              <button onClick={() => {
                   const senha = agendarConflitoCompromisso.senha
                   setAgendarConflitoCompromisso(null)
                   handleAgendar(senha, true)
                 }}
-                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 rounded-lg transition-colors">
-                {agendarLoading ? 'Agendando...' : 'Agendar assim mesmo'}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-500 rounded-lg transition-colors">
+                Agendar assim mesmo
               </button>
             </div>
           </div>
