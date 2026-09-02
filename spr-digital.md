@@ -16,9 +16,10 @@
 ## 0. Estado atual e pendências - atualizado 02/09/2026
 
 > **O relato completo e detalhado de 01 e 02/09/2026 esta na secao 0.1**, com
-> a cronologia dos 4 deploys, os achados de cada rodada de revisao, o caso do
-> Miguel Pires ponta a ponta, a venda da Paula Caroline, os metodos de
-> verificacao e as 10 licoes. Esta secao 0 continua sendo o resumo operacional.
+> a cronologia dos 4 deploys, o bug do lancamento manual, os achados de cada
+> rodada de revisao, o caso do Miguel Pires ponta a ponta, a venda da Paula
+> Caroline, os metodos de verificacao, **as 17 regras suas consolidadas** e as
+> 10 licoes. Esta secao 0 continua sendo o resumo operacional.
 
 > **Leia esta seção antes de qualquer coisa.** Ela resume o que as sessões de 13-14/08, 17/08, 21/08 e 01/09 resolveram e o que ficou aberto.
 
@@ -200,9 +201,9 @@ bloco se explique sozinho: fatos importantes aparecem repetidos onde importam,
 de proposito, para nao depender de ler o documento inteiro na ordem.
 
 **Resumo em uma frase:** 58 commits, 4 deploys, 133 testes automatizados (eram
-71 no inicio), um produto novo em producao, tres defeitos que teriam custado
-dinheiro real barrados por revisao antes do deploy, e um caso de paciente
-resolvido ponta a ponta.
+71 no inicio), um produto novo em producao, um bug de R$ 86.310 em tela
+corrigido, tres defeitos que teriam custado dinheiro real barrados por revisao
+antes do deploy, e um caso de paciente resolvido ponta a ponta.
 
 ### 0.1.1 Cronologia dos deploys
 
@@ -265,6 +266,33 @@ intervalo de 7 dias, o sistema **pergunta** se ele quer manter as demais onde
 estao ou empurrar as seguintes para restaurar a regua. A escolha e dele - foi
 requisito explicito do usuario: *"O comercial decide, como ele quer seguir"*.
 
+**Checagem de conflito nas DUAS agendas.** Montar o pacote significa gravar
+sessoes na agenda do Pedro e na da Denise ao mesmo tempo. A checagem de horario
+ocupado passou a considerar as duas: um horario livre para o Pedro mas ocupado
+para a Denise nao serve, porque o pacote inteiro e recusado com **409** antes de
+gravar qualquer coisa. Sem isso, metade do pacote entraria e a outra metade
+colidiria.
+
+**Etiqueta do Diagnostico em cinco lugares.** O pacote nao se explica sozinho:
+quem olha uma sessao solta nao sabe que ela e a 3 de 9 de um Diagnostico
+Formato 1, nem que a proxima e com o outro terapeuta. A etiqueta
+(`lib/etiqueta-diagnostico.ts`) aparece em:
+
+1. a **agenda** do terapeuta (grade e visao do dia)
+2. o **prontuario** do paciente
+3. a **lista do comercial**, em `/terapeutas/vendas`
+4. a mensagem de **lembrete de WhatsApp**, pelo campo `rotulo_diagnostico` no
+   payload que o n8n recebe
+5. o **Overview** do terapeuta
+
+O progresso da etiqueta vem do **pacote inteiro**, e nao das sessoes daquele
+terapeuta - foi um dos achados da auditoria, ver 0.1.5.
+
+**Match dos terapeutas sem sorteio.** Pedro e Denise sao encontrados por nome no
+cadastro, com ordem explicita e tratamento de ambiguidade. Conferido no banco:
+existem 3 terapeutas, um "Pedro Roncada" e uma "Denise Nascimento" ativos, e um
+"Felipe" inativo. Sem ambiguidade hoje, mas a rota nao depende disso por sorte.
+
 ### 0.1.3 As vendas reais do Diagnostico
 
 Sete vendas ate 02/09/2026, todas ainda sem sessao criada:
@@ -284,7 +312,58 @@ para producao ja eram 7. Todas estao cobertas por teste nomeado em
 `lib/diagnostico-guiado.test.ts`, com o nome do paciente - se alguem reintroduzir
 um bug de classificacao, o teste quebra dizendo de quem e a venda.
 
-### 0.1.4 O que a auditoria da branch encontrou: a feature estava pronta e nao funcionava
+### 0.1.4 Antes do Diagnostico: o lancamento manual inflando R$ 86.310 na tela do terapeuta
+
+Isto aconteceu em **01/09/2026**, antes de a implementacao do Diagnostico
+comecar, e esta dentro da janela destas 48 horas (commits `9bde91f` e
+`d67a94c`, item 35 do historico). Entra aqui porque foi o que abriu o dia e
+porque a regra que dele resultou vale para tudo que veio depois.
+
+**Como comecou:** numa apuracao eu contei uma venda lancada manualmente como se
+fosse compra real, e o usuario cobrou - com razao - que aquilo ja tinha sido
+documentado antes e mesmo assim se repetiu. A frase dele: *"uma coisa que me
+preocupou foi o seu erro de interpretacao da venda. Ja falamos sobre isso
+anteriormente, foi documentado, e mais uma vez, ao apurar, voce nao colocou isso
+como regra absoluta para evitar erro no sistema."*
+
+**A pergunta que ninguem tinha feito:** onde mais isso acontece? A auditoria
+levou dois minutos - `grep` por leituras de `sales` sem filtro, cruzando com
+quais somam dinheiro - e achou o mesmo bug **vivo em producao**, na tela que o
+Pedro e a Denise abrem todo dia.
+
+**O mecanismo:** `app/terapeutas/[id]/page.tsx` busca as vendas pelos ids vindos
+de `sessoes`. Lancamento manual **tambem cria sessao**, entao esses ids entravam
+na lista e o valor era somado no bruto e no liquido por paciente.
+
+**O tamanho:** R$ 86.310 inflados, **29 pacientes afetados**. Os maiores:
+Amanda da Silva Rios (R$ 13.240 caiu para R$ 7.960) e Natalia Rezende
+(R$ 10.557 caiu para R$ 5.277).
+
+**Nenhum numero financeiro estava errado.** Os 8 fechamentos confirmados somam
+7.312 vendas com **zero** manuais dentro, porque o `getSales()` que alimenta
+DRE, Dashboard e fechamentos filtra `manual_*` desde julho. Era numero de
+exibicao na tela do terapeuta - o que nao o torna inofensivo, porque e a tela
+onde os terapeutas conferem o proprio trabalho.
+
+**A correcao:** separar as duas listas, como o dashboard ja fazia. As sessoes
+continuam **sem filtro** (o paciente lancado a mao segue na agenda e no
+prontuario), e so o **dinheiro** exclui `manual_*`:
+
+```ts
+const vendasFaturamento = vendasDoPaciente.filter(v => !v.id.startsWith('manual_'))
+```
+
+**Efeito colateral aceito:** 19 pacientes ficam com bruto R$ 0,00 - aqueles cujo
+unico registro ligado a sessao e o manual. A venda real existe na plataforma mas
+nao esta amarrada aquela sessao.
+
+**A decisao do usuario sobre o lancamento manual:** ele **nao sera removido do
+sistema**. A frase: *"Minha ideia nao e tirar o lancamento manual. Ok? Vamos
+seguir em frente."* O que muda e que, depois do deploy do Diagnostico, as vendas
+novas devem seguir o fluxo normal - caem em Pendentes de Agendamento e o
+comercial agenda por la, em vez de serem lancadas a mao.
+
+### 0.1.5 O que a auditoria da branch encontrou: a feature estava pronta e nao funcionava
 
 A branch tinha 17 commits, todos os testes passando, `tsc` e `build` limpos. E
 **agendar um Diagnostico pela interface era impossivel**, por tres defeitos
@@ -341,7 +420,7 @@ achados so porque a verificacao foi feita contra o banco real:**
    sempre no calendario, com o pacote inteiro duplicado na data antiga e na
    nova. Medido criando e refazendo pacotes de teste: 9 eventos orfaos.
 
-### 0.1.5 As quatro rodadas de revisao, e o que cada uma pegou
+### 0.1.6 As quatro rodadas de revisao, e o que cada uma pegou
 
 O padrao que se repetiu: **compilar nao e evidencia de nada**. Cinco defeitos
 desta feature passaram limpos em `tsc`, `npm test` e `npm run build` e
@@ -393,9 +472,9 @@ menores, dos quais um foi corrigido por ser regressao real: com o laco de
 cancelamento no fim absoluto da rota, o **ramo de erro do insert passou a pular
 o cancelamento**, deixando evento fantasma na agenda do terapeuta.
 
-**Revisao 4, do reembolso parcial.** **BLOQUEOU** - ver 0.1.7.
+**Revisao 4, do reembolso parcial.** **BLOQUEOU** - ver 0.1.8.
 
-### 0.1.6 Reembolso: convites e pedido vencido (deploy `4d090d0`)
+### 0.1.7 Reembolso: convites e pedido vencido (deploy `4d090d0`)
 
 **O furo:** aprovar um reembolso so marcava as sessoes como `cancelada` no
 banco. As sessoes sumiam da grade da agenda, da visao do dia, da checagem de
@@ -428,7 +507,7 @@ mesmo motivo de `lib/reagendamento-total.ts`: so tirando a decisao de dentro da
 rota da para provar num teste automatizado que a recusa acontece ANTES de
 cancelar qualquer coisa.
 
-### 0.1.7 Reembolso parcial no fechamento (deploy `5ce6bf2`)
+### 0.1.8 Reembolso parcial no fechamento (deploy `5ce6bf2`)
 
 **O furo:** aprovar um reembolso parcial mexia em quatro lugares -
 `solicitacoes_reembolso`, `sessoes`, `ocorrencias_prontuario` e
@@ -513,7 +592,7 @@ o desconto, em silencio.
 **Fuso:** a data do alerta e convertida para BRT. Cortar a string do
 `timestamptz` direto jogava uma aprovacao das 21h30 para o dia seguinte.
 
-### 0.1.8 O caso do Miguel Pires, ponta a ponta
+### 0.1.9 O caso do Miguel Pires, ponta a ponta
 
 Historia completa, reconstruida a partir do prontuario e das colunas de tempo:
 
@@ -544,7 +623,7 @@ zero e `comissao_paga` falso, e o pacote e do Pedro, que nao tem repasse.
 
 **Falta:** marcar o "Abater aqui" dos R$ 1.560 no proximo fechamento.
 
-### 0.1.9 A venda da Paula Caroline e o alerta de conferencia (deploy `152b54d` e `236b661`)
+### 0.1.10 A venda da Paula Caroline e o alerta de conferencia (deploy `152b54d` e `236b661`)
 
 **O caso:** o comercial vendeu um Diagnostico Guiado mas fechou por uma oferta
 criada dentro do produto **"Mentoria Particular - Pedro Roncada"**. Venda de
@@ -572,7 +651,7 @@ produto Diagnostico - **sao ofertas diferentes, em produtos diferentes**.
    outras seis (`Diagnóstico Guiado: Programa de acompanhamento Individual`),
    porque as consultas das telas filtram por **nome** para escapar do teto de
    1000 do PostgREST. Sem isso o formato seria reconhecido e a venda nunca
-   chegaria na tela - **exatamente a classe de defeito descrita em 0.1.4**.
+   chegaria na tela - **exatamente a classe de defeito descrita em 0.1.5**.
 
 **O formato foi confirmado com o usuario, nao deduzido.** Como a venda saiu na
 oferta errada, a oferta nao diz nada, e sobraria o preco - que a regra do
@@ -600,7 +679,7 @@ escrita a mao de proposito: readequacao e evento raro, manual e auditado. Um
 teste exige que toda entrada tenha o produto da plataforma, o motivo e a data no
 formato certo.
 
-### 0.1.10 Metodos de verificacao usados, e por que
+### 0.1.11 Metodos de verificacao usados, e por que
 
 Compilar nao provou nada nesta feature. O que efetivamente pegou defeito:
 
@@ -629,7 +708,78 @@ real de WhatsApp para o grupo do Pedro ou da Denise**, por volta das 22h de
 `N8N_ENCAIXE_WEBHOOK_URL` e `N8N_ALERTA_WEBHOOK_URL` apagadas do `process.env`
 logo apos o `dotenv.config`, e sem POST contra rotas que escrevem.
 
-### 0.1.11 Licoes destas 48 horas
+### 0.1.12 Regras do usuario, reafirmadas ou criadas nestas 48 horas
+
+Consolidadas aqui porque estao espalhadas pela conversa e valem para todo
+trabalho futuro neste projeto.
+
+**Sobre identificacao de venda e produto:**
+
+1. **Filtrar sempre pela OFERTA, nunca pelo preco.** *"filtra sempre por oferta
+   ok? pois se for filtrar pelo valor pago pelo cliente as vezes passa desse
+   valor por conta do parcelamento e juros"*. Confirmado por dado real: Francisco
+   pagou R$ 6.201,72 e Bruno R$ 4.997,00 no mesmo Formato 1.
+2. **Cruzar sempre por ID, nunca por nome ou e-mail.** *"nao e a melhor opcao
+   cruzar por nome e e-mail sempre por ID isso?"* Cruzar por e-mail e produto
+   falha quando o mesmo cliente compra o mesmo produto duas vezes, e ja produziu
+   dois falsos positivos.
+3. **Oferta e link reutilizavel, nao identidade de produto.** Excecao de venda
+   individual pertence a VENDA (`EXCECOES_DIAGNOSTICO`, por `sale_id`), nunca a
+   oferta - ver 0.1.10.
+
+**Sobre lancamento manual:**
+
+4. **Sessao lancada manualmente nao contabiliza dinheiro.** *"sessao lancada
+   manualmente nao contabilizamos.. somente as vendas que caem na plataforma"*.
+   O manual conta a **SESSAO**, nunca o **DINHEIRO**. Toda leitura de `sales`
+   que soma valor precisa excluir `manual_*`; toda leitura que conta atendimento
+   nao deve excluir.
+5. **O lancamento manual continua existindo.** Nao sera removido do sistema.
+
+**Sobre reembolso e fechamento:**
+
+6. **O abatimento e sempre sobre o VALOR PAGO pelo cliente**, nunca sobre o
+   liquido depois das taxas. *"O lead pagou dois oitocentos e sessenta, fez uma
+   sessao, descontamos apenas mil e trezentos e reenviamos pra ele a
+   diferenca."*
+7. **O reembolso parcial nao sai do caixa da empresa.** E descontado do proximo
+   repasse aos socios, na proporcao do fechamento. *"na proporcao ja combinada
+   antes, de trinta e cinco por cento para a SPR, sessenta e cinco por cento
+   para o Pedro. O Pedro amortiza sessenta e cinco por cento desses
+   reembolsos."*
+8. **A venda original nao e alterada** quando um reembolso parcial e aprovado.
+9. **Data de reembolso e a data real da plataforma**, nao a data em que o
+   sistema processou o evento.
+10. **Alerta de conferencia com a plataforma:** quando uma venda muda de produto
+    no sistema e nao na plataforma, o fechamento tem que avisar, para o usuario
+    nao perder tempo procurando a diferenca. *"Pra eu nao perder tempo tentando
+    achar o erro do porque nao vai bater os numeros."*
+
+**Sobre repasse:**
+
+11. **O Pedro nao tem repasse**, por ser socio. *"o repasse pode existir para os
+    outros terapeutas.. exceto pedro"*.
+12. **A Denise recebe R$ 95 por sessao no Diagnostico Guiado**, e 30% nos demais
+    produtos. E regra do PRODUTO, nao da pessoa.
+
+**Sobre o processo de trabalho:**
+
+13. **Atualizar o MD do projeto depois de toda investigacao ou correcao**, sem
+    esperar ser pedido.
+14. **Nunca misturar o MD do ClickUp com o do sistema.** *"tudo que for feito a
+    nivel de ClickUp sempre atualiza o MD do ClickUp, sempre. Sem misturar as
+    coisas"* - o medo declarado: *"meu medo e misturar e virar uma farofa
+    tudo"*.
+15. **Nao usar travessao longo** em nenhum texto: nem no chat, nem em mensagem
+    de produto, nem em documentacao ou commit. Usar hifen simples.
+16. **Nenhum valor real de credencial** entra em documento, commit ou codigo -
+    so o nome da variavel e onde encontra-la.
+17. **REGRA CRIADA EM 02/09:** toda variavel de `.env.local` e de **producao**.
+    Verificacao contra o banco nao pode disparar efeito externo - nada de
+    WhatsApp, webhook do n8n ou escrita no Google Calendar com dado sintetico.
+    Ver o incidente em 0.1.11.
+
+### 0.1.13 Licoes destas 48 horas
 
 1. **Compilar, passar nos testes e buildar nao prova que funciona.** Cinco
    defeitos desta feature passaram nos tres e quebravam em producao. Tres eram
@@ -670,7 +820,7 @@ logo apos o `dotenv.config`, e sem POST contra rotas que escrevem.
     neste projeto.** Todo `tipo_acao` novo precisa de migration antes do deploy,
     senao o log falha em silencio com `23514`.
 
-### 0.1.12 O que ficou pendente ao fim de 02/09
+### 0.1.14 O que ficou pendente ao fim de 02/09
 
 **Do usuario:**
 
@@ -713,7 +863,7 @@ gravado, a varredura diaria preventiva nunca construida, e o custo de trafego do
 Perpetuo CCC nunca lancado (R$ 3.234,23 x 1,1385 = **R$ 3.682,17**, fechamento
 `close_1786731068074`).
 
-### 0.1.13 Modulos criados nestas 48 horas
+### 0.1.15 Modulos criados nestas 48 horas
 
 | Arquivo | O que decide | Testes |
 |---|---|---|
