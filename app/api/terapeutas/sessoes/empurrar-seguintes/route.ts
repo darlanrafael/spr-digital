@@ -5,6 +5,17 @@ import { buscarConflitosMultiTerapeuta, mensagemConflito } from '@/lib/agenda-co
 import { novasDatasSeguintes, formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 
+// Sem `maxDuration` declarado, a Vercel corta a função em 10 s. Esta rota fala
+// com o Google Calendar duas vezes por sessão movida (cancelar o evento antigo
+// e criar o novo, com Meet), e num Formato 1 são até 8 sessões: latência medida
+// com as credenciais do projeto, 877 ms na primeira chamada (autenticação) e
+// ~349 ms por round trip depois, com o insert com conferenceData mais pesado
+// que o resto. Dava de 10 a 13 s só no laço. O upsert das datas é commitado
+// ANTES dele, então o corte deixava as datas novas certas e parte das sessões
+// apontando pro evento velho: o paciente com convite e link do Meet no horário
+// antigo, e a tela mostrando erro genérico sem dizer o que ficou pela metade.
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
@@ -143,23 +154,45 @@ export async function POST(req: NextRequest) {
   // Formato 1 são até 8 sessões erradas de uma vez. Fora da transação de
   // propósito: o Google pode falhar (ou estar desligado, ver
   // lib/google-meet.ts) e isso não pode desfazer as datas já salvas.
-  for (let i = 0; i < seguintes.length; i++) {
-    const s = seguintes[i]
-    if (s.google_event_id) {
-      await cancelarEvento(s.google_event_id as string)
-    }
-    const evento = await criarEventoComMeet({
-      titulo: `Sessão - ${s.paciente_nome}`,
-      inicioISO: novasDatas[i],
-      fimISO: new Date(new Date(novasDatas[i]).getTime() + 60 * 60 * 1000).toISOString(),
+  //
+  // Em lotes paralelos, não uma sessão de cada vez: sequencial são 3 idas e
+  // voltas por sessão somadas uma na outra, o que estourava o tempo da função
+  // (ver maxDuration no topo). Promise.allSettled em vez de Promise.all porque
+  // uma sessão que falhe não pode impedir as outras de terem o convite
+  // refeito - e o que falhou volta na resposta, em vez de sumir num log que
+  // ninguém lê. Lote de 4 pra não disparar rate limit da API do Google nem
+  // abrir 8 conexões de uma vez.
+  const LOTE_CALENDAR = 4
+  const falhasCalendar: { numero_sessao: number; motivo: string }[] = []
+  for (let inicio = 0; inicio < seguintes.length; inicio += LOTE_CALENDAR) {
+    const lote = seguintes.slice(inicio, inicio + LOTE_CALENDAR)
+    const resultados = await Promise.allSettled(lote.map(async (s, j) => {
+      const i = inicio + j
+      if (s.google_event_id) {
+        await cancelarEvento(s.google_event_id as string)
+      }
+      const evento = await criarEventoComMeet({
+        titulo: `Sessão - ${s.paciente_nome}`,
+        inicioISO: novasDatas[i],
+        fimISO: new Date(new Date(novasDatas[i]).getTime() + 60 * 60 * 1000).toISOString(),
+      })
+      // Grava antes de reclamar do evento que não veio: o antigo já foi
+      // cancelado, então manter o google_event_id velho no banco apontaria
+      // pra um evento que não existe mais.
+      const { error: linkErr } = await client.from('sessoes')
+        .update({ link_meet: evento?.meetLink ?? null, google_event_id: evento?.eventId ?? null })
+        .eq('id', s.id)
+      // Evento novo já existe no Google nesse ponto - se salvar falhar, ele
+      // fica órfão (existe no Calendar sem referência no banco).
+      if (linkErr) throw new Error(`o link do Meet novo não foi salvo no banco (${linkErr.message})`)
+      if (!evento) throw new Error('o Google não devolveu o convite novo')
+    }))
+    resultados.forEach((r, j) => {
+      if (r.status === 'rejected') {
+        falhasCalendar.push({ numero_sessao: lote[j].numero_sessao as number, motivo: String(r.reason?.message ?? r.reason) })
+        console.error(`[empurrar-seguintes] sessão ${lote[j].numero_sessao}:`, r.reason)
+      }
     })
-    const { error: linkErr } = await client.from('sessoes')
-      .update({ link_meet: evento?.meetLink ?? null, google_event_id: evento?.eventId ?? null })
-      .eq('id', s.id)
-    // Evento novo já existe no Google nesse ponto - se salvar falhar, ele fica
-    // órfão (existe no Calendar sem referência no banco). Loga pra dar pra
-    // achar/limpar depois; não trava o resto do empurrão.
-    if (linkErr) console.error('[empurrar-seguintes] falha ao salvar link_meet:', linkErr)
   }
 
   // Rastro clínico no prontuário, uma linha por sessão movida. Antes só
@@ -208,5 +241,15 @@ export async function POST(req: NextRequest) {
     dados_novos: { movidas: seguintes.length, novasDatas },
   })
 
-  return NextResponse.json({ success: true, movidas: seguintes.length })
+  // As datas JÁ estão salvas mesmo com falha no Google, e é assim que tem que
+  // ser (o Calendar pode estar fora do ar e isso não pode desfazer a agenda).
+  // O que não podia continuar é a tela dizer "tudo certo" quando parte dos
+  // pacientes ficou sem convite novo.
+  const numerosComFalha = falhasCalendar.map(f => f.numero_sessao).sort((a, b) => a - b)
+  return NextResponse.json({
+    success: true,
+    movidas: seguintes.length,
+    calendario_falhas: falhasCalendar,
+    aviso: falhasCalendar.length === 0 ? null : `As datas foram salvas, mas o convite do Google não foi refeito em ${falhasCalendar.length} sessão(ões) (sessão ${numerosComFalha.join(', ')}). Esse(s) paciente(s) pode(m) estar sem convite na data nova: remarque essa(s) sessão(ões) de novo ou avise o time técnico.`,
+  })
 }

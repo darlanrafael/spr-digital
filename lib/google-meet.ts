@@ -24,24 +24,37 @@ function getAuthClient() {
   })
 }
 
-let calendarIdCache: string | null = null
+// Guarda a PROMESSA, não o id pronto. As rotas de pacote passaram a chamar o
+// Calendar em paralelo (ver empurrar-seguintes): com o cache de string, N
+// chamadas simultâneas em processo frio faziam N calendarList.list() e, se o
+// calendário ainda não existisse, N calendars.insert() - ou seja, calendários
+// duplicados. Guardando a promessa, a primeira chamada resolve e todas as
+// outras esperam por ela. Para quem chama em sequência não muda nada.
+let calendarIdPromise: Promise<string> | null = null
 
 // Procura (ou cria, na primeira vez) o calendário secundário dedicado —
 // evita lotar a agenda pessoal de quem "possui" a conta de serviço com
 // toda sessão de todo terapeuta.
 async function getCalendarId(calendar: ReturnType<typeof google.calendar>): Promise<string> {
-  if (calendarIdCache) return calendarIdCache
-  const { data } = await calendar.calendarList.list()
-  const existente = data.items?.find(c => c.summary === CALENDARIO_NOME)
-  if (existente?.id) {
-    calendarIdCache = existente.id
-    return existente.id
+  if (!calendarIdPromise) {
+    calendarIdPromise = (async () => {
+      const { data } = await calendar.calendarList.list()
+      const existente = data.items?.find(c => c.summary === CALENDARIO_NOME)
+      if (existente?.id) return existente.id
+      const { data: novo } = await calendar.calendars.insert({
+        requestBody: { summary: CALENDARIO_NOME },
+      })
+      return novo.id as string
+    })()
   }
-  const { data: novo } = await calendar.calendars.insert({
-    requestBody: { summary: CALENDARIO_NOME },
-  })
-  calendarIdCache = novo.id as string
-  return calendarIdCache
+  try {
+    return await calendarIdPromise
+  } catch (err) {
+    // Falha de rede não pode virar cache permanente: zera pra próxima
+    // chamada tentar de novo, que era o comportamento de antes.
+    calendarIdPromise = null
+    throw err
+  }
 }
 
 export async function criarEventoComMeet(params: {

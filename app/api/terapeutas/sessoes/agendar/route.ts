@@ -6,6 +6,15 @@ import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
 import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagendamento-total'
+
+// Sem `maxDuration` declarado, a Vercel corta a função em 10 s. Um
+// reagendamento total de Formato 1 faz até 9 cancelamentos e 9 criações de
+// evento no Google, mais um update por sessão: com ~349 ms por round trip
+// medidos com as credenciais do projeto (877 ms na primeira, por causa da
+// autenticação), isso passa dos 10 s. As sessões já teriam sido gravadas
+// nesse ponto, então o corte deixava o pacote no banco com parte das sessões
+// sem convite e sem link do Meet, e a tela mostrando erro.
+export const maxDuration = 60
 import { buscarConflitosMultiTerapeuta } from '@/lib/agenda-conflitos'
 
 export async function POST(req: NextRequest) {
@@ -261,49 +270,75 @@ export async function POST(req: NextRequest) {
   // reportaria um número de sessões que não bate com o que foi criado.
   const totalCriado = sessoes.length
 
-  // Link do Meet — não trava o agendamento se a API do Google falhar (ver
+  // Link do Meet: não trava o agendamento se a API do Google falhar (ver
   // lib/google-meet.ts: sem credenciais configuradas, isso é um no-op).
-  for (const s of sessoes) {
-    const evento = await criarEventoComMeet({
-      titulo: `Sessão — ${s.paciente_nome}`,
-      inicioISO: s.data_agendada,
-      fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
-    })
-    if (evento) {
+  //
+  // Em lotes paralelos, não uma sessão de cada vez. Medido contra o Google
+  // real com as credenciais do projeto: um Formato 1 (9 sessões) levava 9,9 s
+  // só neste laço, praticamente o teto de 10 s que a Vercel dá quando
+  // maxDuration não é declarado - e um corte aqui deixaria o pacote gravado no
+  // banco com parte das sessões sem convite nenhum. allSettled em vez de all
+  // porque uma sessão que falhe não pode impedir as outras de ganharem
+  // convite, e o que falhou volta na resposta em vez de sumir num log que
+  // ninguém lê. Lote de 4 pra não disparar rate limit da API do Google.
+  const LOTE_CALENDAR = 4
+  const falhasCalendar: { numero_sessao: number; motivo: string }[] = []
+  const meetPorSessao = new Map<number, string>()
+  for (let inicio = 0; inicio < sessoes.length; inicio += LOTE_CALENDAR) {
+    const lote = sessoes.slice(inicio, inicio + LOTE_CALENDAR)
+    const resultados = await Promise.allSettled(lote.map(async s => {
+      const evento = await criarEventoComMeet({
+        titulo: `Sessão - ${s.paciente_nome}`,
+        inicioISO: s.data_agendada,
+        fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
+      })
+      if (!evento) throw new Error('o Google não devolveu o convite')
+      meetPorSessao.set(s.numero_sessao, evento.meetLink)
       const { error: linkErr } = await client.from('sessoes')
         .update({ link_meet: evento.meetLink, google_event_id: evento.eventId })
         .eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao)
-      // Evento já foi criado no Google nesse ponto — se salvar falhar, o
-      // evento fica órfão (existe no Calendar mas sem referência no banco).
-      // Loga pra dar pra achar/limpar depois; não trava o agendamento.
-      if (linkErr) console.error('[agendar] falha ao salvar link_meet:', linkErr)
-    }
-    // Sessão marcada pro mesmo dia — "venda de encaixe": o fluxo normal de
-    // véspera (só olha "amanhã") nunca ia pegar essa. Avisa na hora, fora do
-    // cron, com o link do Meet já embutido (evento acabou de ser criado acima).
-    // Só dispara quando é agendamento de sessão avulsa (totalCriado === 1) -
-    // agendar um pacote inteiro (totalCriado > 1) é reorganização de agenda,
-    // não "última hora": se algumas datas do lote caírem em hoje (comum ao
-    // recriar histórico ou preencher datas retroativas), isso já disparava
-    // um "Venda de Encaixe" por sessão, alarme falso pra paciente que já
-    // existia - confundiu o terapeuta. Usa totalCriado (não numSessoes) pra
-    // valer também pro Diagnóstico: o pacote nunca tem 1 sessão só (mínimo é
-    // 2), então esse gate corretamente nunca dispara pra ele.
-    if (totalCriado === 1 && isHojeBrasilia(s.data_agendada)) {
-      const { data: sessaoCriada } = await client.from('sessoes')
-        .select('id,link_meet').eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao).single()
-      await notificarEncaixe({
-        sessao_id: sessaoCriada?.id ?? '',
-        terapeuta_id,
-        grupo_whatsapp_id: terapeuta.grupo_whatsapp_id as string | null,
-        paciente_nome: s.paciente_nome,
-        paciente_telefone: normalizarTelefoneBR(sale.telefone as string | null),
-        numero_sessao: s.numero_sessao,
-        total_sessoes: s.total_sessoes,
-        data_agendada: s.data_agendada,
-        link_meet: sessaoCriada?.link_meet ?? evento?.meetLink ?? null,
-      })
-    }
+      // Evento já foi criado no Google nesse ponto: se salvar falhar, ele fica
+      // órfão (existe no Calendar mas sem referência no banco).
+      if (linkErr) throw new Error(`o link do Meet não foi salvo no banco (${linkErr.message})`)
+    }))
+    resultados.forEach((r, j) => {
+      if (r.status === 'rejected') {
+        falhasCalendar.push({ numero_sessao: lote[j].numero_sessao, motivo: String(r.reason?.message ?? r.reason) })
+        console.error(`[agendar] sessão ${lote[j].numero_sessao}:`, r.reason)
+      }
+    })
+  }
+
+  // Sessão marcada pro mesmo dia, a "venda de encaixe": o fluxo normal de
+  // véspera (só olha "amanhã") nunca ia pegar essa. Avisa na hora, fora do
+  // cron, com o link do Meet já embutido (evento acabou de ser criado acima).
+  // Só dispara quando é agendamento de sessão avulsa (totalCriado === 1) -
+  // agendar um pacote inteiro (totalCriado > 1) é reorganização de agenda,
+  // não "última hora": se algumas datas do lote caírem em hoje (comum ao
+  // recriar histórico ou preencher datas retroativas), isso já disparava
+  // um "Venda de Encaixe" por sessão, alarme falso pra paciente que já
+  // existia - confundiu o terapeuta. Usa totalCriado (não numSessoes) pra
+  // valer também pro Diagnóstico: o pacote nunca tem 1 sessão só (mínimo é
+  // 2), então esse gate corretamente nunca dispara pra ele.
+  //
+  // Fora do laço dos convites desde que ele virou paralelo: como a condição é
+  // "exatamente uma sessão", ali dentro ele nunca teve mais de uma volta - o
+  // comportamento é o mesmo de quando estava junto.
+  if (totalCriado === 1 && isHojeBrasilia(sessoes[0].data_agendada)) {
+    const s = sessoes[0]
+    const { data: sessaoCriada } = await client.from('sessoes')
+      .select('id,link_meet').eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao).single()
+    await notificarEncaixe({
+      sessao_id: sessaoCriada?.id ?? '',
+      terapeuta_id,
+      grupo_whatsapp_id: terapeuta.grupo_whatsapp_id as string | null,
+      paciente_nome: s.paciente_nome,
+      paciente_telefone: normalizarTelefoneBR(sale.telefone as string | null),
+      numero_sessao: s.numero_sessao,
+      total_sessoes: s.total_sessoes,
+      data_agendada: s.data_agendada,
+      link_meet: sessaoCriada?.link_meet ?? meetPorSessao.get(s.numero_sessao) ?? null,
+    })
   }
 
   await registrarAtividade({
@@ -328,7 +363,17 @@ export async function POST(req: NextRequest) {
       : { numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
   })
 
-  return NextResponse.json({ success: true, sessoes_criadas: totalCriado })
+  // As sessões já estão gravadas mesmo com falha no Google, e é assim que tem
+  // que ser (o Calendar pode estar fora do ar e isso não pode impedir o
+  // agendamento). O que não podia continuar é a tela dizer "tudo certo"
+  // quando parte dos pacientes ficou sem convite.
+  const numerosComFalha = falhasCalendar.map(f => f.numero_sessao).sort((a, b) => a - b)
+  return NextResponse.json({
+    success: true,
+    sessoes_criadas: totalCriado,
+    calendario_falhas: falhasCalendar,
+    aviso: falhasCalendar.length === 0 ? null : `As sessões foram criadas, mas o convite do Google não saiu em ${falhasCalendar.length} delas (sessão ${numerosComFalha.join(', ')}). Esse(s) horário(s) ficaram sem convite e sem link do Meet: avise o time técnico.`,
+  })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

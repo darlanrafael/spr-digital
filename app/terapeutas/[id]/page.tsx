@@ -473,6 +473,11 @@ export default function PainelTerapeuta() {
   const [avisoEmpurrarErro, setAvisoEmpurrarErro] = useState('')
   const [avisoEmpurrarLoading, setAvisoEmpurrarLoading] = useState(false)
   const [avisoEmpurrarSucesso, setAvisoEmpurrarSucesso] = useState<number | null>(null)
+  // Aviso separado do "deu certo": as datas podem ter sido salvas e ainda
+  // assim o convite do Google não ter sido refeito em alguma sessão. Antes a
+  // tela dizia só "N sessões remarcadas" e o paciente ficava com o convite no
+  // horário velho sem ninguém saber.
+  const [avisoEmpurrarCalendario, setAvisoEmpurrarCalendario] = useState<string | null>(null)
 
   // Visão terapeuta — tabs de página. Fica na URL (?tab=) pra sobreviver a
   // um refresh da página em vez de sempre voltar pra "overview".
@@ -1282,6 +1287,7 @@ export default function PainelTerapeuta() {
     setAvisoEmpurrarSenhaOpen(false)
     setAvisoRemarcacao(null)
     setAvisoEmpurrarSucesso(json.movidas)
+    setAvisoEmpurrarCalendario(json.aviso ?? null)
     loadData()
   }
 
@@ -3355,10 +3361,12 @@ export default function PainelTerapeuta() {
 
       {/* Confirmação de sessões empurradas */}
       {avisoEmpurrarSucesso !== null && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAvisoEmpurrarSucesso(null)}>
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}>
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-7 h-7 text-green-500" />
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${avisoEmpurrarCalendario ? 'bg-amber-500/10' : 'bg-green-500/10'}`}>
+              {avisoEmpurrarCalendario
+                ? <AlertTriangle className="w-7 h-7 text-amber-500" />
+                : <CheckCircle className="w-7 h-7 text-green-500" />}
             </div>
             <h3 className="text-base font-semibold text-white mb-1">
               {avisoEmpurrarSucesso === 0 ? 'Nada para empurrar' : 'Sessões remarcadas'}
@@ -3371,7 +3379,12 @@ export default function PainelTerapeuta() {
                 ? 'Não havia sessões seguintes neste pacote para mover. Nada foi alterado.'
                 : `${avisoEmpurrarSucesso} sessão(ões) seguinte(s) ${avisoEmpurrarSucesso === 1 ? 'foi remarcada' : 'foram remarcadas'} pra manter os 7 dias entre elas. Avise o paciente sobre as novas datas.`}
             </p>
-            <button onClick={() => setAvisoEmpurrarSucesso(null)}
+            {avisoEmpurrarCalendario && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mb-5 text-left">
+                {avisoEmpurrarCalendario}
+              </p>
+            )}
+            <button onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}
               className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
               OK
             </button>

@@ -359,7 +359,7 @@ export default function TerapeutasVendas() {
   const [agendarErro, setAgendarErro] = useState('')
   // Modal de confirmação — o toast discreto passava despercebido; aqui o
   // usuário precisa ver claramente que o agendamento foi concluído.
-  const [agendarSucesso, setAgendarSucesso] = useState<{ sessoes: number; nome: string } | null>(null)
+  const [agendarSucesso, setAgendarSucesso] = useState<{ sessoes: number; nome: string; aviso: string | null } | null>(null)
   // Trava do reagendamento total: quando a venda já tem sessões, confirmar não
   // é "criar", é "apagar e refazer". Só libera o botão depois de a pessoa
   // marcar que entendeu o que vai ser destruído.
@@ -407,6 +407,11 @@ export default function TerapeutasVendas() {
   const [avisoEmpurrarErro, setAvisoEmpurrarErro] = useState('')
   const [avisoEmpurrarLoading, setAvisoEmpurrarLoading] = useState(false)
   const [avisoEmpurrarSucesso, setAvisoEmpurrarSucesso] = useState<number | null>(null)
+  // Aviso separado do "deu certo": as datas podem ter sido salvas e ainda
+  // assim o convite do Google não ter sido refeito em alguma sessão. Antes a
+  // tela dizia só "N sessões remarcadas" e o paciente ficava com o convite no
+  // horário velho sem ninguém saber.
+  const [avisoEmpurrarCalendario, setAvisoEmpurrarCalendario] = useState<string | null>(null)
   // Reembolso
   const [reeSessoes, setReeSessoes] = useState<string[]>([])
   const [reeMotivo, setReeMotivo] = useState('')
@@ -629,7 +634,7 @@ export default function TerapeutasVendas() {
     setAgendarLoading(false)
     if (!res.ok) { setAgendarErro(json.error ?? 'Erro'); return }
     setAgendarSenhaOpen(false)
-    setAgendarSucesso({ sessoes: json.sessoes_criadas, nome: agendarVenda?.nome ?? '' })
+    setAgendarSucesso({ sessoes: json.sessoes_criadas, nome: agendarVenda?.nome ?? '', aviso: json.aviso ?? null })
     setAgendarVendaId(null)
     setAgendarDataPrimeira('')
     setAgendarSubstituicaoCiente(false)
@@ -756,6 +761,7 @@ export default function TerapeutasVendas() {
     setAvisoEmpurrarSenhaOpen(false)
     setAvisoRemarcacao(null)
     setAvisoEmpurrarSucesso(json.movidas)
+    setAvisoEmpurrarCalendario(json.aviso ?? null)
     loadData()
   }
 
@@ -1815,13 +1821,23 @@ export default function TerapeutasVendas() {
       {agendarSucesso && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAgendarSucesso(null)}>
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-7 h-7 text-green-500" />
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${agendarSucesso.aviso ? 'bg-amber-500/10' : 'bg-green-500/10'}`}>
+              {agendarSucesso.aviso
+                ? <AlertTriangle className="w-7 h-7 text-amber-500" />
+                : <CheckCircle className="w-7 h-7 text-green-500" />}
             </div>
             <h3 className="text-base font-semibold text-white mb-1">Agendamento confirmado!</h3>
             <p className="text-sm text-gray-400 mb-5">
               {agendarSucesso.sessoes} sessão(ões) agendada(s){agendarSucesso.nome ? ` para ${agendarSucesso.nome}` : ''} com sucesso.
             </p>
+            {/* As sessões existem no banco; o que pode ter faltado é o convite
+                do Google. Sem isso a tela dizia "confirmado" e o paciente
+                ficava sem convite nenhum, sem ninguém saber. */}
+            {agendarSucesso.aviso && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mb-5 text-left">
+                {agendarSucesso.aviso}
+              </p>
+            )}
             <button onClick={() => setAgendarSucesso(null)}
               className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
               OK
@@ -1832,10 +1848,12 @@ export default function TerapeutasVendas() {
 
       {/* Confirmação de sessões empurradas (Diagnóstico Guiado) */}
       {avisoEmpurrarSucesso !== null && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAvisoEmpurrarSucesso(null)}>
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}>
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-7 h-7 text-green-500" />
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${avisoEmpurrarCalendario ? 'bg-amber-500/10' : 'bg-green-500/10'}`}>
+              {avisoEmpurrarCalendario
+                ? <AlertTriangle className="w-7 h-7 text-amber-500" />
+                : <CheckCircle className="w-7 h-7 text-green-500" />}
             </div>
             <h3 className="text-base font-semibold text-white mb-1">
               {avisoEmpurrarSucesso === 0 ? 'Nada para empurrar' : 'Sessões remarcadas'}
@@ -1848,7 +1866,12 @@ export default function TerapeutasVendas() {
                 ? 'Não havia sessões seguintes neste pacote para mover. Nada foi alterado.'
                 : `${avisoEmpurrarSucesso} sessão(ões) seguinte(s) ${avisoEmpurrarSucesso === 1 ? 'foi remarcada' : 'foram remarcadas'} pra manter os 7 dias entre elas. Avise o paciente sobre as novas datas.`}
             </p>
-            <button onClick={() => setAvisoEmpurrarSucesso(null)}
+            {avisoEmpurrarCalendario && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mb-5 text-left">
+                {avisoEmpurrarCalendario}
+              </p>
+            )}
+            <button onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}
               className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
               OK
             </button>
