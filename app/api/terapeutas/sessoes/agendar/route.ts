@@ -5,6 +5,7 @@ import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
+import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagendamento-total'
 import { buscarConflitosMultiTerapeuta } from '@/lib/agenda-conflitos'
 
 export async function POST(req: NextRequest) {
@@ -138,6 +139,21 @@ export async function POST(req: NextRequest) {
     ? datas_sessoes.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
     : null
 
+  // Reagendamento total: esta venda já tem sessões e confirmar aqui significa
+  // apagar as pendentes, cancelar os convites do paciente e recriar o pacote.
+  // A checagem vem ANTES do conflito de agenda, do delete e de qualquer
+  // chamada ao Google porque a recusa por sessão entregue é definitiva: o
+  // insert lá embaixo recria a numeração a partir da 1 e bate no unique
+  // (sale_id, numero_sessao), só que aí as pendentes já teriam sido apagadas e
+  // os convites já teriam sido cancelados - erro de banco na tela e pacote
+  // pela metade, sem volta. Vale pra todo produto, não só pro Diagnóstico.
+  const { data: sessoesDaVenda, error: sessoesErr } = await client
+    .from('sessoes').select('id,status,numero_sessao,google_event_id').eq('sale_id', sale_id)
+  if (sessoesErr) return NextResponse.json({ error: sessoesErr.message }, { status: 500 })
+  const plano = planejarReagendamentoTotal((sessoesDaVenda ?? []) as SessaoExistente[])
+  if (!plano.ok) return NextResponse.json({ error: plano.erro }, { status: 400 })
+  const substituidas = plano.substituir
+
   // Trava de conflito ANTES de apagar qualquer coisa: um conflito no meio do
   // pacote não pode destruir o agendamento que já existia. Ignora as sessões
   // da própria venda, que são justamente as que serão recriadas logo abaixo.
@@ -180,16 +196,22 @@ export async function POST(req: NextRequest) {
   // O histórico clínico NÃO se perde: a ocorrência continua amarrada ao
   // sale_id, que é por onde o prontuário lista tudo. Só perde o vínculo com a
   // sessão específica, que a partir daqui deixa de existir mesmo.
-  const { data: sessoesASubstituir } = await client.from('sessoes')
-    .select('id,google_event_id').eq('sale_id', sale_id).in('status', ['pendente', 'agendada', 'remarcada'])
-  const substituidas = (sessoesASubstituir ?? []) as { id: string; google_event_id: string | null }[]
   const idsASubstituir = substituidas.map(s => s.id)
   if (idsASubstituir.length > 0) {
     const { error: desamarrarErr } = await client.from('ocorrencias_prontuario')
       .update({ sessao_id: null }).in('sessao_id', idsASubstituir)
     if (desamarrarErr) return NextResponse.json({ error: desamarrarErr.message }, { status: 500 })
   }
-  // Cancela no Google os eventos das sessões que vão sumir. Sem isso o
+  // Apaga PRIMEIRO, cancela no Google DEPOIS. Na ordem inversa (que era a de
+  // antes), um delete que falhasse deixava as sessões vivas no banco apontando
+  // para eventos que não existem mais: o paciente perdia o convite e ninguém
+  // via nada de errado na tela. Falhar o delete agora é inofensivo, porque o
+  // convite antigo continua de pé junto com a sessão antiga.
+  if (idsASubstituir.length > 0) {
+    const { error: deleteErr } = await client.from('sessoes').delete().in('id', idsASubstituir)
+    if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 })
+  }
+  // Cancela no Google os eventos das sessões que sumiram. Sem isso o
   // reagendamento total deixava os eventos antigos no calendário para sempre:
   // as sessões novas eram criadas com eventos novos e ninguém apagava os
   // velhos, então o terapeuta via o pacote inteiro duplicado, na data antiga e
@@ -197,10 +219,6 @@ export async function POST(req: NextRequest) {
   for (const s of substituidas) {
     if (s.google_event_id) await cancelarEvento(s.google_event_id)
   }
-  const { error: deleteErr } = await client.from('sessoes').delete()
-    .eq('sale_id', sale_id)
-    .in('status', ['pendente', 'agendada', 'remarcada'])
-  if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 })
   const base = {
     sale_id,
     status: 'agendada',
