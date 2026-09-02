@@ -1241,7 +1241,104 @@ Cada um e pequeno, e cada um custaria tempo a quem tropecar nele sem saber.
   chargebacks", para o parcial nao ficar escondido atras de um rotulo que nao o
   menciona.
 
-### 0.1.17 Modulos criados nestas 48 horas
+### 0.1.17 O produto em uso real: o que aconteceu depois de publicar
+
+O Diagnostico Guiado entrou em producao em 02/09/2026 e foi usado no mesmo dia.
+Esta subsecao registra o que so apareceu com uso real, e as tres coisas que as
+revisoes acharam DEPOIS do deploy.
+
+**Os pacotes criados.** Cinco dos oito pacientes foram agendados pelo comercial
+na mesma tarde, e a conferencia contra o banco deu tudo certo:
+
+| Paciente | Sessoes | Pedro | Comissao da Denise | Meet | Evento |
+|---|---|---|---|---|---|
+| Paula Caroline | 9 | 1 e 2 | R$ 665 | todas | todas |
+| Rafaela Pires Anchieta | 9 | 1 e 2 | R$ 665 | todas | todas |
+| Juliane Eller | 2 | 1 | R$ 95 | todas | todas |
+| Bruno Cavallini | 9 | 1 e 2 | R$ 665 | todas | todas |
+| Valdir Sabino | 9 | 1 e 2 | R$ 665 | todas | todas |
+
+38 sessoes, divisao correta em todas, ordem cronologica correta em todas, link
+do Meet e convite do Google em todas. Faltam **Francisco Geraldo**, **Gisela
+Palos** e **Jeane Gomes Pereira** - esta ultima e uma venda que entrou em
+02/09/2026 as 20:05 (R$ 2.497, Formato 2), ja depois de a feature estar no ar.
+
+**A primeira tentativa de agendar bateu numa trava legitima, por um motivo que
+ninguem tinha previsto.** Ver 0.1.2 para o caso da Juliane Eller e a distincao
+compromisso x consulta que dele resultou.
+
+**O que as revisoes acharam DEPOIS do deploy:**
+
+**(1) A coluna `categoria` decide o tipo do conflito, e a trava nao a lia.**
+`compromissos_terapeuta` guarda DOIS tipos: a tela de lancamento manual oferece
+"Categoria: Compromisso | Sessao" e a rota grava o que a pessoa escolheu. A
+consulta carimbava tudo como `compromisso`, entao uma **consulta real** lancada
+a mao viraria bloqueio e o sistema ofereceria "Agendar assim mesmo" em cima
+dela. Ha **4 linhas assim no banco**, todas do Pedro, com nome de paciente no
+titulo: "Cris Polonine", "WAGNER MULLER ESTEVAM", "Jessica Moura" e "Sessao
+Mariano 1/6". Antes do override o `tipo` era cosmetico; a feature o promoveu a
+decisao de seguranca sem consultar a coluna que o contradiz. A mensagem tambem
+passou a dizer a verdade sobre essas linhas, em vez de afirmar "nao e uma
+consulta marcada".
+
+**(2) `find` mascarava a consulta lancada a mao.** Cada data reportava UM
+conflito, o primeiro do array `ocupados`, e compromissos vem ordenados por
+inicio. Um horario que batesse ao mesmo tempo num `ALMOCO` e numa linha
+`categoria='sessao'` reportava o almoco, `soCompromissos` dizia "e so bloqueio",
+a tela oferecia "Agendar assim mesmo" e o agendamento entrava **em cima da
+consulta real**. Nenhuma das 4 linhas tem mascarador hoje, mas **o Pedro tem 209
+pares de compromissos sobrepostos**, entao a configuracao e rotineira - e a
+janela nova aumenta a exposicao, justamente porque torna visiveis os blocos
+longos, que comecam mais cedo e portanto ordenam antes. Corrigido com
+`escolherConflito`: a sessao sempre ganha.
+
+**(3) Dois furos ANTIGOS na trava, que a faziam falhar ABERTA.** Nenhum dos dois
+foi introduzido pelo Diagnostico:
+- A janela filtrava por `inicio` dentro do intervalo, entao todo compromisso
+  mais longo que a duracao da sessao tinha um trecho invisivel: **158 dos 357
+  compromissos do Pedro**, ate 170 minutos. Caso concreto testado: pedir 02/09 as
+  15:00, dentro de uma `GRAVACAO` das 14:10 as 17:00, devolvia **zero conflito**.
+  Passou a filtrar por sobreposicao. Medido depois: nos 1.680 slots da grade do
+  Pedro em 120 dias, 346 bloqueados antes e 346 depois (zero novos, porque a
+  equipe ja contornava lancando uma linha por horario da grade); **fora da
+  grade**, de 10 em 10 minutos, passa de 1.452 para 1.802 recusas - **+350, todas
+  verdadeiro positivo**.
+- O `error` das consultas era descartado: `null` virava `?? []` e zero
+  conflitos, e o agendamento passava por cima de qualquer coisa. Trava de
+  seguranca nao pode falhar aberta. Depois foi encontrado que o fail-closed
+  cobria **2 das 3 leituras** - o erro da consulta a `terapeutas` seguia
+  descartado, fazendo a trava calcular a ocupacao com duracao de 60 min e sem a
+  grade de horarios.
+- O teto de 900 linhas cortava em silencio, e o comentario prometia um campo
+  `truncou` no retorno que **nunca existiu**. Agora pede `LIMITE+1` e lanca com
+  mensagem acionavel. Folga hoje: 453 linhas no pior caso medido, 736 no total do
+  Pedro - mas **592 dessas foram criadas so em agosto**.
+
+**(4) A auditoria do override existia mas era invisivel.** `ignorou_bloqueio` e
+os bloqueios atropelados sao gravados em `dados_novos`, e o unico leitor de
+`atividades_log` (`app/api/terapeutas/admin/log/route.ts`) nao selecionava esse
+campo. A pergunta que o registro existe para responder - "alguem forcou?" - so
+tinha resposta com acesso direto ao banco.
+
+**A licao desta rodada, e ela e sobre metodo, nao sobre codigo.** Duas falhas
+minhas, as duas pegas por revisao:
+
+- **Escrevi na mensagem de um commit uma correcao que nao estava nele.** O
+  script que fazia duas correcoes juntas quebrou no meio, a da rota foi refeita,
+  a da tela ficou para tras, e a mensagem descrevia as duas. O resultado foi pior
+  que nao ter corrigido: a mensagem passou a servir de evidencia de que ja
+  estava feito. **Conferir o `git diff` antes de escrever a mensagem, nao a
+  intencao.**
+- **Escrevi tres testes que passavam contra o codigo com o defeito.** Eles
+  exercitavam `soCompromissos`, que nao tinha mudado, em vez do mapeamento
+  `categoria` -> `tipo`, que vivia dentro da funcao que fala com o Supabase e
+  que nenhum teste alcanca. O revisor provou copiando o codigo antigo e rodando:
+  **11 de 11 passaram**. Depois de extrair o mapeamento para `tipoDoCompromisso`
+  e `escolherConflito`, a mesma prova foi refeita ao contrario: reintroduzindo os
+  dois defeitos de proposito, **4 testes quebram**. **Teste novo so vale se
+  alguem provar que ele pega o defeito que diz pegar.**
+
+### 0.1.18 Modulos criados nestas 48 horas
 
 | Arquivo | O que decide | Testes |
 |---|---|---|
