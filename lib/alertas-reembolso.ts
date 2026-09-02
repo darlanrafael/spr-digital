@@ -45,9 +45,20 @@ export function calcularAlertasPendentes({
   // esconder o estorno INTEGRAL da mesma venda, que é outro dinheiro e
   // precisa ser deduzido por conta própria.
   const jaDeduzidos = new Set<string>()
+  // Quanto de reembolso PARCIAL já foi abatido de cada venda. Quando a venda
+  // inteira é estornada depois, só o que RESTA precisa voltar: o cliente já
+  // recebeu a parte parcial e os sócios já pagaram por ela. Sem isto a mesma
+  // venda era deduzida duas vezes - no caso do Miguel, R$ 1.560 + R$ 2.758,70
+  // = R$ 4.318,70 sobre uma venda que gerou R$ 2.758,70.
+  const parcialJaAbatido = new Map<string, number>()
   for (const c of closings) {
     for (const a of c.alertas ?? []) {
-      if (a.saleId && !a.solicitacaoId) jaDeduzidos.add(a.saleId)
+      if (!a.saleId) continue
+      if (a.solicitacaoId) {
+        parcialJaAbatido.set(a.saleId, (parcialJaAbatido.get(a.saleId) ?? 0) + a.valor)
+      } else {
+        jaDeduzidos.add(a.saleId)
+      }
     }
   }
 
@@ -66,13 +77,19 @@ export function calcularAlertasPendentes({
     if (!repassadas.has(s.id)) continue
     if (jaDeduzidos.has(s.id)) continue
 
+    // O que resta devolver, já sem o parcial abatido antes. Se o parcial cobriu
+    // tudo, não sobra dedução: cobrar de novo tiraria dos sócios dinheiro que
+    // nunca saiu.
+    const valor = s.valor_liquido - (parcialJaAbatido.get(s.id) ?? 0)
+    if (!(valor > 0)) continue
+
     achados.push({
       saleId: s.id,
       nome: s.nome,
       telefone: s.telefone || undefined,
       email: s.email || undefined,
       produto: s.produto,
-      valor: s.valor_liquido,
+      valor,
       tipo: s.status === 'chargeback' ? 'chargeback' : 'reembolso',
       data: s.data_reembolso ?? s.data_hora.slice(0, 10),
     })

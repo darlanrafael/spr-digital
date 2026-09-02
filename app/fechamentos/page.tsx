@@ -155,6 +155,7 @@ function FechamentosContent() {
   // sem repasse.
   const [terapeutasComissao, setTerapeutasComissao] = useState<{ nome: string; percentual_comissao: number }[]>([])
   const [reembolsosParciais, setReembolsosParciais] = useState<SolicitacaoReembolso[]>([])
+  const [erroReembolsosParciais, setErroReembolsosParciais] = useState<string | null>(null)
   useEffect(() => {
     const client = getSupabaseClient()
     if (!client) return
@@ -162,10 +163,22 @@ function FechamentosContent() {
       .then(({ data }) => setTerapeutasComissao((data ?? []) as { nome: string; percentual_comissao: number }[]))
     // Reembolsos parciais aprovados pelo CEO. Só os aprovados: pendente ainda
     // pode ser rejeitado, e rejeitado nunca virou dinheiro saindo.
+    // Ordem explícita e teto declarado: sem `order` o corte de 1000 linhas do
+    // PostgREST é silencioso E imprevisível, e poderia derrubar justamente a
+    // aprovação nova. Aprovações não são purgadas, então a lista só cresce.
     client.from('solicitacoes_reembolso')
-      .select('id,sale_id,paciente_nome,paciente_email,valor_reembolso,status,created_at,updated_at')
+      .select('id,sale_id,sessoes_ids,paciente_nome,paciente_email,valor_reembolso,status,created_at,updated_at')
       .eq('status', 'aprovado')
-      .then(({ data }) => setReembolsosParciais((data ?? []) as SolicitacaoReembolso[]))
+      .order('updated_at', { ascending: false })
+      .limit(500)
+      .then(({ data, error }) => {
+        // Lista vazia por falha de leitura é indistinguível de "não há parcial
+        // aprovado", e o fechamento seguiria dizendo que não há nada a deduzir.
+        // Basta ligarem RLS nesta tabela para o PostgREST devolver 200 com [].
+        if (error) { setErroReembolsosParciais(error.message); return }
+        setErroReembolsosParciais(null)
+        setReembolsosParciais((data ?? []) as SolicitacaoReembolso[])
+      })
   }, [])
   function matchTerapeutaComissao(produtoNome: string): { nome: string; percentual_comissao: number } | null {
     const lower = produtoNome.toLowerCase()
@@ -439,10 +452,10 @@ function FechamentosContent() {
       // repassada, e reembolso PARCIAL aprovado pelo CEO. Nos dois casos o
       // dinheiro saiu depois do repasse e precisa voltar, e o usuário decide
       // um a um o que abater neste fechamento.
-      const produtoPorSaleId = new Map(sales.map(v => [v.id, v.produto]))
+      const vendaPorSaleId = new Map(sales.map(v => [v.id, { produto: v.produto, status: v.status }]))
       return [
         ...calcularAlertasPendentes({ closings, sales }),
-        ...calcularAlertasReembolsoParcial({ solicitacoes: reembolsosParciais, closings, produtoPorSaleId }),
+        ...calcularAlertasReembolsoParcial({ solicitacoes: reembolsosParciais, closings, vendaPorSaleId }),
       ].sort((a, b) => b.valor - a.valor)
     },
     [closings, sales, reembolsosParciais],
@@ -1406,6 +1419,18 @@ function FechamentosContent() {
                     </div>
                     )}
 
+                    {/* Falha ao ler os reembolsos parciais. Precisa aparecer:
+                        lista vazia por erro é idêntica, na tela, a "não há nada
+                        a deduzir", e o fechamento sairia sem o desconto. */}
+                    {erroReembolsosParciais && (
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+                        <p className="text-sm text-amber-300 font-semibold">Nao foi possivel ler os reembolsos parciais aprovados</p>
+                        <p className="text-xs text-amber-400/80 mt-1">
+                          Se houver algum reembolso parcial aprovado, ele NAO esta sendo deduzido nesta tela. Confira antes de confirmar o fechamento. Detalhe: {erroReembolsosParciais}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Bloco 3 — Alertas pós-fechamento */}
                     {alertas.length > 0 && (
                       <div className="bg-red-500/10 border border-red-500/30 rounded-xl overflow-hidden">
@@ -1819,7 +1844,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
               )}
               {closing.alertas.length > 0 && (
                 <span className="inline-flex items-center gap-1 bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
-                  {closing.alertas.length} reembolso{closing.alertas.length !== 1 ? 's' : ''}/chargeback{closing.alertas.length !== 1 ? 's' : ''}
+                  {closing.alertas.length} devolução{closing.alertas.length !== 1 ? 'es' : ''} deduzida{closing.alertas.length !== 1 ? 's' : ''}
                 </span>
               )}
             </div>
@@ -2192,7 +2217,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
                   </thead>
                   <tbody>
                     {closing.alertas.map((a, i) => (
-                      <tr key={a.solicitacaoId ?? a.saleId ?? i} className="border-b border-white/5">
+                      <tr key={chaveAlerta(a) ?? i} className="border-b border-white/5">
                         <td className="px-4 py-2.5 text-gray-300">{a.nome}</td>
                         <td className="px-4 py-2.5 text-gray-400 hidden md:table-cell">{a.telefone ?? '—'}</td>
                         <td className="px-4 py-2.5 text-gray-400 hidden md:table-cell">{a.email ?? '—'}</td>
