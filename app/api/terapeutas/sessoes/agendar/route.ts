@@ -328,30 +328,6 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Cancela no Google os eventos das sessões que sumiram. Sem isso o
-  // reagendamento total deixava os eventos antigos no calendário para sempre:
-  // as sessões novas eram criadas com eventos novos e ninguém apagava os
-  // velhos, então o terapeuta via o pacote inteiro duplicado, na data antiga e
-  // na nova. Medido criando e refazendo um pacote de teste: 9 eventos órfãos.
-  //
-  // Fica DEPOIS do insert e depois dos convites novos, e não entre o delete e
-  // o insert como estava. Ali a venda ficava com ZERO sessão durante N idas e
-  // voltas ao Google (~350 ms cada, até 8 hoje): cancelarEvento engole exceção,
-  // então erro não abortava nada, mas um stall do Calendar levava a função ao
-  // teto de 60 s com as sessões já apagadas e nenhuma criada - o operador via
-  // timeout genérico, concluía que "não aconteceu nada" e o pacote do paciente
-  // tinha sumido. Cancelar evento velho pode ser feito a qualquer momento
-  // depois, então é a última coisa a rodar: se o tempo acabar aqui, o que se
-  // perde é limpeza de calendário, não o pacote nem o convite novo do paciente.
-  // Em lotes paralelos pelo mesmo motivo do laço de criação (o tempo total da
-  // função é o que conta), com o mesmo tamanho de lote.
-  const eventosAntigos = substituidas.map(s => s.google_event_id).filter((id): id is string => !!id)
-  for (let inicio = 0; inicio < eventosAntigos.length; inicio += LOTE_CALENDAR) {
-    await Promise.allSettled(
-      eventosAntigos.slice(inicio, inicio + LOTE_CALENDAR).map(id => cancelarEvento(id)),
-    )
-  }
-
   // Sessão marcada pro mesmo dia, a "venda de encaixe": o fluxo normal de
   // véspera (só olha "amanhã") nunca ia pegar essa. Avisa na hora, fora do
   // cron, com o link do Meet já embutido (evento acabou de ser criado acima).
@@ -405,6 +381,31 @@ export async function POST(req: NextRequest) {
         }
       : { numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
   })
+
+  // Cancela no Google os eventos das sessões que sumiram. Sem isso o
+  // reagendamento total deixava os eventos antigos no calendário para sempre:
+  // as sessões novas eram criadas com eventos novos e ninguém apagava os
+  // velhos, então o terapeuta via o pacote inteiro duplicado, na data antiga e
+  // na nova. Medido criando e refazendo um pacote de teste: 9 eventos órfãos.
+  //
+  // É a ÚLTIMA coisa da rota, e não mais o que rodava entre o delete e o
+  // insert. Ali a venda ficava com ZERO sessão durante N idas e voltas ao
+  // Google (~350 ms cada, até 8 hoje): cancelarEvento engole exceção, então
+  // erro não abortava nada, mas um stall do Calendar levava a função ao teto de
+  // 60 s com as sessões já apagadas e nenhuma criada - o operador via timeout
+  // genérico, concluía que "não aconteceu nada" e o pacote do paciente tinha
+  // sumido. Evento velho pode ser cancelado a qualquer momento depois, então
+  // vem por último de propósito: se o tempo acabar aqui, o que se perde é
+  // limpeza de calendário, e não o pacote, o convite novo do paciente, o aviso
+  // de encaixe ou o log de auditoria - todos já feitos acima.
+  // Em lotes paralelos pelo mesmo motivo do laço de criação (o tempo total da
+  // função é o que conta), com o mesmo tamanho de lote.
+  const eventosAntigos = substituidas.map(s => s.google_event_id).filter((id): id is string => !!id)
+  for (let inicio = 0; inicio < eventosAntigos.length; inicio += LOTE_CALENDAR) {
+    await Promise.allSettled(
+      eventosAntigos.slice(inicio, inicio + LOTE_CALENDAR).map(id => cancelarEvento(id)),
+    )
+  }
 
   // As sessões já estão gravadas mesmo com falha no Google, e é assim que tem
   // que ser (o Calendar pode estar fora do ar e isso não pode impedir o
