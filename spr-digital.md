@@ -341,7 +341,7 @@ achados so porque a verificacao foi feita contra o banco real:**
    sempre no calendario, com o pacote inteiro duplicado na data antiga e na
    nova. Medido criando e refazendo pacotes de teste: 9 eventos orfaos.
 
-### 0.1.5 As tres rodadas de revisao, e o que cada uma pegou
+### 0.1.5 As quatro rodadas de revisao, e o que cada uma pegou
 
 O padrao que se repetiu: **compilar nao e evidencia de nada**. Cinco defeitos
 desta feature passaram limpos em `tsc`, `npm test` e `npm run build` e
