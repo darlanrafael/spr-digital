@@ -195,6 +195,28 @@ function inferirNumeroSessoesPorValor(sale: Sale, todasVendas: Sale[]): number {
   return inferirNumeroSessoes(sale.produto)
 }
 
+// Etiqueta do Diagnóstico Guiado pra uma linha que representa a VENDA inteira
+// (listas do comercial e cabeçalho do prontuário). Total sempre do FORMATO;
+// posição = próxima sessão a entregar, ou a última quando o pacote acabou.
+function rotuloDiagnosticoDaVenda(sale: Sale, sessoes: { status: string }[]): string | null {
+  const formato = formatoDaVenda(sale)
+  if (!formato) return null
+  const entregues = sessoes.filter(s => s.status === 'entregue').length
+  return rotuloDiagnostico({
+    formato: formato.formato,
+    numeroSessao: Math.min(entregues + 1, formato.totalSessoes),
+    totalSessoes: formato.totalSessoes,
+  })
+}
+
+// Venda do produto Diagnóstico Guiado cuja OFERTA não está mapeada (oferta
+// nova, promoção, ou a oferta "Padrão" de R$ 10,00, não mapeada de propósito).
+// Sem o formato não dá pra montar o pacote, então a lista precisa avisar em vez
+// de deixar o comercial tentar agendar e receber um pacote errado.
+function ofertaDiagnosticoNaoMapeada(sale: Sale): boolean {
+  return sale.produto.toLowerCase().includes('diagnóstico guiado') && !formatoDaVenda(sale)
+}
+
 function nomeFromEmail(email: string): string {
   const prefix = email.split('@')[0]
   return prefix.replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
@@ -537,6 +559,9 @@ export default function TerapeutasVendas() {
   const prontuarioSessoes = prontuarioVendaId ? (pageData.sessoes_por_venda[prontuarioVendaId] ?? []) : []
   const prontuarioOcorrencias = prontuarioVendaId ? (pageData.ocorrencias_por_venda[prontuarioVendaId] ?? []) : []
 
+  // Etiqueta por sessão no histórico do prontuário: o formato é da VENDA, então
+  // é calculado uma vez só, fora do laço das sessões.
+  const formatoProntuario = prontuarioSale ? formatoDaVenda(prontuarioSale) : null
   const sessoesPendentesProntuario = prontuarioSessoes.filter(s => s.status === 'agendada' || s.status === 'pendente')
   const entreguesProntuario = prontuarioSessoes.filter(s => s.status === 'entregue').length
   const totalProntuario = prontuarioSessoes[0]?.total_sessoes ?? prontuarioSessoes.length
@@ -878,6 +903,17 @@ export default function TerapeutasVendas() {
                               <td className="px-4 py-3">
                                 <p className="text-white font-medium">{sale.nome}</p>
                                 <p className="text-xs text-gray-500">{sale.email}</p>
+                                {rotuloDiagnosticoDaVenda(sale, []) && (
+                                  <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                    {rotuloDiagnosticoDaVenda(sale, [])}
+                                  </span>
+                                )}
+                                {ofertaDiagnosticoNaoMapeada(sale) && (
+                                  <p className="mt-1 text-[10px] text-amber-400 max-w-[260px]">
+                                    Oferta do Diagnóstico Guiado não mapeada: o pacote não pode ser montado até alguém
+                                    associar essa oferta a um formato. Avise o time técnico.
+                                  </p>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate">{sale.produto}</td>
                               <td className="px-4 py-3 text-center">
@@ -889,6 +925,10 @@ export default function TerapeutasVendas() {
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
                               <td className="px-4 py-3 text-gray-500 text-xs">—</td>
                               <td className="px-4 py-3">
+                                {ofertaDiagnosticoNaoMapeada(sale) ? (
+                                  <span title="Oferta não mapeada: o formato do pacote é desconhecido."
+                                    className="text-xs text-gray-600 whitespace-nowrap cursor-not-allowed">Oferta não mapeada</span>
+                                ) : (
                                 <button onClick={() => {
                                   setAgendarVendaId(sale.id)
                                   setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
@@ -897,6 +937,7 @@ export default function TerapeutasVendas() {
                                 }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                   <Calendar className="w-3 h-3" /> Agendar
                                 </button>
+                                )}
                               </td>
                             </tr>
                           ))}
@@ -938,6 +979,11 @@ export default function TerapeutasVendas() {
                                 <td className="px-4 py-3">
                                   <p className="text-white font-medium">{sale.nome}</p>
                                   <p className="text-xs text-gray-500">{sale.email}</p>
+                                  {rotuloDiagnosticoDaVenda(sale, sessoes) && (
+                                    <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                      {rotuloDiagnosticoDaVenda(sale, sessoes)}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-gray-300">{total}</td>
                                 <td className="px-4 py-3 text-green-500 font-medium">{entregues}</td>
@@ -1141,6 +1187,11 @@ export default function TerapeutasVendas() {
               <div>
                 <h3 className="text-sm font-semibold text-white">Prontuário — {prontuarioSale.nome}</h3>
                 <p className="text-xs text-gray-400 mt-0.5">{prontuarioSale.email}</p>
+                {rotuloDiagnosticoDaVenda(prontuarioSale, prontuarioSessoes) && (
+                  <span className="inline-block mt-1.5 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                    {rotuloDiagnosticoDaVenda(prontuarioSale, prontuarioSessoes)}
+                  </span>
+                )}
               </div>
               <button onClick={() => setProntuarioVendaId(null)} className="text-gray-500 hover:text-white mt-0.5">
                 <X className="w-4 h-4" />
@@ -1200,6 +1251,11 @@ export default function TerapeutasVendas() {
                         <div className="flex items-center gap-2 mb-3 flex-wrap">
                           <span className="text-xs text-gray-500 font-medium">Sessão {s.numero_sessao} de {s.total_sessoes}</span>
                           <span className={`text-[11px] px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                          {formatoProntuario && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                              {rotuloDiagnostico({ formato: formatoProntuario.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })}
+                            </span>
+                          )}
                           {s.status !== 'entregue' && s.status !== 'cancelada' && (
                             <span className={`text-[11px] px-2 py-0.5 rounded-full ${(SC_BADGE[s.status_consulta ?? 'aguardando'] ?? SC_BADGE.aguardando).cls}`}>
                               {(SC_BADGE[s.status_consulta ?? 'aguardando'] ?? SC_BADGE.aguardando).label}
