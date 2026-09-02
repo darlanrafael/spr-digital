@@ -14,6 +14,7 @@ import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
 import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
 import { calcularAlertasReembolsoParcial, chaveAlerta, type SolicitacaoReembolso } from '@/lib/alertas-reembolso-parcial'
+import { readequacoesDoPeriodo } from '@/lib/readequacoes-produto'
 import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
 import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/lib/etiqueta-fechamento'
 import { getSupabaseClient } from '@/lib/supabase'
@@ -460,6 +461,14 @@ function FechamentosContent() {
     },
     [closings, sales, reembolsosParciais],
   )
+  // Vendas cujo produto foi corrigido à mão: a plataforma continua mostrando o
+  // produto antigo, então a conferência do usuário contra o painel não fecha
+  // sem que alguém explique a diferença.
+  const readequacoes = useMemo(
+    () => readequacoesDoPeriodo({ inicio: periodo.inicio, fim: periodo.fim }),
+    [periodo.inicio, periodo.fim],
+  )
+
   // Quais reembolsos o usuário aceitou abater NESTE fechamento.
   //
   // Um estorno do funil da Imersão não pode ser descontado num fechamento da
@@ -1417,6 +1426,52 @@ function FechamentosContent() {
                         </table>
                       </div>
                     </div>
+                    )}
+
+                    {/* Readequações de produto: a plataforma mostra um produto,
+                        o sistema conta outro. Sem este aviso a conferência da
+                        apuração não bate e ninguém sabe por quê. */}
+                    {readequacoes.length > 0 && (
+                      <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl overflow-hidden">
+                        <div className="p-4 border-b border-sky-500/20">
+                          <h4 className="text-sm font-semibold text-sky-300">
+                            Conferencia com a plataforma: {readequacoes.length} venda{readequacoes.length !== 1 ? 's' : ''} mudou de produto
+                          </h4>
+                          <p className="text-xs text-sky-400/80 mt-1">
+                            Ao cruzar os numeros com o painel da plataforma, estas vendas vao aparecer la no produto ANTIGO e aqui no novo. Os totais gerais batem; o que muda e a divisao por produto.
+                          </p>
+                        </div>
+                        <div className="overflow-x-auto pb-2">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-sky-500/20 bg-sky-500/5">
+                                <th className="text-left px-4 py-2.5 text-gray-500">Data</th>
+                                <th className="text-left px-4 py-2.5 text-gray-500">Cliente</th>
+                                <th className="text-right px-4 py-2.5 text-gray-500">Valor</th>
+                                <th className="text-left px-4 py-2.5 text-gray-500">Na plataforma consta</th>
+                                <th className="text-left px-4 py-2.5 text-gray-500">No sistema conta como</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {readequacoes.map(r => (
+                                <tr key={r.saleId} className="border-b border-sky-500/10 align-top">
+                                  <td className="px-4 py-2.5 text-gray-400 whitespace-nowrap">{formatDate(r.data)}</td>
+                                  <td className="px-4 py-2.5 text-gray-300">
+                                    {r.cliente}
+                                    <p className="text-[11px] text-gray-500 mt-0.5 max-w-md">{r.motivo}</p>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-gray-300 font-semibold whitespace-nowrap">{formatCurrency(r.valor)}</td>
+                                  <td className="px-4 py-2.5 text-amber-400">
+                                    {r.produtoNaPlataforma}
+                                    <p className="text-[11px] text-gray-500 mt-0.5">{r.plataforma}: 1 venda a mais neste produto</p>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-emerald-400">{r.produtoNoSistema}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     )}
 
                     {/* Falha ao ler os reembolsos parciais. Precisa aparecer:

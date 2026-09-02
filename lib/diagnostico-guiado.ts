@@ -14,15 +14,24 @@ export const OFERTAS_DIAGNOSTICO: Record<string, 1 | 2 | 3> = {
   WXwmPZfJxGqeXerA6dkO: 1,
   H8DA8U21x7Lmv3NreVMs: 2,
   qVvads7GKaI7lN1Kctrr: 3,
-  // Venda da Paula Caroline (28/08/2026, R$ 4.997): o comercial fechou pela
-  // oferta do produto "Mentoria Particular - Pedro Roncada", mas o que ela
-  // comprou foi o Formato 1 do Diagnostico. Confirmado com o comercial em
-  // 02/09/2026. Mapear esta oferta e seguro porque ela e usada por UMA venda
-  // so em todo o banco (varredura das 10.022 linhas) - nao existe outra venda
-  // de Mentoria que passe a ser lida como Diagnostico por causa disto. O nome
-  // do produto na linha foi corrigido junto, para as consultas que filtram por
-  // nome (usadas para escapar do teto de 1000 do PostgREST) alcancarem a venda.
-  '4pv79AgzdiRoWeLm5gyT': 1,
+}
+
+// Vendas avulsas que sao Diagnostico apesar da oferta dizer outra coisa.
+//
+// A chave e a VENDA, nunca a oferta. Uma oferta e um link reutilizavel: quando
+// o comercial fecha um Diagnostico por engano dentro de outro produto, mapear
+// aquela oferta declararia que ela SIGNIFICA Diagnostico, e a proxima venda
+// legitima feita pelo mesmo link viraria um pacote de 9 sessoes com a Denise,
+// em silencio. A excecao morre com a venda que a originou.
+//
+// Cada entrada precisa de: quem, quando, por que, e quem confirmou.
+export const EXCECOES_DIAGNOSTICO: Record<string, 1 | 2 | 3> = {
+  // Paula Caroline, 28/08/2026, R$ 4.997. O Felipe criou uma oferta dentro do
+  // produto "Mentoria Particular - Pedro Roncada" (4pv79AgzdiRoWeLm5gyT) e
+  // fechou o Diagnostico por ela. Formato confirmado pelo usuario em
+  // 02/09/2026 - a oferta nao diz nada aqui, e o preco nao serve de
+  // identificador (ela tem valor_com_juros de R$ 5.813,20).
+  '27a669a3-dad9-4c8f-ae93-bca82bb13e90': 1,
 }
 
 // A oferta "Padrao" (wd6AwMQIJGAekPCGCRsb, R$ 10,00) existe no mesmo produto e
@@ -48,6 +57,11 @@ export function ofertaDoOrderId(orderId?: string | null): string | null {
 }
 
 export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'>): FormatoDiagnostico | null {
+  // Excecao por venda vem primeiro: e o unico caso em que a oferta esta errada
+  // e nao ha o que consultar nela.
+  const excecao = sale.id ? EXCECOES_DIAGNOSTICO[sale.id] : undefined
+  if (excecao) return { formato: excecao, ...SESSOES_POR_FORMATO[excecao] }
+
   const oferta = ofertaDoOrderId(sale.order_id)
   if (!oferta) return null
   const formato = OFERTAS_DIAGNOSTICO[oferta]

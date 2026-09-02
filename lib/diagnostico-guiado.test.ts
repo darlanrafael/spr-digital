@@ -168,12 +168,25 @@ test('a base nunca aparece na lista, ela ja esta marcada', () => {
   assert.equal(d.includes('2026-09-08T14:00:00.000Z'), false)
 })
 
-test('venda da Paula Caroline: fechada na oferta errada, corrigida para Formato 1', () => {
-  // O comercial fechou pela oferta do produto "Mentoria Particular - Pedro
-  // Roncada" em 28/08/2026 (R$ 4.997), mas era Diagnostico Formato 1. A oferta
-  // foi mapeada porque e usada por UMA venda so em todo o banco.
+test('venda da Paula Caroline: excecao POR VENDA, nao pela oferta', () => {
+  // O Felipe criou uma oferta dentro do produto de Mentoria e fechou o
+  // Diagnostico por ela. A excecao vale para esta venda, e so para ela.
   const f = formatoDaVenda({ id: '27a669a3-dad9-4c8f-ae93-bca82bb13e90', order_id: 'e3eada99-d9b2-4d72-9609-333af129cecf-4pv79AgzdiRoWeLm5gyT' })
   assert.equal(f?.formato, 1)
   assert.equal(f?.totalSessoes, 9)
   assert.equal(f?.sessoesPedro, 2)
+})
+
+test('CRITICO: outra venda pela MESMA oferta do Felipe nao vira Diagnostico', () => {
+  // Oferta e link reutilizavel. Se o Felipe vender uma Mentoria de verdade
+  // pelo mesmo link, o sistema NAO pode montar um pacote de 9 sessoes com a
+  // Denise. Foi por isso que a excecao saiu da lista de ofertas.
+  const f = formatoDaVenda({ id: 'outra-venda-qualquer', order_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-4pv79AgzdiRoWeLm5gyT' })
+  assert.equal(f, null)
+})
+
+test('a excecao nao contamina venda com o mesmo id em outra oferta', () => {
+  // A excecao e por venda: o id e unico, entao o order_id nem importa.
+  const f = formatoDaVenda({ id: '27a669a3-dad9-4c8f-ae93-bca82bb13e90', order_id: undefined })
+  assert.equal(f?.formato, 1)
 })
