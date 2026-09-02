@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
     await cancelarEvento(sessao.google_event_id as string)
   }
   const evento = await criarEventoComMeet({
-    titulo: `Sessão — ${sessao.paciente_nome}`,
+    titulo: `Sessão - ${sessao.paciente_nome}`,
     inicioISO: novaDataISO,
     fimISO: new Date(new Date(novaDataISO).getTime() + 60 * 60 * 1000).toISOString(),
   })
