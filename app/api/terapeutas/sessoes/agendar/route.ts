@@ -242,7 +242,11 @@ export async function POST(req: NextRequest) {
   // para isso que esta trava existe desde 11/08/2026, depois de 25 duplas
   // marcações reais.
   const atropelouBloqueio = !!ignorar_compromissos && soCompromissos(conflitos)
-  const bloqueiosAtropelados = atropelouBloqueio ? conflitos.map(c => c.descricao) : []
+  // Guarda a data pedida junto do texto: se o compromisso for apagado depois,
+  // o texto sozinho nao permite reconstituir o que foi atropelado.
+  const bloqueiosAtropelados = atropelouBloqueio
+    ? conflitos.map(c => ({ dataISO: c.dataISO, descricao: c.descricao }))
+    : []
   const conflitosQueValem = atropelouBloqueio ? [] : conflitos
   if (conflitosQueValem.length > 0) {
     // Pacote inteiro recusado, nada criado: agendar só parte deixaria o
@@ -505,6 +509,11 @@ export async function POST(req: NextRequest) {
     aviso: avisos.length === 0 ? null : avisos.join(' '),
   })
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 })
+    // As outras duas rotas ja logavam; esta era a unica sem rastro no servidor,
+    // justo a que agora lanca quando a trava de horario nao consegue conferir.
+    console.error('[agendar]', err)
+    // `String(err)` entrega "Error: ..." pro comercial. A mensagem ja e escrita
+    // pra ele; o prefixo so polui.
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }
 }

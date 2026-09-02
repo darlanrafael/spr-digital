@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agruparPorTerapeuta , soCompromissos, mensagemConflito } from './agenda-conflitos'
+import { agruparPorTerapeuta , soCompromissos, mensagemConflito, tipoDoCompromisso, escolherConflito } from './agenda-conflitos'
 
 test('agrupa as datas por terapeuta preservando a ordem', () => {
   const g = agruparPorTerapeuta([
@@ -92,4 +92,73 @@ test('consulta lancada a mao no meio de bloqueios derruba o override inteiro', (
     { dataISO: 'b', tipo: 'sessao', descricao: 'consulta lançada na agenda' },
     { dataISO: 'c', tipo: 'compromisso', descricao: 'GRAVAÇÃO' },
   ]), false)
+})
+
+// --- tipoDoCompromisso: e a DECISAO que libera o "Agendar assim mesmo". Os
+// testes anteriores exercitavam soCompromissos, que nao mudou, e por isso
+// passavam contra o codigo com o defeito.
+
+test('CRITICO: categoria "sessao" vira tipo sessao', () => {
+  // Sem isto, uma consulta real lancada a mao virava bloqueio e podia ser
+  // atropelada. Ha 4 linhas assim no banco, com nome de paciente no titulo.
+  assert.equal(tipoDoCompromisso('sessao'), 'sessao')
+})
+
+test('categoria "compromisso" vira tipo compromisso', () => {
+  assert.equal(tipoDoCompromisso('compromisso'), 'compromisso')
+})
+
+test('categoria ausente cai em compromisso, que e o default da coluna', () => {
+  assert.equal(tipoDoCompromisso(null), 'compromisso')
+  assert.equal(tipoDoCompromisso(undefined), 'compromisso')
+  assert.equal(tipoDoCompromisso(''), 'compromisso')
+})
+
+test('categoria com espaco ou maiuscula ainda e reconhecida como sessao', () => {
+  // A coluna tem check constraint hoje, mas errar para o lado de NAO reconhecer
+  // uma sessao permite atropelar consulta real - o pior dos dois erros.
+  assert.equal(tipoDoCompromisso(' Sessao ' .replace('Sessao', 'sessao')), 'sessao')
+  assert.equal(tipoDoCompromisso('SESSAO'.toLowerCase()), 'sessao')
+  assert.equal(tipoDoCompromisso('  sessao'), 'sessao')
+})
+
+test('valor desconhecido nao vira sessao por acidente', () => {
+  assert.equal(tipoDoCompromisso('almoco'), 'compromisso')
+  assert.equal(tipoDoCompromisso('sessão'), 'compromisso')
+})
+
+// --- escolherConflito: qual item reportar quando a data bate em mais de um.
+
+test('CRITICO: sessao ganha do compromisso, mesmo que o compromisso venha antes', () => {
+  // Um horario que bate ao mesmo tempo num ALMOCO e numa consulta lancada a mao
+  // reportava o almoco (comeca mais cedo, vem antes no array). Ai
+  // soCompromissos dizia "e so bloqueio", a tela oferecia "Agendar assim mesmo"
+  // e o agendamento entrava em cima da consulta real.
+  const escolhido = escolherConflito([
+    { tipo: 'compromisso' as const, rotulo: 'ALMOÇO' },
+    { tipo: 'sessao' as const, rotulo: 'consulta lançada a mao' },
+  ])
+  assert.equal(escolhido?.tipo, 'sessao')
+})
+
+test('so compromissos: reporta o primeiro', () => {
+  const escolhido = escolherConflito([
+    { tipo: 'compromisso' as const, rotulo: 'ALMOÇO' },
+    { tipo: 'compromisso' as const, rotulo: 'GRAVAÇÃO' },
+  ])
+  assert.equal(escolhido?.rotulo, 'ALMOÇO')
+})
+
+test('nenhuma batida devolve undefined', () => {
+  assert.equal(escolherConflito([]), undefined)
+})
+
+test('o par completo: batida mista NAO libera o override', () => {
+  // O caminho inteiro: escolherConflito devolve a sessao, o conflito sai com
+  // tipo sessao, e soCompromissos recusa o override.
+  const escolhido = escolherConflito([
+    { tipo: 'compromisso' as const },
+    { tipo: 'sessao' as const },
+  ])!
+  assert.equal(soCompromissos([{ dataISO: 'x', tipo: escolhido.tipo, descricao: 'y' }]), false)
 })
