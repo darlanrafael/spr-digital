@@ -9,6 +9,7 @@ import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { resumirReagendamentoTotal } from '@/lib/reagendamento-total'
 
 type TerapeutaSession = { nome: string; email: string; tipo: string }
 
@@ -359,6 +360,10 @@ export default function TerapeutasVendas() {
   // Modal de confirmação — o toast discreto passava despercebido; aqui o
   // usuário precisa ver claramente que o agendamento foi concluído.
   const [agendarSucesso, setAgendarSucesso] = useState<{ sessoes: number; nome: string } | null>(null)
+  // Trava do reagendamento total: quando a venda já tem sessões, confirmar não
+  // é "criar", é "apagar e refazer". Só libera o botão depois de a pessoa
+  // marcar que entendeu o que vai ser destruído.
+  const [agendarSubstituicaoCiente, setAgendarSubstituicaoCiente] = useState(false)
 
   // Prontuário
   const [prontuarioVendaId, setProntuarioVendaId] = useState<string | null>(null)
@@ -490,7 +495,7 @@ export default function TerapeutasVendas() {
     setAbaAtiva('aprovadas')
     setSubAba('pendentes')
     setAgendarVendaId(saleId)
-    setAgendarDataPrimeira(''); setAgendarErro('')
+    setAgendarDataPrimeira(''); setAgendarErro(''); setAgendarSubstituicaoCiente(false)
     setAgendarNumSessoesInput(String(inferirNumeroSessoesPorValor(venda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])))
     const terapeutaParam = searchParams.get('terapeuta')
     if (terapeutaParam && pageData.terapeutas.some(t => t.id === terapeutaParam)) {
@@ -535,6 +540,16 @@ export default function TerapeutasVendas() {
   // o efeito abaixo sempre preenchia agendarDatasEditadas, então o campo ia
   // junto em toda requisição.
   const agendarDiagnostico = agendarVenda ? formatoDaVenda(agendarVenda) : null
+  // Sessões que essa venda JÁ tem, de qualquer terapeuta (sessoes_por_venda
+  // não é filtrado por terapeuta nesta API). O link "Agendar" da tela do
+  // terapeuta chega aqui apontando pra venda que já foi agendada por OUTRO
+  // terapeuta - o produto conjunto "Pedro | Denise" aparece em Pendentes da
+  // Denise mesmo com as sessões do Pedro criadas - e confirmar ali apaga as
+  // sessões dele, cancela os convites do paciente e refaz o pacote com a
+  // comissão da outra pessoa. Antes disso não aparecia em lugar nenhum.
+  const agendarSessoesExistentes = agendarVendaId ? (pageData.sessoes_por_venda[agendarVendaId] ?? []) : []
+  const agendarResumo = resumirReagendamentoTotal(agendarSessoesExistentes)
+  const agendarEhSubstituicao = agendarResumo.substituiveis > 0 || agendarResumo.bloqueado
   // O Pedro sempre começa o pacote; a Denise pega o restante. Quem monta a
   // divisão é a rota, mas ela ainda exige um terapeuta_id no corpo.
   const pedroTerapeuta = pageData.terapeutas.find(t => t.nome.trim().toLowerCase().startsWith('pedro')) ?? null
@@ -617,6 +632,7 @@ export default function TerapeutasVendas() {
     setAgendarSucesso({ sessoes: json.sessoes_criadas, nome: agendarVenda?.nome ?? '' })
     setAgendarVendaId(null)
     setAgendarDataPrimeira('')
+    setAgendarSubstituicaoCiente(false)
     loadData()
   }
 
@@ -932,7 +948,7 @@ export default function TerapeutasVendas() {
                                 <button onClick={() => {
                                   setAgendarVendaId(sale.id)
                                   setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
-                                  setAgendarDataPrimeira(''); setAgendarErro('')
+                                  setAgendarDataPrimeira(''); setAgendarErro(''); setAgendarSubstituicaoCiente(false)
                                   setAgendarNumSessoesInput(String(inferirNumeroSessoesPorValor(sale, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])))
                                 }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                   <Calendar className="w-3 h-3" /> Agendar
@@ -1068,10 +1084,57 @@ export default function TerapeutasVendas() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">Agendar sessões — {agendarVenda?.nome}</h3>
+              <h3 className="text-sm font-semibold text-white">
+                {agendarEhSubstituicao ? 'Refazer o pacote inteiro' : 'Agendar sessões'} - {agendarVenda?.nome}
+              </h3>
               <button onClick={() => setAgendarVendaId(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3">
+              {/* Reagendamento total: a venda JÁ tem sessões. Nada aqui é
+                  "acrescentar" - confirmar apaga o que existe e cria tudo de
+                  novo. O modal dizia só "Agendar sessões", então quem clicava
+                  no link "Agendar" da tela do terapeuta não tinha como saber
+                  que estava destruindo o pacote de outra pessoa. Continua
+                  sendo uma operação legítima (é como se corrige um pacote
+                  inteiro marcado errado), só que agora declarada. */}
+              {agendarEhSubstituicao && (
+                <div className={`rounded-lg p-3 border ${agendarResumo.bloqueado ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
+                  <p className={`text-xs font-semibold flex items-center gap-1.5 ${agendarResumo.bloqueado ? 'text-red-300' : 'text-amber-300'}`}>
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    {agendarResumo.bloqueado
+                      ? `Esta venda tem ${agendarResumo.entregues} sessão(ões) já entregue(s)`
+                      : `Esta venda já tem ${agendarResumo.substituiveis} sessão(ões) agendada(s)`}
+                  </p>
+                  {agendarResumo.bloqueado ? (
+                    <p className="text-[11px] text-gray-300 mt-1.5">
+                      Um pacote com sessão entregue não pode ser refeito do zero: as sessões novas
+                      começariam da número 1 e colidiriam com as que já foram feitas. Para mudar as datas
+                      das que faltam, feche esta janela e remarque uma a uma pelo prontuário do paciente.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-300 mt-1.5">
+                      Confirmar aqui <strong className="text-white">não acrescenta sessões</strong>: apaga as {agendarResumo.substituiveis} sessão(ões)
+                      abaixo{agendarResumo.comConvite > 0 ? `, cancela os ${agendarResumo.comConvite} convite(s) que o paciente já recebeu no Google Agenda` : ''} e
+                      cria o pacote inteiro de novo, do zero, com as datas e a comissão desta tela.
+                      Quem já tinha essas sessões perde todas elas.
+                    </p>
+                  )}
+                  <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                    {agendarSessoesExistentes
+                      .slice()
+                      .sort((a, b) => a.numero_sessao - b.numero_sessao)
+                      .map(sx => (
+                        <div key={sx.id} className="flex items-center gap-2 text-[11px]">
+                          <span className="text-gray-500 w-16 shrink-0">Sessão {sx.numero_sessao}:</span>
+                          <span className="text-gray-200">{fmtDt(sx.data_agendada)}</span>
+                          <span className="text-gray-500">{sx.terapeutas?.nome ?? '?'}</span>
+                          <span className={sx.status === 'entregue' ? 'text-green-400' : 'text-amber-400'}>{sx.status}</span>
+                          {sx.link_meet && <span className="text-gray-600">convite enviado</span>}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
               {agendarDiagnostico ? (
                 /* Pacote conjunto: quem faz cada sessão é regra do produto, não
                    escolha da tela. Mostrar um seletor de terapeuta aqui daria a
@@ -1154,12 +1217,26 @@ export default function TerapeutasVendas() {
               )}
               {/* whitespace-pre-line: o conflito de agenda pode listar uma
                   data por linha quando várias sessões do pacote batem. */}
+              {/* Só aparece no caminho destrutivo: no agendamento normal (venda
+                  sem sessão nenhuma) nada é apagado e pedir confirmação extra
+                  só atrapalharia o uso do dia a dia. */}
+              {agendarEhSubstituicao && !agendarResumo.bloqueado && (
+                <label className="flex items-start gap-2 text-[11px] text-gray-300 cursor-pointer bg-gray-800/60 rounded-lg p-2.5">
+                  <input type="checkbox" checked={agendarSubstituicaoCiente}
+                    onChange={e => setAgendarSubstituicaoCiente(e.target.checked)}
+                    className="mt-0.5 accent-amber-500" />
+                  <span>
+                    Entendi que as {agendarResumo.substituiveis} sessão(ões) acima serão apagadas
+                    {agendarResumo.comConvite > 0 ? ' e os convites do paciente cancelados' : ''}, e que o pacote será recriado do zero.
+                  </span>
+                </label>
+              )}
               {agendarErro && <p className="text-xs text-red-400 whitespace-pre-line">{agendarErro}</p>}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setAgendarVendaId(null)}
                 className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
-              <button onClick={() => {
+              <button disabled={agendarResumo.bloqueado} onClick={() => {
                 if (agendarDiagnostico && !pedroTerapeuta) {
                   setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
                   return
@@ -1168,9 +1245,24 @@ export default function TerapeutasVendas() {
                   setAgendarErro(agendarDiagnostico ? 'Informe a data da 1ª sessão' : 'Selecione o terapeuta e a data')
                   return
                 }
+                // A rota recusa esse caso com 400; a tela para antes pra
+                // ninguém digitar data e senha à toa.
+                if (agendarResumo.bloqueado) {
+                  setAgendarErro('Esta venda tem sessão entregue: refaça as datas uma a uma pelo prontuário.')
+                  return
+                }
+                if (agendarEhSubstituicao && !agendarSubstituicaoCiente) {
+                  setAgendarErro('Marque a confirmação acima: este agendamento apaga as sessões que já existem.')
+                  return
+                }
                 setAgendarErro(''); setAgendarSenhaOpen(true)
-              }} className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg transition-colors">
-                Confirmar agendamento
+              }} className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
+                agendarResumo.bloqueado
+                  ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  : agendarEhSubstituicao ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'}`}>
+                {agendarResumo.bloqueado
+                  ? 'Não é possível refazer'
+                  : agendarEhSubstituicao ? `Apagar e refazer as ${agendarResumo.substituiveis} sessões` : 'Confirmar agendamento'}
               </button>
             </div>
           </div>
