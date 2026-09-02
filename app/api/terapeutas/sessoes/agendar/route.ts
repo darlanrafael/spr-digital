@@ -223,22 +223,15 @@ export async function POST(req: NextRequest) {
       .update({ sessao_id: null }).in('sessao_id', idsASubstituir)
     if (desamarrarErr) return NextResponse.json({ error: desamarrarErr.message }, { status: 500 })
   }
-  // Apaga PRIMEIRO, cancela no Google DEPOIS. Na ordem inversa (que era a de
-  // antes), um delete que falhasse deixava as sessões vivas no banco apontando
-  // para eventos que não existem mais: o paciente perdia o convite e ninguém
-  // via nada de errado na tela. Falhar o delete agora é inofensivo, porque o
+  // Apaga PRIMEIRO, cancela no Google DEPOIS (bem depois: só no fim da rota,
+  // ver o laço de eventosAntigos). Na ordem inversa (que era a de antes), um
+  // delete que falhasse deixava as sessões vivas no banco apontando para
+  // eventos que não existem mais: o paciente perdia o convite e ninguém via
+  // nada de errado na tela. Falhar o delete agora é inofensivo, porque o
   // convite antigo continua de pé junto com a sessão antiga.
   if (idsASubstituir.length > 0) {
     const { error: deleteErr } = await client.from('sessoes').delete().in('id', idsASubstituir)
     if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 })
-  }
-  // Cancela no Google os eventos das sessões que sumiram. Sem isso o
-  // reagendamento total deixava os eventos antigos no calendário para sempre:
-  // as sessões novas eram criadas com eventos novos e ninguém apagava os
-  // velhos, então o terapeuta via o pacote inteiro duplicado, na data antiga e
-  // na nova. Medido criando e refazendo um pacote de teste: 9 eventos órfãos.
-  for (const s of substituidas) {
-    if (s.google_event_id) await cancelarEvento(s.google_event_id)
   }
   const base = {
     sale_id,
@@ -319,6 +312,30 @@ export async function POST(req: NextRequest) {
         console.error(`[agendar] sessão ${lote[j].numero_sessao}:`, r.reason)
       }
     })
+  }
+
+  // Cancela no Google os eventos das sessões que sumiram. Sem isso o
+  // reagendamento total deixava os eventos antigos no calendário para sempre:
+  // as sessões novas eram criadas com eventos novos e ninguém apagava os
+  // velhos, então o terapeuta via o pacote inteiro duplicado, na data antiga e
+  // na nova. Medido criando e refazendo um pacote de teste: 9 eventos órfãos.
+  //
+  // Fica DEPOIS do insert e depois dos convites novos, e não entre o delete e
+  // o insert como estava. Ali a venda ficava com ZERO sessão durante N idas e
+  // voltas ao Google (~350 ms cada, até 8 hoje): cancelarEvento engole exceção,
+  // então erro não abortava nada, mas um stall do Calendar levava a função ao
+  // teto de 60 s com as sessões já apagadas e nenhuma criada - o operador via
+  // timeout genérico, concluía que "não aconteceu nada" e o pacote do paciente
+  // tinha sumido. Cancelar evento velho pode ser feito a qualquer momento
+  // depois, então é a última coisa a rodar: se o tempo acabar aqui, o que se
+  // perde é limpeza de calendário, não o pacote nem o convite novo do paciente.
+  // Em lotes paralelos pelo mesmo motivo do laço de criação (o tempo total da
+  // função é o que conta), com o mesmo tamanho de lote.
+  const eventosAntigos = substituidas.map(s => s.google_event_id).filter((id): id is string => !!id)
+  for (let inicio = 0; inicio < eventosAntigos.length; inicio += LOTE_CALENDAR) {
+    await Promise.allSettled(
+      eventosAntigos.slice(inicio, inicio + LOTE_CALENDAR).map(id => cancelarEvento(id)),
+    )
   }
 
   // Sessão marcada pro mesmo dia, a "venda de encaixe": o fluxo normal de
