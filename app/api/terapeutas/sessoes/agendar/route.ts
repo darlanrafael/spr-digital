@@ -229,6 +229,23 @@ export async function POST(req: NextRequest) {
   // eventos que não existem mais: o paciente perdia o convite e ninguém via
   // nada de errado na tela. Falhar o delete agora é inofensivo, porque o
   // convite antigo continua de pé junto com a sessão antiga.
+  // Lote de 4 pra não disparar rate limit da API do Google. Declarado aqui, e
+  // não junto do laço de criação, porque cancelarEventosAntigos precisa dele e
+  // roda antes.
+  const LOTE_CALENDAR = 4
+  // Cancela no Google os eventos das sessões que o delete levou. Vive numa
+  // função porque precisa rodar em DOIS lugares: no fim da rota (caminho
+  // feliz) e no ramo de erro do insert. Sem a segunda chamada, um insert que
+  // falhasse deixava as sessões apagadas do banco - levando junto o
+  // google_event_id, única forma de achar o evento - e os convites de pé no
+  // calendário para sempre: o terapeuta refazia a operação e passava a ver o
+  // pacote duplicado, metade dele impossível de localizar pelo sistema.
+  async function cancelarEventosAntigos() {
+    const ids = substituidas.map(s => s.google_event_id).filter((id): id is string => !!id)
+    for (let inicio = 0; inicio < ids.length; inicio += LOTE_CALENDAR) {
+      await Promise.allSettled(ids.slice(inicio, inicio + LOTE_CALENDAR).map(id => cancelarEvento(id)))
+    }
+  }
   if (idsASubstituir.length > 0) {
     const { error: deleteErr } = await client.from('sessoes').delete().in('id', idsASubstituir)
     if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 })
@@ -265,7 +282,12 @@ export async function POST(req: NextRequest) {
       }))
 
   const { error: insertErr } = await client.from('sessoes').insert(sessoes)
-  if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
+  if (insertErr) {
+    // As sessões antigas já foram apagadas e não serão recriadas: cancelar os
+    // convites delas agora é o que evita evento fantasma na agenda.
+    await cancelarEventosAntigos()
+    return NextResponse.json({ error: insertErr.message }, { status: 500 })
+  }
 
   // numSessoes continua sendo a entrada do calculo do caminho antigo (comissao
   // por sessao, tamanho do array de datas) e não muda. totalCriado é o que
@@ -285,8 +307,8 @@ export async function POST(req: NextRequest) {
   // banco com parte das sessões sem convite nenhum. allSettled em vez de all
   // porque uma sessão que falhe não pode impedir as outras de ganharem
   // convite, e o que falhou volta na resposta em vez de sumir num log que
-  // ninguém lê. Lote de 4 pra não disparar rate limit da API do Google.
-  const LOTE_CALENDAR = 4
+  // ninguém lê. Lote de 4 pra não disparar rate limit da API do Google (o
+  // LOTE_CALENDAR é declarado lá em cima, junto de cancelarEventosAntigos).
   const falhasCalendar: { numero_sessao: number; motivo: string }[] = []
   // Evento criado no Google mas sem link do Meet ainda (conferência sendo
   // provisionada) NÃO é falha: o convite existe na agenda do paciente e o link
@@ -400,12 +422,7 @@ export async function POST(req: NextRequest) {
   // de encaixe ou o log de auditoria - todos já feitos acima.
   // Em lotes paralelos pelo mesmo motivo do laço de criação (o tempo total da
   // função é o que conta), com o mesmo tamanho de lote.
-  const eventosAntigos = substituidas.map(s => s.google_event_id).filter((id): id is string => !!id)
-  for (let inicio = 0; inicio < eventosAntigos.length; inicio += LOTE_CALENDAR) {
-    await Promise.allSettled(
-      eventosAntigos.slice(inicio, inicio + LOTE_CALENDAR).map(id => cancelarEvento(id)),
-    )
-  }
+  await cancelarEventosAntigos()
 
   // As sessões já estão gravadas mesmo com falha no Google, e é assim que tem
   // que ser (o Calendar pode estar fora do ar e isso não pode impedir o
