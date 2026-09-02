@@ -102,13 +102,20 @@ export interface ClosingBuyer {
 export interface ClosingAlert {
   /** id da venda em `sales` — usado para não deduzir o mesmo estorno duas vezes */
   saleId?: string
+  /**
+   * id em `solicitacoes_reembolso`, presente só no reembolso PARCIAL aprovado.
+   * É ele, e não o saleId, que identifica esse alerta: a mesma venda pode ter
+   * um reembolso parcial hoje e ser estornada por inteiro depois, e os dois
+   * precisam poder ser deduzidos, cada um uma vez só.
+   */
+  solicitacaoId?: string
   compradorId?: string
   nome: string
   telefone?: string
   email?: string
   produto: string
   valor: number
-  tipo?: 'reembolso' | 'chargeback'
+  tipo?: 'reembolso' | 'chargeback' | 'reembolso_parcial'
   data: string
 }
 

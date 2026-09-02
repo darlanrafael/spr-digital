@@ -133,3 +133,58 @@ test('prazo de garantia: compra de 13/08 repassada e estornada em 20/08 vira ale
   assert.equal(a.length, 1)
   assert.equal(a[0].data, '2026-08-20')
 })
+
+test('deducao de reembolso PARCIAL nao esconde o estorno integral da mesma venda', () => {
+  // O parcial guarda o saleId junto do solicitacaoId. Se `jaDeduzidos` olhasse
+  // só o saleId, devolver R$ 1.560 de um pacote hoje faria o estorno dos
+  // R$ 2.758,70 restantes, se viesse depois, nunca aparecer para dedução.
+  const a = calcularAlertasPendentes({
+    closings: [
+      fechamento('c1', ['v1']),
+      fechamento('c2', [], [{ solicitacaoId: 'sol1', saleId: 'v1', nome: 'Miguel', produto: 'x', valor: 1560, data: '2026-09-02' }]),
+    ],
+    sales: [venda({ status: 'reembolsada', valor_liquido: 2758.7, data_reembolso: '2026-09-20' })],
+  })
+  assert.equal(a.length, 1)
+  assert.equal(a[0].saleId, 'v1')
+})
+
+test('CRITICO: o estorno integral desconta o parcial ja abatido, nao cobra o valor cheio', () => {
+  // R$ 1.560 ja voltaram e ja foram descontados dos socios. Estornando o resto,
+  // so R$ 1.198,70 podem ser deduzidos. Cobrar os R$ 2.758,70 cheios tiraria
+  // R$ 1.560 a mais de uma venda que gerou R$ 2.758,70.
+  const a = calcularAlertasPendentes({
+    closings: [
+      fechamento('c1', ['v1']),
+      fechamento('c2', [], [{ solicitacaoId: 'sol1', saleId: 'v1', nome: 'Miguel', produto: 'x', valor: 1560, data: '2026-09-02' }]),
+    ],
+    sales: [venda({ status: 'reembolsada', valor_liquido: 2758.7, data_reembolso: '2026-09-20' })],
+  })
+  assert.equal(a.length, 1)
+  assert.equal(a[0].valor.toFixed(2), '1198.70')
+})
+
+test('parcial que cobriu a venda inteira nao deixa deducao residual', () => {
+  const a = calcularAlertasPendentes({
+    closings: [
+      fechamento('c1', ['v1']),
+      fechamento('c2', [], [{ solicitacaoId: 'sol1', saleId: 'v1', nome: 'x', produto: 'x', valor: 2758.7, data: '2026-09-02' }]),
+    ],
+    sales: [venda({ status: 'reembolsada', valor_liquido: 2758.7, data_reembolso: '2026-09-20' })],
+  })
+  assert.equal(a.length, 0)
+})
+
+test('dois parciais abatidos somam antes de descontar do estorno integral', () => {
+  const a = calcularAlertasPendentes({
+    closings: [
+      fechamento('c1', ['v1']),
+      fechamento('c2', [], [
+        { solicitacaoId: 's1', saleId: 'v1', nome: 'x', produto: 'x', valor: 1000, data: '2026-09-02' },
+        { solicitacaoId: 's2', saleId: 'v1', nome: 'x', produto: 'x', valor: 500, data: '2026-09-03' },
+      ]),
+    ],
+    sales: [venda({ status: 'reembolsada', valor_liquido: 2758.7, data_reembolso: '2026-09-20' })],
+  })
+  assert.equal(a[0].valor.toFixed(2), '1258.70')
+})
