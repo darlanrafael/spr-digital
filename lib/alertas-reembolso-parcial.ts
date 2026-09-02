@@ -16,10 +16,15 @@ import type { Closing, ClosingAlert } from '@/types'
 // REGRA DO VALOR (usuário, 02/09/2026): o abatimento é sempre sobre o VALOR
 // PAGO pelo cliente, nunca sobre o líquido depois das taxas. O cliente pagou
 // R$ 2.860, fez 1 sessão, descontamos os R$ 1.300 do plano de 1 sessão e
-// devolvemos a diferença: R$ 1.560. É esse número que sai do caixa, e é ele
-// que entra aqui como dedução - a taxa que a plataforma reteve na venda
-// original não é redistribuída no estorno parcial, então não entra na conta.
-// Deduzir sobre o líquido devolveria menos do que saiu de verdade.
+// devolvemos a diferença: R$ 1.560. Deduzir sobre o líquido devolveria menos
+// do que voltou de verdade para o cliente.
+//
+// QUEM ABSORVE (mesma conversa): não sai do caixa da empresa. O valor é
+// descontado do PRÓXIMO REPASSE aos sócios, na proporção do fechamento - com
+// 35/65, a SPR absorve R$ 546 e o Pedro R$ 1.014. Isso já é o comportamento
+// da tela de fechamento para qualquer alerta (`deducoes` e `repasse_final` em
+// app/fechamentos/page.tsx), e é justamente por isso que o parcial entra
+// nesta lista em vez de virar um custo à parte: o rateio vem de graça.
 
 export type SolicitacaoReembolso = {
   id: string
