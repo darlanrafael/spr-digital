@@ -21,6 +21,13 @@ export type Conflito = {
   descricao: string
 }
 
+/** Só a hora, para dizer o intervalo que o item ocupa. */
+function horaBRT(iso: string): string {
+  return new Date(iso).toLocaleTimeString('pt-BR', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
+  })
+}
+
 function fmt(iso: string): string {
   const d = new Date(iso)
   const data = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })
@@ -49,7 +56,12 @@ export async function buscarConflitosAgenda(params: {
   const client = getSupabaseAdmin()
 
   const { data: terapeuta } = await client
-    .from('terapeutas').select('duracao_sessao_minutos,horarios_fixos').eq('id', terapeuta_id).single()
+    .from('terapeutas').select('nome,duracao_sessao_minutos,horarios_fixos').eq('id', terapeuta_id).single()
+  // Nome do terapeuta na mensagem: sem ele o comercial nao sabe DE QUEM e a
+  // agenda que esta ocupada, e num pacote com dois terapeutas isso e a primeira
+  // coisa que ele precisa saber.
+  // `||` e nao `??`: nome vazio produziria "a agenda de  tem um bloqueio".
+  const nomeTerapeuta = ((terapeuta?.nome as string | null) ?? '').trim() || 'o terapeuta'
   const duracaoMin = (terapeuta?.duracao_sessao_minutos as number | null) ?? 60
   const horariosFixos = (terapeuta?.horarios_fixos as string[] | null) ?? null
   const duracaoMs = duracaoMin * 60000
@@ -105,14 +117,26 @@ export async function buscarConflitosAgenda(params: {
 
   const compromissosQ = client
     .from('compromissos_terapeuta')
-    .select('id,titulo,inicio,fim')
+    .select('id,titulo,inicio,fim,categoria')
     .eq('terapeuta_id', terapeuta_id)
-    .gte('inicio', new Date(menor).toISOString())
+    // Sobreposicao, e nao "comeca dentro da janela". Filtrar por `inicio`
+    // deixava invisivel todo compromisso mais longo que a duracao da sessao:
+    // medido no banco, 158 dos 357 compromissos do Pedro tem trecho que a trava
+    // nao enxergava, ate 170 minutos. Caso concreto: pedir 02/09 as 15:00,
+    // dentro de uma GRAVACAO das 14:10 as 17:00, devolvia ZERO conflito.
     .lte('inicio', new Date(maior).toISOString())
+    .gte('fim', new Date(menor).toISOString())
     .order('inicio', { ascending: true })
     .limit(LIMITE_LINHAS)
 
-  const [{ data: sessoes }, { data: compromissos }] = await Promise.all([sessoesQ, compromissosQ])
+  const [{ data: sessoes, error: errSessoes }, { data: compromissos, error: errCompromissos }] =
+    await Promise.all([sessoesQ, compromissosQ])
+  // Trava de seguranca nao pode falhar ABERTA. Descartar o erro fazia uma
+  // consulta que falhasse virar `null`, o `?? []` virar zero conflitos e o
+  // agendamento passar por cima de qualquer coisa. Melhor derrubar a rota com
+  // erro visivel do que marcar dois pacientes no mesmo horario em silencio.
+  if (errSessoes) throw new Error(`não foi possível conferir a agenda: ${errSessoes.message}`)
+  if (errCompromissos) throw new Error(`não foi possível conferir os compromissos: ${errCompromissos.message}`)
 
   const ocupados = [
     ...((sessoes ?? []) as { paciente_nome: string; data_agendada: string; numero_sessao: number; total_sessoes: number }[])
@@ -120,15 +144,36 @@ export async function buscarConflitosAgenda(params: {
         inicio: new Date(s.data_agendada).getTime(),
         fim: fimRealMs(s.data_agendada),
         tipo: 'sessao' as const,
-        rotulo: `já tem a consulta de ${s.paciente_nome} (sessão ${s.numero_sessao}/${s.total_sessoes})`,
+        rotulo: `${nomeTerapeuta} já atende ${s.paciente_nome} das ${horaBRT(s.data_agendada)} às ${horaBRT(new Date(fimRealMs(s.data_agendada)).toISOString())} (sessão ${s.numero_sessao} de ${s.total_sessoes}). Escolha outro horário.`,
       })),
-    ...((compromissos ?? []) as { titulo: string; inicio: string; fim: string }[])
-      .map(c => ({
+    ...((compromissos ?? []) as { titulo: string; inicio: string; fim: string; categoria: string | null }[])
+      .map(c => {
+        // `categoria` decide o tipo, NAO a tabela de onde a linha veio.
+        // `compromissos_terapeuta` guarda os dois: a tela de lancamento manual
+        // oferece "Categoria: Compromisso | Sessao" e a rota grava o que a
+        // pessoa escolheu. Carimbar tudo como 'compromisso' fazia uma CONSULTA
+        // REAL lancada a mao virar bloqueio - e, com o override, o sistema
+        // ofereceria "Agendar assim mesmo" em cima dela. Dupla marcacao, que e
+        // exatamente o que esta trava existe para impedir. Ha 4 linhas assim no
+        // banco, com nome de paciente no titulo.
+        const ehSessao = c.categoria === 'sessao'
+        return {
         inicio: new Date(c.inicio).getTime(),
         fim: new Date(c.fim).getTime(),
-        tipo: 'compromisso' as const,
-        rotulo: `horário bloqueado: ${c.titulo}`,
-      })),
+        tipo: (ehSessao ? 'sessao' : 'compromisso') as 'sessao' | 'compromisso',
+        // Precisa dizer as tres coisas: DE QUEM e a agenda, QUE HORAS o
+        // bloqueio ocupa, e que e um BLOQUEIO e nao consulta marcada. A
+        // mensagem antiga era so `horário bloqueado: <titulo>`, e como o time
+        // reserva a vaga com o nome do paciente no titulo, o comercial lia
+        // "horário bloqueado: Juliane Eller" enquanto agendava a Juliane - e
+        // entendia que ela ja estava agendada. Caso real de 02/09/2026.
+        rotulo: ehSessao
+          // Lancada a mao, mas e consulta: a mensagem nao pode chamar de
+          // bloqueio o que a propria equipe marcou como sessao.
+          ? `${nomeTerapeuta} atende "${c.titulo}" das ${horaBRT(c.inicio)} às ${horaBRT(c.fim)} (consulta lançada na agenda). Escolha outro horário.`
+          : `a agenda de ${nomeTerapeuta} tem um bloqueio das ${horaBRT(c.inicio)} às ${horaBRT(c.fim)}: "${c.titulo}". É um compromisso lançado na agenda, não uma consulta marcada.`,
+        }
+      }),
   ]
 
   const conflitos: Conflito[] = []
@@ -137,16 +182,41 @@ export async function buscarConflitosAgenda(params: {
     const fimPedido = fimRealMs(p.iso)
     const bateu = ocupados.find(o => p.inicio < o.fim && fimPedido > o.inicio)
     if (bateu) {
-      conflitos.push({ dataISO: p.iso, tipo: bateu.tipo, descricao: `${fmt(p.iso)} — ${bateu.rotulo}` })
+      conflitos.push({ dataISO: p.iso, tipo: bateu.tipo, descricao: `em ${fmt(p.iso)}: ${bateu.rotulo}` })
     }
   }
   return conflitos
 }
 
-/** Mensagem única pro front, listando cada data que bateu. */
+/**
+ * Conflitos que vieram SO de compromissos da agenda (almoco, gravacao, ou um
+ * horario reservado a mao para este mesmo paciente), sem nenhuma consulta de
+ * outro paciente no meio.
+ *
+ * Existe por um caso real de 02/09/2026: a equipe bloqueia o horario na agenda
+ * do terapeuta ANTES de agendar, para segurar a vaga, e depois o agendamento
+ * era recusado pela propria reserva. Compromisso e bloqueio da propria equipe e
+ * pode ser passado por cima com confirmacao explicita; consulta de outro
+ * paciente, nunca - foi para isso que esta trava foi construida em 11/08/2026,
+ * depois de 25 duplas marcacoes reais.
+ */
+export function soCompromissos(conflitos: Conflito[]): boolean {
+  return conflitos.length > 0 && conflitos.every(c => c.tipo === 'compromisso')
+}
+
+/**
+ * Mensagem única pro front, listando cada data que bateu.
+ *
+ * Diz sempre POR QUE está bloqueado, não só que está: de quem é a agenda, o que
+ * ocupa o horário e em que intervalo. Sem isso o comercial não tem como decidir
+ * se muda a data, se apaga um bloqueio que ele mesmo criou, ou se fala com o
+ * terapeuta.
+ */
 export function mensagemConflito(conflitos: Conflito[]): string {
-  if (conflitos.length === 1) return `Conflito de horário: ${conflitos[0].descricao}`
-  return `Conflito de horário em ${conflitos.length} datas:\n` + conflitos.map(c => `• ${c.descricao}`).join('\n')
+  if (conflitos.length === 1) {
+    return `Não dá para marcar ${conflitos[0].descricao}`
+  }
+  return `${conflitos.length} horários do pacote estão ocupados:\n` + conflitos.map(c => `• ${c.descricao}`).join('\n')
 }
 
 /**

@@ -364,6 +364,10 @@ export default function TerapeutasVendas() {
   // é "criar", é "apagar e refazer". Só libera o botão depois de a pessoa
   // marcar que entendeu o que vai ser destruído.
   const [agendarSubstituicaoCiente, setAgendarSubstituicaoCiente] = useState(false)
+  // Conflito que veio só de compromisso da agenda (almoço, gravação, ou uma
+  // reserva feita a mão para este mesmo paciente). Guarda a senha já digitada
+  // para o "agendar assim mesmo" ser um clique só.
+  const [agendarConflitoCompromisso, setAgendarConflitoCompromisso] = useState<{ mensagem: string; senha: string } | null>(null)
   // Sessões relidas do banco ao abrir o modal. O aviso de destruição saía de
   // pageData.sessoes_por_venda, buscado no load da página: sessão criada por
   // outra pessoa depois disso não aparecia e o modal chegava a mostrar botão
@@ -679,9 +683,10 @@ export default function TerapeutasVendas() {
   const notaValida = notaTitulo.trim().length > 0 && notaDesc.trim().length >= 10
 
   // ── Handlers ──
-  async function handleAgendar(senha: string) {
+  async function handleAgendar(senha: string, ignorarCompromissos = false) {
     if (!agendarVendaId || !agendarTerapeutaEfetivo || !agendarDataPrimeira) return
     setAgendarLoading(true); setAgendarErro('')
+    if (!ignorarCompromissos) setAgendarConflitoCompromisso(null)
     const res = await fetch('/api/terapeutas/sessoes/agendar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -698,13 +703,26 @@ export default function TerapeutasVendas() {
         // contrario a rota recusa, que e o comportamento certo: melhor recusar
         // do que gravar metade do pacote com data errada.
         datas_sessoes: agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined,
+        // Confirmação explícita de que o horário bloqueado pela própria equipe
+        // pode ser usado. A rota só aceita quando TODOS os conflitos são
+        // compromissos: consulta de outro paciente continua recusada.
+        ignorar_compromissos: ignorarCompromissos || undefined,
         usuario_email: adminEmail, senha,
       }),
     })
     const json = await res.json()
     setAgendarLoading(false)
-    if (!res.ok) { setAgendarErro(json.error ?? 'Erro'); return }
+    if (!res.ok) {
+      setAgendarErro(json.error ?? 'Erro')
+      // Conflito que vem SÓ de compromisso da agenda: a equipe bloqueia o
+      // horário antes de agendar, para segurar a vaga, e o agendamento era
+      // recusado pela própria reserva. Guarda a senha para o "agendar assim
+      // mesmo" não obrigar a digitar de novo.
+      if (json.soCompromissos) setAgendarConflitoCompromisso({ mensagem: json.error ?? '', senha })
+      return
+    }
     setAgendarSenhaOpen(false)
+    setAgendarConflitoCompromisso(null)
     setAgendarSucesso({ sessoes: json.sessoes_criadas, nome: agendarVenda?.nome ?? '', aviso: json.aviso ?? null })
     setAgendarVendaId(null)
     setAgendarDataPrimeira('')
@@ -1887,9 +1905,45 @@ export default function TerapeutasVendas() {
       )}
 
       {/* ── SenhaModals ── */}
-      <SenhaModal isOpen={agendarSenhaOpen} onClose={() => { setAgendarSenhaOpen(false); setAgendarErro('') }}
+      <SenhaModal isOpen={agendarSenhaOpen && !agendarConflitoCompromisso}
+        onClose={() => { setAgendarSenhaOpen(false); setAgendarErro('') }}
         onConfirm={handleAgendar} titulo="Confirmar agendamento"
         descricao="Digite sua senha para registrar as sessões" loading={agendarLoading} erro={agendarErro} />
+
+      {/* Horário bloqueado pela PRÓPRIA equipe. A rotina aqui é reservar a vaga
+          na agenda do terapeuta antes de agendar, e o agendamento era recusado
+          pela própria reserva (caso real da Juliane Eller em 02/09/2026). Só
+          aparece quando a rota confirma que TODOS os conflitos são
+          compromissos: consulta de outro paciente nunca chega aqui. */}
+      {agendarConflitoCompromisso && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-amber-500/30 rounded-xl p-6 w-full max-w-md mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Horário bloqueado na agenda</h3>
+            <p className="text-xs text-gray-500 mb-3">Não é consulta de outro paciente</p>
+            <p className="text-sm text-gray-300 mb-4 whitespace-pre-line">{agendarConflitoCompromisso.mensagem}</p>
+            <p className="text-xs text-gray-500 mb-5 leading-relaxed">
+              Isso é um compromisso da agenda - almoço, gravação, ou uma reserva feita a mão para
+              segurar esta vaga. Se o bloqueio foi criado para este mesmo agendamento, pode seguir.
+              Se for compromisso de verdade, cancele e escolha outro horário.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => { setAgendarConflitoCompromisso(null); setAgendarErro('') }}
+                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">
+                Escolher outro horário
+              </button>
+              <button disabled={agendarLoading}
+                onClick={() => {
+                  const senha = agendarConflitoCompromisso.senha
+                  setAgendarConflitoCompromisso(null)
+                  handleAgendar(senha, true)
+                }}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 rounded-lg transition-colors">
+                {agendarLoading ? 'Agendando...' : 'Agendar assim mesmo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Anular sessão — precisa de motivo antes da senha */}
       {scSessaoId && scAcao === 'anular' && !scSenhaOpen && (

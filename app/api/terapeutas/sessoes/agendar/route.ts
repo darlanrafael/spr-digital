@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
-import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
+import { buscarConflitosAgenda, buscarConflitosMultiTerapeuta, mensagemConflito, soCompromissos } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
@@ -16,7 +16,6 @@ import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagenda
 // nesse ponto, então o corte deixava o pacote no banco com parte das sessões
 // sem convite e sem link do Meet, e a tela mostrando erro.
 export const maxDuration = 60
-import { buscarConflitosMultiTerapeuta } from '@/lib/agenda-conflitos'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -24,12 +23,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, datas_sessoes, usuario_email, senha, token } = body as {
+  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, datas_sessoes, ignorar_compromissos, usuario_email, senha, token } = body as {
     sale_id: string
     terapeuta_id: string
     data_primeira_sessao: string
     numero_sessoes?: number
     datas_sessoes?: string[]
+    /** Confirmação explícita de que o horário bloqueado pela própria equipe pode ser usado. */
+    ignorar_compromissos?: boolean
     usuario_email: string
     senha?: string
     token?: string
@@ -229,10 +230,29 @@ export async function POST(req: NextRequest) {
           datasExplicitas ? datasExplicitas[i] : new Date(primeiraDataMs + i * SETE_DIAS_MS).toISOString()),
         ignorarSaleId: sale_id,
       })
-  if (conflitos.length > 0) {
+  // A equipe bloqueia o horário na agenda do terapeuta ANTES de agendar, para
+  // segurar a vaga - e o agendamento era recusado pela própria reserva (caso
+  // real da Juliane Eller em 02/09/2026: compromisso "Juliane Eller/Diagnóstico
+  // Guiado" ocupando 11:20, criado na véspera, exatamente o horário que o
+  // comercial tentou marcar). Compromisso é bloqueio da própria equipe, então
+  // pode ser passado por cima com confirmação explícita.
+  //
+  // Consulta de OUTRO PACIENTE nunca: `soCompromissos` garante que basta um
+  // conflito de sessão para a recusa valer, mesmo com a confirmação marcada. É
+  // para isso que esta trava existe desde 11/08/2026, depois de 25 duplas
+  // marcações reais.
+  const atropelouBloqueio = !!ignorar_compromissos && soCompromissos(conflitos)
+  const bloqueiosAtropelados = atropelouBloqueio ? conflitos.map(c => c.descricao) : []
+  const conflitosQueValem = atropelouBloqueio ? [] : conflitos
+  if (conflitosQueValem.length > 0) {
     // Pacote inteiro recusado, nada criado: agendar só parte deixaria o
     // paciente com um pacote incompleto que alguém precisa lembrar de fechar.
-    return NextResponse.json({ error: mensagemConflito(conflitos), conflitos }, { status: 409 })
+    return NextResponse.json({
+      error: mensagemConflito(conflitosQueValem),
+      conflitos: conflitosQueValem,
+      // A tela só oferece "agendar assim mesmo" quando isto vem true.
+      soCompromissos: soCompromissos(conflitos),
+    }, { status: 409 })
   }
 
   // Deletar sessões existentes que ainda não foram entregues (reagendamento total)
@@ -423,8 +443,13 @@ export async function POST(req: NextRequest) {
     // No Diagnóstico o log grava o que foi realmente gravado em
     // sessoes.comissao_valor (um valor por terapeuta), não um "por sessão"
     // único que não existe nesse produto.
+    // Fica registrado QUANDO alguem passou por cima da trava de horario, e
+    // sobre o que. Sem isto, depois de uma dupla marcacao ninguem consegue
+    // responder "alguem forcou?" olhando o log: o registro fica indistinguivel
+    // de um agendamento comum.
     dados_novos: pacote
       ? {
+          ...(atropelouBloqueio ? { ignorou_bloqueio: true, bloqueios_atropelados: bloqueiosAtropelados } : {}),
           numSessoes: totalCriado,
           data_primeira_sessao,
           terapeuta_id,
@@ -433,7 +458,10 @@ export async function POST(req: NextRequest) {
           comissao_por_sessao_denise: pacote.find(s => s.terapeuta_id === deniseId)?.comissao_valor ?? 0,
           comissao_total_pacote: pacote.reduce((a, s) => a + s.comissao_valor, 0),
         }
-      : { numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
+      : {
+          ...(atropelouBloqueio ? { ignorou_bloqueio: true, bloqueios_atropelados: bloqueiosAtropelados } : {}),
+          numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao,
+        },
   })
 
   // Cancela no Google os eventos das sessões que sumiram. Sem isso o

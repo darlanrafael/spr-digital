@@ -350,6 +350,25 @@ nao tinham sessao criada:
 - **O botao ficava verde e clicavel** quando havia campo em branco, porque a cor
   nao acompanhava o `disabled`.
 
+**O primeiro agendamento real bateu numa trava legitima, por um motivo que
+ninguem tinha previsto.** Em 02/09/2026 o comercial tentou agendar a Juliane
+Eller e recebeu "Conflito de horario: 02/09 as 11:20 - horario bloqueado:
+Juliane Eller/Diagnostico Guiado". Nao era bug: alguem tinha **bloqueado aquele
+horario na agenda do Pedro na vespera**, criando um compromisso com esse titulo
+das 11:20 as 12:00, para segurar a vaga. O agendamento foi recusado pela propria
+reserva. Nao era caso isolado - a Rafaela tinha dois blocos iguais na agenda,
+inclusive sobrepostos entre si, entao **reservar o horario antes de agendar e
+metodo do time**, e a trava ia atrapalhar em cada uma das 7 vendas.
+
+**A distincao que faltava:** compromisso e bloqueio da PROPRIA equipe (almoco,
+gravacao, ou uma reserva como essa); consulta de outro paciente e outra coisa.
+`soCompromissos()` separa os dois, e quando **todos** os conflitos sao
+compromissos a tela mostra um modal ambar dizendo qual bloqueio e, explicando
+que nao e consulta de ninguem, e oferecendo "Agendar assim mesmo" - com a senha
+ja digitada aproveitada, para nao pedir de novo. Basta **um** conflito de sessao
+para a recusa valer inteira, mesmo com a confirmacao marcada: e para isso que
+esta trava existe desde 11/08/2026, depois de 25 duplas marcacoes reais.
+
 As validacoes foram extraidas para `lib/datas-do-pacote.ts`, pura e com 16
 testes, pelo mesmo motivo de sempre: `npm test` roda so `lib/*.test.ts`, entao
 regra dentro do handler e regra sem teste - e foi assim que o defeito da tela
