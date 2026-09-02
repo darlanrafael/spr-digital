@@ -552,16 +552,19 @@ export default function TerapeutasVendas() {
   // Denise mesmo com as sessões do Pedro criadas - e confirmar ali apaga as
   // sessões dele, cancela os convites do paciente e refaz o pacote com a
   // comissão da outra pessoa. Antes disso não aparecia em lugar nenhum.
-  const agendarSessoesExistentes = agendarVendaId ? (pageData.sessoes_por_venda[agendarVendaId] ?? []) : []
-  const agendarResumo = resumirReagendamentoTotal(agendarSessoesExistentes)
-  const agendarEhSubstituicao = agendarResumo.substituiveis > 0 || agendarResumo.bloqueado
   // O Pedro sempre começa o pacote; a Denise pega o restante. Quem monta a
   // divisão é a rota, mas ela ainda exige um terapeuta_id no corpo.
   const pedroTerapeuta = pageData.terapeutas.find(t => t.nome.trim().toLowerCase().startsWith('pedro')) ?? null
   const agendarTerapeutaEfetivo = agendarDiagnostico ? (pedroTerapeuta?.id ?? '') : agendarTerapeutaId
+  // Calculado antes do resumo: quantas sessões o pacote novo vai ter decide se
+  // a numeração 1..N colide com sessão que sobrevive ao delete (cancelada, por
+  // exemplo). Mudar a quantidade na tela muda a resposta, igual na rota.
   const agendarNumSessoes = agendarDiagnostico
     ? agendarDiagnostico.totalSessoes
     : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
+  const agendarSessoesExistentes = agendarVendaId ? (pageData.sessoes_por_venda[agendarVendaId] ?? []) : []
+  const agendarResumo = resumirReagendamentoTotal(agendarSessoesExistentes, agendarNumSessoes)
+  const agendarEhSubstituicao = agendarResumo.substituiveis > 0 || agendarResumo.bloqueado
 
   useEffect(() => {
     if (!agendarDataPrimeira || !agendarVenda) { setAgendarDatasEditadas([]); return }
@@ -1107,15 +1110,28 @@ export default function TerapeutasVendas() {
                 <div className={`rounded-lg p-3 border ${agendarResumo.bloqueado ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
                   <p className={`text-xs font-semibold flex items-center gap-1.5 ${agendarResumo.bloqueado ? 'text-red-300' : 'text-amber-300'}`}>
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    {agendarResumo.bloqueado
+                    {agendarResumo.motivoBloqueio === 'entregue'
                       ? `Esta venda tem ${agendarResumo.entregues} sessão(ões) já entregue(s)`
-                      : `Esta venda já tem ${agendarResumo.substituiveis} sessão(ões) agendada(s)`}
+                      : agendarResumo.motivoBloqueio === 'numeracao'
+                        ? `Esta venda tem ${agendarResumo.colidem.length} sessão(ões) que o refazer não apaga (sessão ${agendarResumo.colidem.join(', ')})`
+                        : `Esta venda já tem ${agendarResumo.substituiveis} sessão(ões) agendada(s)`}
                   </p>
-                  {agendarResumo.bloqueado ? (
+                  {agendarResumo.motivoBloqueio === 'entregue' ? (
                     <p className="text-[11px] text-gray-300 mt-1.5">
                       Um pacote com sessão entregue não pode ser refeito do zero: as sessões novas
                       começariam da número 1 e colidiriam com as que já foram feitas. Para mudar as datas
                       das que faltam, feche esta janela e remarque uma a uma pelo prontuário do paciente.
+                    </p>
+                  ) : agendarResumo.motivoBloqueio === 'numeracao' ? (
+                    /* Sessão cancelada (reembolso parcial aprovado) fica no banco
+                       com o número dela. Refazer criaria de novo a sessão 1..N e
+                       o banco recusaria - depois de as pendentes já terem sido
+                       apagadas e os convites cancelados. */
+                    <p className="text-[11px] text-gray-300 mt-1.5">
+                      Essa(s) sessão(ões) continuam no banco com o número delas (cancelamento por reembolso,
+                      por exemplo) e o refazer não as apaga. Como o pacote novo teria {agendarNumSessoes} sessão(ões)
+                      numeradas de 1 a {agendarNumSessoes}, os números bateriam de frente. Para mudar as datas das
+                      que faltam, feche esta janela e remarque uma a uma pelo prontuário do paciente.
                     </p>
                   ) : (
                     <p className="text-[11px] text-gray-300 mt-1.5">
@@ -1254,7 +1270,9 @@ export default function TerapeutasVendas() {
                 // A rota recusa esse caso com 400; a tela para antes pra
                 // ninguém digitar data e senha à toa.
                 if (agendarResumo.bloqueado) {
-                  setAgendarErro('Esta venda tem sessão entregue: refaça as datas uma a uma pelo prontuário.')
+                  setAgendarErro(agendarResumo.motivoBloqueio === 'entregue'
+                    ? 'Esta venda tem sessão entregue: refaça as datas uma a uma pelo prontuário.'
+                    : `Esta venda tem sessão(ões) que o refazer não apaga ocupando a numeração 1 a ${agendarNumSessoes} (sessão ${agendarResumo.colidem.join(', ')}): refaça as datas uma a uma pelo prontuário.`)
                   return
                 }
                 if (agendarEhSubstituicao && !agendarSubstituicaoCiente) {

@@ -148,24 +148,11 @@ export async function POST(req: NextRequest) {
     ? datas_sessoes.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
     : null
 
-  // Reagendamento total: esta venda já tem sessões e confirmar aqui significa
-  // apagar as pendentes, cancelar os convites do paciente e recriar o pacote.
-  // A checagem vem ANTES do conflito de agenda, do delete e de qualquer
-  // chamada ao Google porque a recusa por sessão entregue é definitiva: o
-  // insert lá embaixo recria a numeração a partir da 1 e bate no unique
-  // (sale_id, numero_sessao), só que aí as pendentes já teriam sido apagadas e
-  // os convites já teriam sido cancelados - erro de banco na tela e pacote
-  // pela metade, sem volta. Vale pra todo produto, não só pro Diagnóstico.
-  const { data: sessoesDaVenda, error: sessoesErr } = await client
-    .from('sessoes').select('id,status,numero_sessao,google_event_id').eq('sale_id', sale_id)
-  if (sessoesErr) return NextResponse.json({ error: sessoesErr.message }, { status: 500 })
-  const plano = planejarReagendamentoTotal((sessoesDaVenda ?? []) as SessaoExistente[])
-  if (!plano.ok) return NextResponse.json({ error: plano.erro }, { status: 400 })
-  const substituidas = plano.substituir
-
-  // Trava de conflito ANTES de apagar qualquer coisa: um conflito no meio do
-  // pacote não pode destruir o agendamento que já existia. Ignora as sessões
-  // da própria venda, que são justamente as que serão recriadas logo abaixo.
+  // Montado ANTES da trava do reagendamento total porque `pacote.length` é o
+  // número de sessões que o insert vai gravar, e a trava precisa dele pra
+  // saber se a numeração nova colide com o que sobra no banco. montarPacote é
+  // puro (só calcula datas e comissões), então antecipá-lo não tem efeito
+  // colateral nenhum.
   // primeiraDataMs já passou por brasiliaLocalToISO acima: usar
   // data_primeira_sessao crua aqui reincidiria no mesmo bug que esse
   // tratamento existe pra evitar (ambiguidade de fuso dependente do
@@ -173,7 +160,32 @@ export async function POST(req: NextRequest) {
   const pacote = diagnostico
     ? montarPacote({ formato: diagnostico, primeiraDataISO: new Date(primeiraDataMs).toISOString(), pedroId: pedroId!, deniseId: deniseId! })
     : null
+  // Quantas sessões serão criadas de fato, numeradas de 1 até esse número. No
+  // Diagnóstico é o formato quem manda (2, 4 ou 9), não numSessoes.
+  const totalASerCriado = pacote ? pacote.length : numSessoes
 
+  // Reagendamento total: esta venda já tem sessões e confirmar aqui significa
+  // apagar as substituíveis, cancelar os convites do paciente e recriar o
+  // pacote. A checagem vem ANTES do conflito de agenda, do delete e de
+  // qualquer chamada ao Google porque a recusa é definitiva: o insert lá
+  // embaixo recria a numeração a partir da 1 e bate no unique
+  // (sale_id, numero_sessao), só que aí as pendentes já teriam sido apagadas e
+  // os convites já teriam sido cancelados - erro de banco na tela e pacote
+  // pela metade, sem volta. Vale pra todo produto, não só pro Diagnóstico.
+  //
+  // Passa totalASerCriado porque olhar só o status 'entregue' não bastava:
+  // 'cancelada' (o que /aprovacoes grava ao aprovar reembolso parcial, sem
+  // renumerar nada) também sobrevive ao delete e colide igual.
+  const { data: sessoesDaVenda, error: sessoesErr } = await client
+    .from('sessoes').select('id,status,numero_sessao,google_event_id').eq('sale_id', sale_id)
+  if (sessoesErr) return NextResponse.json({ error: sessoesErr.message }, { status: 500 })
+  const plano = planejarReagendamentoTotal((sessoesDaVenda ?? []) as SessaoExistente[], totalASerCriado)
+  if (!plano.ok) return NextResponse.json({ error: plano.erro }, { status: 400 })
+  const substituidas = plano.substituir
+
+  // Trava de conflito ANTES de apagar qualquer coisa: um conflito no meio do
+  // pacote não pode destruir o agendamento que já existia. Ignora as sessões
+  // da própria venda, que são justamente as que serão recriadas logo abaixo.
   const conflitos = pacote
     ? await buscarConflitosMultiTerapeuta({
         itens: pacote.map(s => ({ terapeuta_id: s.terapeuta_id, dataISO: s.data_agendada })),
