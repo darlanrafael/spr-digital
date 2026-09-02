@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
 import { buscarConflitosMultiTerapeuta, mensagemConflito } from '@/lib/agenda-conflitos'
-import { novasDatasSeguintes } from '@/lib/diagnostico-guiado'
+import { novasDatasSeguintes, formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -34,12 +35,40 @@ export async function POST(req: NextRequest) {
     .from('sessoes').select('*').eq('id', sessao_id).single()
   if (fetchErr || !sessao) return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
 
+  // Sem data na sessão-base não existe régua pra empurrar: new Date(null) vira
+  // 1970 e o pacote inteiro seria remarcado pra 51 anos atrás, em silêncio.
+  // Sessão sem data existe de verdade (status 'pendente' criado por
+  // lançamento manual antigo), então isso não é hipótese.
+  if (!sessao.data_agendada) {
+    return NextResponse.json(
+      { error: 'A sessão remarcada está sem data. Marque a data dela antes de empurrar as seguintes.' },
+      { status: 400 },
+    )
+  }
+
+  // Trava de produto. A régua de 7 dias é regra do Diagnóstico Guiado, não do
+  // sistema: medido no banco em 01/09/2026, 123 pacotes de outros produtos têm
+  // 2 ou mais sessões e 41 deles (33%) já têm um par com menos de 7 dias entre
+  // as sessões - ou seja, uma Mentoria Particular remarcada dispara o aviso
+  // com frequência, e um clique aqui reescreveria as datas dela pra uma régua
+  // que aquele produto nunca seguiu, mexendo em consultas já combinadas com o
+  // paciente. Só pacote do Diagnóstico (reconhecido pela oferta) passa.
+  const { data: vendaMae, error: vendaErr } = await client
+    .from('sales').select('id,order_id').eq('id', sessao.sale_id).maybeSingle()
+  if (vendaErr) return NextResponse.json({ error: vendaErr.message }, { status: 500 })
+  if (!vendaMae || !formatoDaVenda(vendaMae as { id: string; order_id?: string })) {
+    return NextResponse.json(
+      { error: 'Empurrar as seguintes vale só para o Diagnóstico Guiado, que tem 7 dias fixos entre as sessões. Neste produto, remarque uma sessão de cada vez.' },
+      { status: 400 },
+    )
+  }
+
   // Esta rota é a segunda decisão do fluxo: a sessão do meio já foi remarcada
   // e salva por /remarcar. Aqui só empurramos as que vêm DEPOIS dela no mesmo
   // pacote, ainda não entregues nem canceladas - sessão entregue é histórico,
   // não pode ser movida, e cancelada não existe mais pro paciente.
   const { data: seguintes, error: seguintesErr } = await client
-    .from('sessoes').select('id,terapeuta_id,numero_sessao,total_sessoes,paciente_nome,paciente_email')
+    .from('sessoes').select('id,terapeuta_id,numero_sessao,total_sessoes,paciente_nome,paciente_email,data_agendada,google_event_id')
     .eq('sale_id', sessao.sale_id)
     .gt('numero_sessao', sessao.numero_sessao as number)
     .not('status', 'in', '(entregue,cancelada)')
@@ -107,6 +136,67 @@ export async function POST(req: NextRequest) {
 
   const usuarioNome = (usuario as Record<string, unknown>)?.nome as string ?? usuario_email
   const usuarioTipo = (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial'
+
+  // Mesmo tratamento do /remarcar: cancela o evento antigo e cria um novo, em
+  // vez de só mexer na data do banco. Sem isso o paciente continuava com o
+  // convite e o link do Meet no horário ANTIGO de cada sessão empurrada - num
+  // Formato 1 são até 8 sessões erradas de uma vez. Fora da transação de
+  // propósito: o Google pode falhar (ou estar desligado, ver
+  // lib/google-meet.ts) e isso não pode desfazer as datas já salvas.
+  for (let i = 0; i < seguintes.length; i++) {
+    const s = seguintes[i]
+    if (s.google_event_id) {
+      await cancelarEvento(s.google_event_id as string)
+    }
+    const evento = await criarEventoComMeet({
+      titulo: `Sessão - ${s.paciente_nome}`,
+      inicioISO: novasDatas[i],
+      fimISO: new Date(new Date(novasDatas[i]).getTime() + 60 * 60 * 1000).toISOString(),
+    })
+    const { error: linkErr } = await client.from('sessoes')
+      .update({ link_meet: evento?.meetLink ?? null, google_event_id: evento?.eventId ?? null })
+      .eq('id', s.id)
+    // Evento novo já existe no Google nesse ponto - se salvar falhar, ele fica
+    // órfão (existe no Calendar sem referência no banco). Loga pra dar pra
+    // achar/limpar depois; não trava o resto do empurrão.
+    if (linkErr) console.error('[empurrar-seguintes] falha ao salvar link_meet:', linkErr)
+  }
+
+  // Rastro clínico no prontuário, uma linha por sessão movida. Antes só
+  // atividades_log era gravado (e ele nem aceitava 'empurrar_seguintes', ver
+  // a migration 20260901000000), então de 4 a 8 sessões mudavam de dia sem
+  // deixar nenhum registro na aba que o terapeuta realmente lê.
+  // tipo 'remarcacao' porque é literalmente o que aconteceu com cada uma, e
+  // porque o check constraint de ocorrencias_prontuario.tipo não conhece
+  // nenhum tipo novo - inventar um aqui repetiria o erro do log de atividades.
+  const ocorrencias = seguintes.map((s, i) => {
+    const anteriorFmt = s.data_agendada
+      ? new Date(s.data_agendada as string).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+      : 'sem data'
+    const novaFmt = new Date(novasDatas[i]).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    return {
+      sale_id: sessao.sale_id,
+      sessao_id: s.id,
+      tipo: 'remarcacao',
+      titulo: `Remarcação em cadeia - Sessão ${s.numero_sessao}`,
+      descricao: `Empurrada junto com a remarcação da sessão ${sessao.numero_sessao}, para manter os 7 dias do Diagnóstico Guiado. De ${anteriorFmt} para ${novaFmt}.`,
+      dados_extras: {
+        sessao_id: s.id,
+        motivo: 'empurrar_seguintes',
+        origem_sessao_id: sessao_id,
+        origem_numero_sessao: sessao.numero_sessao,
+        data_anterior: s.data_agendada,
+        nova_data: novasDatas[i],
+      },
+      criado_por_nome: usuarioNome,
+      criado_por_tipo: usuarioTipo,
+      criado_por_email: usuario_email,
+    }
+  })
+  const { error: ocErr } = await client.from('ocorrencias_prontuario').insert(ocorrencias)
+  // Não derruba a resposta: as sessões já foram movidas e o Calendar já foi
+  // atualizado. Loga pra não sumir em silêncio, que foi o defeito original.
+  if (ocErr) console.error('[empurrar-seguintes] falha ao gravar no prontuário:', ocErr)
 
   await registrarAtividade({
     usuario_nome: usuarioNome,
