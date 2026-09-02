@@ -12,6 +12,14 @@ import type { Closing, ClosingAlert } from '@/types'
 // confirmados passariam a não bater com o que foi realmente repassado. A
 // dedução preserva o histórico e mostra o dinheiro saindo no momento em que
 // saiu de verdade.
+//
+// REGRA DO VALOR (usuário, 02/09/2026): o abatimento é sempre sobre o VALOR
+// PAGO pelo cliente, nunca sobre o líquido depois das taxas. O cliente pagou
+// R$ 2.860, fez 1 sessão, descontamos os R$ 1.300 do plano de 1 sessão e
+// devolvemos a diferença: R$ 1.560. É esse número que sai do caixa, e é ele
+// que entra aqui como dedução - a taxa que a plataforma reteve na venda
+// original não é redistribuída no estorno parcial, então não entra na conta.
+// Deduzir sobre o líquido devolveria menos do que saiu de verdade.
 
 export type SolicitacaoReembolso = {
   id: string
