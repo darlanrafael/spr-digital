@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
-import { criarEventoComMeet } from '@/lib/google-meet'
+import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
 import { buscarConflitosMultiTerapeuta } from '@/lib/agenda-conflitos'
@@ -167,9 +167,40 @@ export async function POST(req: NextRequest) {
   }
 
   // Deletar sessões existentes que ainda não foram entregues (reagendamento total)
-  await client.from('sessoes').delete()
+  //
+  // Antes de apagar, desamarra as ocorrências do prontuário dessas sessões.
+  // ocorrencias_prontuario.sessao_id tem chave estrangeira pra sessoes, então
+  // qualquer sessão que já tenha remarcação, orientação ou "não compareceu"
+  // registrados trava o delete com 23503. O erro não era conferido, o delete
+  // seguia adiante sem apagar nada e o insert logo abaixo batia no unique
+  // (sale_id, numero_sessao), devolvendo "duplicate key value violates unique
+  // constraint" - uma mensagem que não diz nada pra quem está na tela e some
+  // do rastro. Vale pra qualquer produto, não só pro Diagnóstico.
+  //
+  // O histórico clínico NÃO se perde: a ocorrência continua amarrada ao
+  // sale_id, que é por onde o prontuário lista tudo. Só perde o vínculo com a
+  // sessão específica, que a partir daqui deixa de existir mesmo.
+  const { data: sessoesASubstituir } = await client.from('sessoes')
+    .select('id,google_event_id').eq('sale_id', sale_id).in('status', ['pendente', 'agendada', 'remarcada'])
+  const substituidas = (sessoesASubstituir ?? []) as { id: string; google_event_id: string | null }[]
+  const idsASubstituir = substituidas.map(s => s.id)
+  if (idsASubstituir.length > 0) {
+    const { error: desamarrarErr } = await client.from('ocorrencias_prontuario')
+      .update({ sessao_id: null }).in('sessao_id', idsASubstituir)
+    if (desamarrarErr) return NextResponse.json({ error: desamarrarErr.message }, { status: 500 })
+  }
+  // Cancela no Google os eventos das sessões que vão sumir. Sem isso o
+  // reagendamento total deixava os eventos antigos no calendário para sempre:
+  // as sessões novas eram criadas com eventos novos e ninguém apagava os
+  // velhos, então o terapeuta via o pacote inteiro duplicado, na data antiga e
+  // na nova. Medido criando e refazendo um pacote de teste: 9 eventos órfãos.
+  for (const s of substituidas) {
+    if (s.google_event_id) await cancelarEvento(s.google_event_id)
+  }
+  const { error: deleteErr } = await client.from('sessoes').delete()
     .eq('sale_id', sale_id)
     .in('status', ['pendente', 'agendada', 'remarcada'])
+  if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 })
   const base = {
     sale_id,
     status: 'agendada',
