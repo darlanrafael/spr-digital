@@ -69,13 +69,36 @@ export async function POST(req: NextRequest) {
   let pedroId: string | null = null
   let deniseId: string | null = null
   if (diagnostico) {
+    // .order('nome'): sem ordem explícita o PostgREST devolve as linhas na
+    // ordem que quiser, e o laço abaixo sobrescreve a cada volta - com dois
+    // terapeutas ativos que casem com o mesmo nome, qual deles fica com as
+    // sessões mudaria de uma chamada pra outra, em silêncio. Ordenado, ao
+    // menos é sempre o mesmo; e ambiguidade vira erro em vez de sorteio.
     const { data: ativos } = await client
-      .from('terapeutas').select('id,nome').eq('ativo', true)
+      .from('terapeutas').select('id,nome').eq('ativo', true).order('nome', { ascending: true })
+    const candidatosPedro: { id: string; nome: string }[] = []
+    const candidatosDenise: { id: string; nome: string }[] = []
     for (const t of (ativos ?? []) as { id: string; nome: string }[]) {
       const n = t.nome.toLowerCase()
-      if (n.includes('pedro')) pedroId = t.id
-      if (n.includes('denise')) deniseId = t.id
+      if (n.includes('pedro')) candidatosPedro.push(t)
+      if (n.includes('denise')) candidatosDenise.push(t)
     }
+    // Match por substring é frágil por natureza (homônimo, sobrenome que
+    // contenha o nome). Se houver mais de um candidato, ninguém aqui tem
+    // como escolher certo: recusa e diz quem colidiu, pra alguém desativar
+    // ou renomear o cadastro duplicado.
+    const ambiguo = [
+      candidatosPedro.length > 1 ? `Pedro (${candidatosPedro.map(t => t.nome).join(', ')})` : null,
+      candidatosDenise.length > 1 ? `Denise (${candidatosDenise.map(t => t.nome).join(', ')})` : null,
+    ].filter(Boolean)
+    if (ambiguo.length > 0) {
+      return NextResponse.json(
+        { error: `Mais de um terapeuta ativo bate com o nome esperado do Diagnóstico Guiado: ${ambiguo.join(' e ')}. Ajuste o cadastro antes de agendar.` },
+        { status: 409 },
+      )
+    }
+    pedroId = candidatosPedro[0]?.id ?? null
+    deniseId = candidatosDenise[0]?.id ?? null
     if (!pedroId || !deniseId) {
       return NextResponse.json(
         { error: 'Diagnostico Guiado precisa do Pedro e da Denise ativos como terapeutas.' },
@@ -90,11 +113,18 @@ export async function POST(req: NextRequest) {
   const numSessoes = numero_sessoes && numero_sessoes > 0
     ? Math.floor(numero_sessoes)
     : inferirNumeroSessoes(sale.produto as string)
-  const { comissao_por_sessao } = calcularComissao({
-    valor_liquido: sale.valor_liquido as number,
-    percentual: terapeuta.percentual_comissao as number,
-    numero_sessoes: numSessoes,
-  })
+  // No Diagnóstico a comissão NÃO sai do percentual do terapeuta: é valor fixo
+  // por sessão, regra do produto (Denise R$ 95, Pedro zero por ser sócio), e
+  // quem aplica isso é montarPacote. Rodar calcularComissao aqui produzia um
+  // número que não é pago a ninguém e que ia parar no log de auditoria como se
+  // fosse o valor real do pacote.
+  const comissao_por_sessao = diagnostico
+    ? 0
+    : calcularComissao({
+        valor_liquido: sale.valor_liquido as number,
+        percentual: terapeuta.percentual_comissao as number,
+        numero_sessoes: numSessoes,
+      }).comissao_por_sessao
 
   // brasiliaLocalToISO trata o input como horário de Brasília (UTC-3, sem
   // horário de verão) — new Date(string sem timezone) direto é ambíguo e
@@ -233,7 +263,20 @@ export async function POST(req: NextRequest) {
     tipo_acao: 'agendamento',
     sale_id,
     descricao: `${totalCriado} sessões agendadas para ${sale.nome} - primeira em ${new Date(primeiraDataMs).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
-    dados_novos: { numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
+    // No Diagnóstico o log grava o que foi realmente gravado em
+    // sessoes.comissao_valor (um valor por terapeuta), não um "por sessão"
+    // único que não existe nesse produto.
+    dados_novos: pacote
+      ? {
+          numSessoes: totalCriado,
+          data_primeira_sessao,
+          terapeuta_id,
+          diagnostico_formato: diagnostico?.formato,
+          comissao_por_sessao_pedro: pacote.find(s => s.terapeuta_id === pedroId)?.comissao_valor ?? 0,
+          comissao_por_sessao_denise: pacote.find(s => s.terapeuta_id === deniseId)?.comissao_valor ?? 0,
+          comissao_total_pacote: pacote.reduce((a, s) => a + s.comissao_valor, 0),
+        }
+      : { numSessoes: totalCriado, data_primeira_sessao, terapeuta_id, comissao_por_sessao },
   })
 
   return NextResponse.json({ success: true, sessoes_criadas: totalCriado })
