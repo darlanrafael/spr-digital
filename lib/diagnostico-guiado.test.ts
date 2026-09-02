@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes , intervalosForaDaRegua } from './diagnostico-guiado'
+import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes , avisosDasDatas } from './diagnostico-guiado'
 
 const venda = (order_id: string | undefined, id = 'v1') => ({ id, order_id }) as never
 
@@ -228,31 +228,73 @@ test('sem datasISO o pacote sai na regua de 7 dias, como sempre', () => {
   assert.equal(p[1].data_agendada, '2026-09-09T14:20:00.000Z')
 })
 
-test('intervalosForaDaRegua aponta o numero da sessao seguinte de cada par', () => {
-  const fora = intervalosForaDaRegua([
-    '2026-09-02T14:20:00.000Z',
-    '2026-09-09T14:20:00.000Z',
-    '2026-09-25T14:20:00.000Z',
-    '2026-10-02T14:20:00.000Z',
-  ])
-  assert.deepEqual(fora, [3])
+// --- avisosDasDatas: roda a cada render do modal e NAO pode lancar em nenhuma
+// entrada. Os testes usam o formato cru do campo datetime-local, que e o que a
+// tela realmente entrega.
+
+test('CRITICO: campo limpo pelo comercial NAO lanca, sai como invalida', () => {
+  // new Date('').toISOString() lanca RangeError. Como isto roda a cada render,
+  // a excecao derrubava a pagina inteira e apagava os ajustes ja feitos nas
+  // outras sessoes. O teste antigo passava 'lixo' direto pra funcao e nao
+  // pegava o caso, porque quem convertia era a tela, ANTES de chamar.
+  const a = avisosDasDatas(['2026-09-02T14:20', '', '2026-09-16T14:20'])
+  assert.deepEqual(a.invalidas, [2])
+})
+
+test('undefined e null tambem saem como invalidas, sem lancar', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', undefined, null])
+  assert.deepEqual(a.invalidas, [2, 3])
+})
+
+test('string sem sentido sai como invalida', () => {
+  assert.deepEqual(avisosDasDatas(['2026-09-02T14:20', 'lixo']).invalidas, [2])
+})
+
+test('CRITICO: duas sessoes do pacote no mesmo horario sao apontadas', () => {
+  // A trava de conflito da rota compara as datas pedidas contra o BANCO e
+  // ignora as sessoes desta venda, entao duas datas iguais do pacote novo
+  // passariam batido: dois convites pro paciente na mesma hora.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-20T15:00', '2026-09-20T15:00'])
+  assert.deepEqual(a.duplicadas, [3])
+})
+
+test('tres no mesmo horario apontam as duas repetidas', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-02T14:20', '2026-09-02T14:20'])
+  assert.deepEqual(a.duplicadas, [2, 3])
+})
+
+test('data fora de ordem e apontada como fora de ordem, nao como fora da regua', () => {
+  // Sessao 3 antes da 2: quase sempre erro de digitacao, e o aviso generico de
+  // "fora dos 7 dias" fazia o comercial ler como ajuste normal e confirmar.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-30T14:20', '2026-09-20T14:20'])
+  assert.deepEqual(a.foraDeOrdem, [3])
+  assert.equal(a.foraDaRegua.includes(3), false)
+})
+
+test('MENOR: mudar so o horario nao dispara o aviso de intervalo', () => {
+  // "essa fica 15h em vez de 14h" e o ajuste mais comum. Comparacao exata em
+  // milissegundos fazia 7d+1h virar aviso, virando ruido.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-09T15:20', '2026-09-16T14:20'])
+  assert.deepEqual(a.foraDaRegua, [])
 })
 
 test('pacote inteiro na regua nao gera aviso nenhum', () => {
-  const datas = Array.from({ length: 4 }, (_, i) => new Date(Date.UTC(2026, 8, 2, 14, 20) + i * 7 * 24 * 3600 * 1000).toISOString())
-  assert.deepEqual(intervalosForaDaRegua(datas), [])
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-09T14:20', '2026-09-16T14:20'])
+  assert.deepEqual(a, { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] })
 })
 
-test('varios pares fora da regua saem todos', () => {
-  const fora = intervalosForaDaRegua([
-    '2026-09-02T10:00:00.000Z',
-    '2026-09-04T10:00:00.000Z',
-    '2026-09-11T10:00:00.000Z',
-    '2026-09-30T10:00:00.000Z',
-  ])
-  assert.deepEqual(fora, [2, 4])
+test('intervalo de dias diferente de 7 e apontado', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-04T14:20', '2026-09-11T14:20', '2026-09-30T14:20'])
+  assert.deepEqual(a.foraDaRegua, [2, 4])
 })
 
-test('data invalida no meio nao quebra o aviso', () => {
-  assert.deepEqual(intervalosForaDaRegua(['2026-09-02T10:00:00.000Z', 'lixo', '2026-09-16T10:00:00.000Z']), [])
+test('data invalida no meio nao impede o aviso das demais', () => {
+  const a = avisosDasDatas(['2026-09-02T14:20', '', '2026-09-30T14:20'])
+  assert.deepEqual(a.invalidas, [2])
+  assert.deepEqual(a.foraDaRegua, [])
+})
+
+test('lista vazia e lista de um item nao quebram', () => {
+  assert.deepEqual(avisosDasDatas([]), { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] })
+  assert.deepEqual(avisosDasDatas(['2026-09-02T14:20']).foraDaRegua, [])
 })

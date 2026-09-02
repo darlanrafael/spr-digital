@@ -124,21 +124,68 @@ export function montarPacote(params: {
   })
 }
 
+export type AvisosDasDatas = {
+  /** Sessoes cujo intervalo em relacao a anterior nao e de 7 dias. */
+  foraDaRegua: number[]
+  /** Sessoes com data ANTERIOR a da sessao de numero menor. Quase sempre erro de digitacao. */
+  foraDeOrdem: number[]
+  /** Sessoes com data vazia ou impossivel de interpretar. */
+  invalidas: number[]
+  /** Sessoes que caem no MESMO horario de outra do proprio pacote. */
+  duplicadas: number[]
+}
+
 /**
- * Pares de sessoes consecutivas cujo intervalo nao e de 7 dias. Serve para a
- * tela AVISAR, nunca para bloquear: fora da regua e escolha legitima do
- * comercial. Devolve o numero da sessao seguinte de cada par, para a mensagem
- * poder dizer "entre a 2 e a 3".
+ * Avisos sobre as datas escolhidas a mao. Serve para a tela AVISAR, nunca para
+ * bloquear: fora da regua e escolha legitima do comercial (decisao do usuario
+ * em 02/09/2026). Os numeros devolvidos sao o `numero_sessao`, para a mensagem
+ * poder dizer "a sessao 3".
+ *
+ * Recebe as datas como o campo `datetime-local` as entrega ("2026-09-02T14:20")
+ * ou em ISO. Nao lanca em nenhuma entrada: campo vazio e string invalida saem
+ * em `invalidas`. Isso e requisito, nao detalhe - esta funcao roda a cada
+ * render do modal, e uma excecao aqui derruba a tela inteira e apaga tudo que o
+ * comercial ja tinha digitado nas outras sessoes.
  */
-export function intervalosForaDaRegua(datasISO: string[]): number[] {
-  const fora: number[] = []
-  for (let i = 1; i < datasISO.length; i++) {
-    const a = new Date(datasISO[i - 1]).getTime()
-    const b = new Date(datasISO[i]).getTime()
+export function avisosDasDatas(datas: (string | null | undefined)[]): AvisosDasDatas {
+  const ms = datas.map(d => {
+    if (!d) return NaN
+    const t = new Date(d).getTime()
+    return Number.isNaN(t) ? NaN : t
+  })
+
+  const invalidas: number[] = []
+  const foraDaRegua: number[] = []
+  const foraDeOrdem: number[] = []
+  const duplicadas: number[] = []
+
+  ms.forEach((t, i) => { if (Number.isNaN(t)) invalidas.push(i + 1) })
+
+  for (let i = 1; i < ms.length; i++) {
+    const a = ms[i - 1]
+    const b = ms[i]
     if (Number.isNaN(a) || Number.isNaN(b)) continue
-    if (b - a !== SETE_DIAS_MS) fora.push(i + 1)
+    if (b < a) { foraDeOrdem.push(i + 1); continue }
+    // Compara por DIA e nao por milissegundo: mudar so o horario de uma sessao
+    // ("essa fica 15h em vez de 14h") e o ajuste mais comum e nao deveria
+    // disparar o alerta de intervalo, que existe para sinalizar mudanca de
+    // DIAS. Comparacao exata fazia 7d+1h virar aviso.
+    if (Math.round((b - a) / (24 * 60 * 60 * 1000)) !== 7) foraDaRegua.push(i + 1)
   }
-  return fora
+
+  // Mesmo horario dentro do proprio pacote. A trava de conflito da rota olha so
+  // o banco e ignora as sessoes desta venda, entao duas datas iguais do pacote
+  // novo passariam batido: o paciente receberia dois convites para o mesmo
+  // horario e a terapeuta veria duas consultas empilhadas.
+  const vistos = new Map<number, number>()
+  ms.forEach((t, i) => {
+    if (Number.isNaN(t)) return
+    const antes = vistos.get(t)
+    if (antes !== undefined) duplicadas.push(i + 1)
+    else vistos.set(t, i + 1)
+  })
+
+  return { foraDaRegua, foraDeOrdem, invalidas, duplicadas }
 }
 
 /**

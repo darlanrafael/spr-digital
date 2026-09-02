@@ -142,8 +142,9 @@ export async function POST(req: NextRequest) {
   // horário de verão) — new Date(string sem timezone) direto é ambíguo e
   // depende do TZ do runtime do servidor, causando horários errados.
   // Regra padrão: 7 em 7 dias a partir da primeira. `datas_sessoes` (opcional,
-  // um datetime-local por sessão) deixa o comercial corrigir pontualmente uma
-  // sessão que sai da regra — sem mudar como as demais são calculadas.
+  // um datetime-local por sessão) substitui essa régua pelas datas que o
+  // comercial escolheu - no Diagnóstico a lista cobre o pacote inteiro, e nos
+  // demais produtos serve para corrigir pontualmente uma sessão fora da regra.
   const primeiraDataMs = new Date(brasiliaLocalToISO(data_primeira_sessao)).getTime()
   const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
   // Quantas datas a lista precisa ter para valer. No Diagnostico quem manda e o
@@ -155,6 +156,38 @@ export async function POST(req: NextRequest) {
   const datasExplicitas = datas_sessoes && datas_sessoes.length === datasEsperadas
     ? datas_sessoes.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
     : null
+
+  // Data em branco NAO lanca: `brasiliaLocalToISO('')` monta ':00-03:00' e o
+  // parser legado do V8 aceita, devolvendo 01/01/2000. A sessao ia para o banco
+  // 26 anos no passado, a trava de conflito aceitava (data finita) e o paciente
+  // recebia convite retroativo. Ano de 2 digitos ("26" em vez de "2026") tem o
+  // mesmo destino: o campo datetime-local aceita ano 0026 como valor valido.
+  // Com 8 campos editaveis num Formato 1, e erro de digitacao esperado.
+  if (datasExplicitas) {
+    const foraDaFaixa = datasExplicitas
+      .map((iso, i) => ({ ano: new Date(iso).getUTCFullYear(), numero: i + 1 }))
+      .filter(x => !Number.isFinite(x.ano) || x.ano < 2020 || x.ano > 2100)
+    if (foraDaFaixa.length > 0) {
+      return NextResponse.json(
+        { error: `Data inválida na sessão ${foraDaFaixa.map(x => x.numero).join(', ')}. Confira o ano e preencha todos os campos.` },
+        { status: 400 },
+      )
+    }
+    // Duas sessoes no mesmo horario passariam pela trava de conflito: ela
+    // compara as datas pedidas contra o BANCO e `ignorarSaleId` tira dali as
+    // sessoes desta propria venda, entao as datas do pacote novo nunca sao
+    // comparadas entre si. Ate a edicao manual existir isso era impossivel,
+    // porque a regua garantia datas distintas.
+    const repetidas = datasExplicitas
+      .map((iso, i) => ({ iso, numero: i + 1 }))
+      .filter((x, i, arr) => arr.findIndex(y => y.iso === x.iso) !== i)
+    if (repetidas.length > 0) {
+      return NextResponse.json(
+        { error: `As sessões ${repetidas.map(x => x.numero).join(', ')} estão no mesmo horário de outra sessão deste pacote.` },
+        { status: 409 },
+      )
+    }
+  }
 
   // Montado ANTES da trava do reagendamento total porque `pacote.length` é o
   // número de sessões que o insert vai gravar, e a trava precisa dele pra
