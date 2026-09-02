@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
 import { buscarConflitosMultiTerapeuta, mensagemConflito } from '@/lib/agenda-conflitos'
 import { novasDatasSeguintes, formatoDaVenda } from '@/lib/diagnostico-guiado'
-import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
+import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 
 // Sem `maxDuration` declarado, a Vercel corta a função em 10 s. Esta rota fala
 // com o Google Calendar duas vezes por sessão movida (cancelar o evento antigo
@@ -171,6 +171,15 @@ export async function POST(req: NextRequest) {
   // abrir 8 conexões de uma vez.
   const LOTE_CALENDAR = 4
   const falhasCalendar: { numero_sessao: number; motivo: string }[] = []
+  // Evento criado sem o link do Meet ainda (conferência sendo provisionada)
+  // não é falha: o convite existe na agenda e o link aparece depois. Fica
+  // separado pra tela não dizer que o paciente ficou sem convite.
+  const linksPendentes: number[] = []
+  // Integração desligada é modo documentado do módulo (ver lib/google-meet.ts),
+  // não incidente: sem as 3 variáveis de ambiente as sessões continuam sendo
+  // movidas, só que sem link. Tratar esse null como erro fazia toda remarcação
+  // em cadeia acusar N pacientes sem convite se uma variável sumisse da Vercel.
+  const calendarAtivo = integracaoCalendarAtiva()
   for (let inicio = 0; inicio < seguintes.length; inicio += LOTE_CALENDAR) {
     const lote = seguintes.slice(inicio, inicio + LOTE_CALENDAR)
     const resultados = await Promise.allSettled(lote.map(async (s, j) => {
@@ -192,7 +201,11 @@ export async function POST(req: NextRequest) {
       // Evento novo já existe no Google nesse ponto - se salvar falhar, ele
       // fica órfão (existe no Calendar sem referência no banco).
       if (linkErr) throw new Error(`o link do Meet novo não foi salvo no banco (${linkErr.message})`)
-      if (!evento) throw new Error('o Google não devolveu o convite novo')
+      // Aqui null só é falha quando a integração está ligada; desligada, é o
+      // no-op esperado. Evento sem link é caso à parte: o google_event_id já
+      // foi salvo no update acima, então não vira órfão.
+      if (!evento && calendarAtivo) throw new Error('o Google não devolveu o convite novo')
+      if (evento && !evento.meetLink) linksPendentes.push(s.numero_sessao as number)
     }))
     resultados.forEach((r, j) => {
       if (r.status === 'rejected') {
@@ -253,11 +266,20 @@ export async function POST(req: NextRequest) {
   // O que não podia continuar é a tela dizer "tudo certo" quando parte dos
   // pacientes ficou sem convite novo.
   const numerosComFalha = falhasCalendar.map(f => f.numero_sessao).sort((a, b) => a - b)
+  const numerosPendentes = linksPendentes.slice().sort((a, b) => a - b)
+  const avisos: string[] = []
+  if (falhasCalendar.length > 0) {
+    avisos.push(`As datas foram salvas, mas o convite do Google não foi refeito em ${falhasCalendar.length} sessão(ões) (sessão ${numerosComFalha.join(', ')}). Esse(s) paciente(s) pode(m) estar sem convite na data nova: remarque essa(s) sessão(ões) de novo ou avise o time técnico.`)
+  }
+  if (numerosPendentes.length > 0) {
+    avisos.push(`O convite novo foi criado no Google Agenda em ${numerosPendentes.length} sessão(ões) (sessão ${numerosPendentes.join(', ')}), mas o link do Meet ainda não estava pronto. O evento existe na agenda: o link deve aparecer em alguns minutos.`)
+  }
   return NextResponse.json({
     success: true,
     movidas: seguintes.length,
     calendario_falhas: falhasCalendar,
-    aviso: falhasCalendar.length === 0 ? null : `As datas foram salvas, mas o convite do Google não foi refeito em ${falhasCalendar.length} sessão(ões) (sessão ${numerosComFalha.join(', ')}). Esse(s) paciente(s) pode(m) estar sem convite na data nova: remarque essa(s) sessão(ões) de novo ou avise o time técnico.`,
+    calendario_links_pendentes: numerosPendentes,
+    aviso: avisos.length === 0 ? null : avisos.join(' '),
   })
   } catch (err) {
     console.error('[empurrar-seguintes]', err)

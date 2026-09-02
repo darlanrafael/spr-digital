@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
-import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
+import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
 import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagendamento-total'
@@ -288,8 +288,20 @@ export async function POST(req: NextRequest) {
   // ninguém lê. Lote de 4 pra não disparar rate limit da API do Google.
   const LOTE_CALENDAR = 4
   const falhasCalendar: { numero_sessao: number; motivo: string }[] = []
+  // Evento criado no Google mas sem link do Meet ainda (conferência sendo
+  // provisionada) NÃO é falha: o convite existe na agenda do paciente e o link
+  // aparece depois. Contado à parte pra tela não dizer "ficaram sem convite",
+  // que é impreciso, e pro google_event_id ser salvo em vez de virar órfão.
+  const linksPendentes: number[] = []
   const meetPorSessao = new Map<number, string>()
-  for (let inicio = 0; inicio < sessoes.length; inicio += LOTE_CALENDAR) {
+  // Integração desligada é modo documentado do módulo (ver lib/google-meet.ts),
+  // não incidente: sem as 3 variáveis de ambiente o agendamento continua
+  // valendo, só que sem link. Sem esse gate, uma variável que sumisse da Vercel
+  // faria TODO agendamento exibir o alerta âmbar dizendo que N pacientes
+  // ficaram sem convite - alarme correto no efeito, mas contrário ao contrato
+  // do módulo e com toda cara de incidente.
+  const calendarAtivo = integracaoCalendarAtiva()
+  for (let inicio = 0; calendarAtivo && inicio < sessoes.length; inicio += LOTE_CALENDAR) {
     const lote = sessoes.slice(inicio, inicio + LOTE_CALENDAR)
     const resultados = await Promise.allSettled(lote.map(async s => {
       const evento = await criarEventoComMeet({
@@ -297,14 +309,16 @@ export async function POST(req: NextRequest) {
         inicioISO: s.data_agendada,
         fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
       })
+      // Aqui null é falha de verdade: o gate acima já tirou o caso desligado.
       if (!evento) throw new Error('o Google não devolveu o convite')
-      meetPorSessao.set(s.numero_sessao, evento.meetLink)
+      if (evento.meetLink) meetPorSessao.set(s.numero_sessao, evento.meetLink)
       const { error: linkErr } = await client.from('sessoes')
         .update({ link_meet: evento.meetLink, google_event_id: evento.eventId })
         .eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao)
       // Evento já foi criado no Google nesse ponto: se salvar falhar, ele fica
       // órfão (existe no Calendar mas sem referência no banco).
       if (linkErr) throw new Error(`o link do Meet não foi salvo no banco (${linkErr.message})`)
+      if (!evento.meetLink) linksPendentes.push(s.numero_sessao)
     }))
     resultados.forEach((r, j) => {
       if (r.status === 'rejected') {
@@ -397,11 +411,20 @@ export async function POST(req: NextRequest) {
   // agendamento). O que não podia continuar é a tela dizer "tudo certo"
   // quando parte dos pacientes ficou sem convite.
   const numerosComFalha = falhasCalendar.map(f => f.numero_sessao).sort((a, b) => a - b)
+  const numerosPendentes = linksPendentes.slice().sort((a, b) => a - b)
+  const avisos: string[] = []
+  if (falhasCalendar.length > 0) {
+    avisos.push(`As sessões foram criadas, mas o convite do Google não saiu em ${falhasCalendar.length} delas (sessão ${numerosComFalha.join(', ')}). Esse(s) horário(s) ficaram sem convite e sem link do Meet: avise o time técnico.`)
+  }
+  if (numerosPendentes.length > 0) {
+    avisos.push(`O convite foi criado no Google Agenda em ${numerosPendentes.length} sessão(ões) (sessão ${numerosPendentes.join(', ')}), mas o link do Meet ainda não estava pronto. O evento existe na agenda: o link deve aparecer em alguns minutos.`)
+  }
   return NextResponse.json({
     success: true,
     sessoes_criadas: totalCriado,
     calendario_falhas: falhasCalendar,
-    aviso: falhasCalendar.length === 0 ? null : `As sessões foram criadas, mas o convite do Google não saiu em ${falhasCalendar.length} delas (sessão ${numerosComFalha.join(', ')}). Esse(s) horário(s) ficaram sem convite e sem link do Meet: avise o time técnico.`,
+    calendario_links_pendentes: numerosPendentes,
+    aviso: avisos.length === 0 ? null : avisos.join(' '),
   })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

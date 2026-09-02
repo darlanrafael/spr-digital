@@ -65,11 +65,42 @@ async function getCalendarId(calendar: ReturnType<typeof google.calendar>): Prom
   }
 }
 
+/**
+ * A integração com o Calendar está ligada?
+ *
+ * Existe porque `criarEventoComMeet` devolve null em DOIS casos muito
+ * diferentes: falha de verdade e modo desligado (o no-op documentado no topo
+ * deste arquivo, em que o agendamento continua funcionando sem link). Quem
+ * chama precisa separar os dois - tratar tudo como falha faz a tela avisar
+ * que N pacientes ficaram sem convite quando, no modo desligado, nunca houve
+ * convite nenhum a perder. Bastaria uma das 3 variáveis sumir da Vercel pra
+ * todo agendamento virar "incidente".
+ */
+export function integracaoCalendarAtiva(): boolean {
+  return credenciaisDisponiveis()
+}
+
+export type EventoCriado = {
+  eventId: string
+  /**
+   * null quando o Google aceitou o evento mas ainda não devolveu o
+   * hangoutLink (conferência sendo provisionada). O evento EXISTE no
+   * Calendar, por isso o eventId vem mesmo assim: descartar tudo aqui era o
+   * que deixava evento órfão (no Google, sem referência no banco) e ainda
+   * fazia a tela dizer que o paciente ficou "sem convite", o que é falso.
+   */
+  meetLink: string | null
+}
+
+/**
+ * Devolve null em dois casos, que quem chama separa com
+ * integracaoCalendarAtiva(): integração desligada (não é erro) e falha real.
+ */
 export async function criarEventoComMeet(params: {
   titulo: string
   inicioISO: string
   fimISO: string
-}): Promise<{ eventId: string; meetLink: string } | null> {
+}): Promise<EventoCriado | null> {
   if (!credenciaisDisponiveis()) return null
   try {
     const auth = getAuthClient()
@@ -92,9 +123,10 @@ export async function criarEventoComMeet(params: {
       },
     })
 
-    const meetLink = data.hangoutLink
-    if (!data.id || !meetLink) return null
-    return { eventId: data.id, meetLink }
+    // Sem id não há evento nenhum: isso é falha. Sem hangoutLink o evento
+    // existe e só o link está pendente - ver EventoCriado.meetLink.
+    if (!data.id) return null
+    return { eventId: data.id, meetLink: data.hangoutLink ?? null }
   } catch (err) {
     console.error('[google-meet] falha ao criar evento:', err)
     await notificarAdmin(`Falha ao gerar link do Meet para "${params.titulo}" (início: ${params.inicioISO}). Erro: ${String(err)}`)
