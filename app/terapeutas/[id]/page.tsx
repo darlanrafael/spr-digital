@@ -20,6 +20,8 @@ import AgendaDiaTerapeuta, {
 import { fimEfetivoSessao } from '@/lib/agenda-horarios'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
+import { formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -67,6 +69,11 @@ type SaleInfo = {
   valor_liquido: number
   data_hora: string
   status: string | null
+  // Precisa vir em toda consulta que popular SaleInfo - sem order_id,
+  // formatoDaVenda() nunca reconhece um pacote do Diagnóstico Guiado e a
+  // etiqueta simplesmente nunca aparece, sem erro nenhum. Tipo igual ao de
+  // Sale ('@/types'): opcional sem null, pra formatoDaVenda() aceitar direto.
+  order_id?: string
 }
 
 type Ocorrencia = {
@@ -164,6 +171,9 @@ type ConsultaHoje = {
   status: string
   status_consulta: string
   iniciado_em: string | null
+  // Preenchido só quando a sessão faz parte de um pacote do Diagnóstico
+  // Guiado; null pra sessão avulsa.
+  rotulo_diagnostico?: string | null
   // Só preenchidos no quadrante "Consultas Entregues (hoje)" — os outros
   // dois quadrantes usam o mesmo tipo e nunca trazem sessão entregue.
   data_entrega?: string | null
@@ -232,6 +242,43 @@ function parseValorBR(val: string): number {
 function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+// Progresso e etiqueta do Diagnóstico Guiado pra uma linha que representa o
+// PACIENTE inteiro (aba Vendas: Pendentes/Ativos/Concluídos/Reembolsados).
+//
+// O total vem SEMPRE do formato (2, 4 ou 9) e as entregues SEMPRE das sessões
+// daquele sale_id no pacote inteiro - nunca do agregado por e-mail. O agregado
+// soma todas as vendas do paciente com ESTE terapeuta, e as sessões carregadas
+// nesta tela são só as dele: quando o Pedro entregava as 2 sessões dele de um
+// Formato 1, a linha mostrava "sessão 2 de 2", barra em 100% e "Concluído",
+// com 7 sessões ainda por fazer com a Denise. O mesmo agregado também errava
+// quando o paciente tinha dois pacotes ao mesmo tempo.
+function progressoDiagnostico(
+  sale: SaleInfo | undefined,
+  sessoesDoPacote: { status: string }[] | undefined,
+): { formato: 1 | 2 | 3; entregues: number; total: number; rotulo: string } | null {
+  if (!sale) return null
+  const formato = formatoDaVenda(sale)
+  if (!formato) return null
+  const total = formato.totalSessoes
+  const entregues = (sessoesDoPacote ?? []).filter(s => s.status === 'entregue').length
+  const numeroSessao = Math.min(entregues + 1, total)
+  return {
+    formato: formato.formato,
+    entregues,
+    total,
+    rotulo: rotuloDiagnostico({ formato: formato.formato, numeroSessao, totalSessoes: total }),
+  }
+}
+
+// Venda do produto Diagnóstico Guiado cuja OFERTA não está mapeada em
+// OFERTAS_DIAGNOSTICO (oferta nova, promoção, ou a oferta "Padrão" de R$ 10,00
+// que existe no mesmo produto de propósito). A spec manda deixá-la pendente com
+// um aviso pedindo a associação - antes ela era descartada em silêncio e
+// simplesmente sumia da tela, sem ninguém saber que existia.
+function ofertaDiagnosticoNaoMapeada(sale: SaleInfo | undefined): boolean {
+  if (!sale) return false
+  return sale.produto.toLowerCase().includes('diagnóstico guiado') && !formatoDaVenda(sale)
 }
 const FECHAMENTO_SESSOES_PAGE_SIZE = 12
 function exportFechamentoCSV(f: FechamentoHistorico) {
@@ -372,6 +419,11 @@ export default function PainelTerapeuta() {
   const [outrasTerapeutas, setOutrasTerapeutas] = useState<{ id: string; nome: string }[]>([])
   const [sessoes, setSessoes] = useState<Sessao[]>([])
   const [vendas, setVendas] = useState<Record<string, SaleInfo>>({})
+  // Sessões do PACOTE inteiro das vendas do Diagnóstico, de todos os
+  // terapeutas. `sessoes` acima é filtrado por terapeuta_id, então sozinho ele
+  // nunca enxerga o pacote completo (o Pedro só vê as dele, a Denise só as
+  // dela) - e é disso que o progresso do Diagnóstico precisa.
+  const [sessoesPacoteDiag, setSessoesPacoteDiag] = useState<Record<string, { numero_sessao: number; status: string }[]>>({})
   const [ocorrencias, setOcorrencias] = useState<Record<string, Ocorrencia[]>>({})
   const [remarcacoes, setRemarcacoes] = useState<Record<string, Remarcacao[]>>({})
   const [loading, setLoading] = useState(true)
@@ -406,6 +458,26 @@ export default function PainelTerapeuta() {
   const [remarcarSenhaModal, setRemarcarSenhaModal] = useState(false)
   const [remarcarErro, setRemarcarErro] = useState('')
   const [remarcarLoading, setRemarcarLoading] = useState(false)
+
+  // Aviso de intervalo quebrado (Diagnóstico Guiado) - populado pelas duas
+  // rotas de remarcar (modal rápido da Agenda e formulário de Ocorrências do
+  // prontuário) quando a API acusa menos de 7 dias entre sessões do mesmo
+  // pacote. Guarda o nome do paciente pra deixar claro no modal de quem se
+  // trata; a decisão (manter ou empurrar as seguintes) é do comercial.
+  const [avisoRemarcacao, setAvisoRemarcacao] = useState<{
+    sessaoId: string
+    paciente: string
+    mensagem: string
+  } | null>(null)
+  const [avisoEmpurrarSenhaOpen, setAvisoEmpurrarSenhaOpen] = useState(false)
+  const [avisoEmpurrarErro, setAvisoEmpurrarErro] = useState('')
+  const [avisoEmpurrarLoading, setAvisoEmpurrarLoading] = useState(false)
+  const [avisoEmpurrarSucesso, setAvisoEmpurrarSucesso] = useState<number | null>(null)
+  // Aviso separado do "deu certo": as datas podem ter sido salvas e ainda
+  // assim o convite do Google não ter sido refeito em alguma sessão. Antes a
+  // tela dizia só "N sessões remarcadas" e o paciente ficava com o convite no
+  // horário velho sem ninguém saber.
+  const [avisoEmpurrarCalendario, setAvisoEmpurrarCalendario] = useState<string | null>(null)
 
   // Visão terapeuta — tabs de página. Fica na URL (?tab=) pra sobreviver a
   // um refresh da página em vez de sempre voltar pra "overview".
@@ -598,11 +670,30 @@ export default function PainelTerapeuta() {
     const saleIds = [...new Set(sessoesTodas.map(s => s.sale_id))]
     const vendasMap: Record<string, SaleInfo> = {}
     if (saleIds.length > 0) {
+      // order_id entra no select por causa da etiqueta do Diagnostico Guiado:
+      // sem ele, formatoDaVenda() (usado no prontuário e na aba Vendas) nunca
+      // reconhece o pacote e a etiqueta nunca aparece, sem erro nenhum.
       const { data: vendasData } = await client
-        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status').in('id', saleIds)
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id').in('id', saleIds)
       for (const v of (vendasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
     }
     setVendas(vendasMap)
+
+    // Consulta extra só pras vendas do Diagnóstico: sem filtro de terapeuta,
+    // porque o pacote é dividido entre dois e o progresso real depende dos
+    // dois. São no máximo algumas dezenas de sale_ids, e a consulta nem roda
+    // quando não há nenhum Diagnóstico na tela.
+    const saleIdsDiag = Object.values(vendasMap).filter(v => formatoDaVenda(v)).map(v => v.id)
+    const pacoteDiagMap: Record<string, { numero_sessao: number; status: string }[]> = {}
+    if (saleIdsDiag.length > 0) {
+      const { data: sessoesPacote } = await client
+        .from('sessoes').select('sale_id,numero_sessao,status').in('sale_id', saleIdsDiag)
+      for (const s of (sessoesPacote ?? []) as { sale_id: string; numero_sessao: number; status: string }[]) {
+        if (!pacoteDiagMap[s.sale_id]) pacoteDiagMap[s.sale_id] = []
+        pacoteDiagMap[s.sale_id].push({ numero_sessao: s.numero_sessao, status: s.status })
+      }
+    }
+    setSessoesPacoteDiag(pacoteDiagMap)
 
     // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
     // sessão só conta se a venda que a originou é depois do corte — histórico
@@ -677,6 +768,44 @@ export default function PainelTerapeuta() {
           .map(t => t.nome.trim().split(' ')[0].toLowerCase())
         pendentes = pendentes.filter(v => !outrosNomes.some(n => v.produto.toLowerCase().includes(n)))
       }
+
+      // O Diagnostico Guiado nao tem nome de terapeuta no produto, entao a busca
+      // por nome nunca o encontra. Ele aparece so na tela do Pedro, que sempre
+      // comeca o pacote; agendar dali cria as sessoes dos dois.
+      if (primeiroNome.toLowerCase() === 'pedro') {
+        // O filtro por nome do produto aqui e so pre-filtro de desempenho e
+        // para escapar do corte de 1000 linhas do PostgREST (a tabela sales
+        // tem quase 10 mil vendas aprovadas nao-manuais; sem esse filtro a
+        // consulta vinha truncada e podia nao trazer nenhuma venda do
+        // Diagnostico). Quem decide o formato de verdade e o formatoDaVenda,
+        // pela oferta, porque os tres formatos do Diagnostico tem produto com
+        // nome identico.
+        let diagQuery = client
+          .from('sales')
+          .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id')
+          .ilike('produto', '%Diagnóstico Guiado%')
+          .eq('status', 'aprovada')
+          .not('id', 'like', 'manual_%')
+        // Mesmo corte de vendas_a_partir_de da consulta de cima. Sem isso,
+        // se o corte do Pedro for reajustado, uma venda do Diagnostico ja
+        // encerrada volta a aparecer como pendente.
+        if (terapeutaResp?.vendas_a_partir_de) {
+          diagQuery = diagQuery.gte('data_hora', terapeutaResp.vendas_a_partir_de)
+        }
+        const { data: diag } = await diagQuery
+        for (const v of (diag ?? []) as (SaleInfo & { order_id?: string })[]) {
+          // Oferta desconhecida NÃO é descartada aqui. Antes um `continue`
+          // fazia a venda sumir da tela sem aviso nenhum - ninguém ficava
+          // sabendo que existia uma compra esperando agendamento. A spec pede
+          // o contrário: ela fica pendente, com aviso pedindo a associação da
+          // oferta. Quem mostra o aviso e bloqueia o botão "Agendar" é a
+          // tabela de Pendentes, via ofertaDiagnosticoNaoMapeada().
+          if (saleIds.includes(v.id)) continue
+          if (pendentes.some(p => p.id === v.id)) continue
+          pendentes.push(v)
+        }
+      }
+
       setVendasPendentes(pendentes)
     }
 
@@ -1059,6 +1188,14 @@ export default function PainelTerapeuta() {
     const json = await res.json()
     setRemarcarLoading(false)
     if (!res.ok) { setRemarcarErro(json.error ?? 'Erro'); return }
+    // Guarda o aviso de intervalo (se vier) antes de zerar remarcarSessaoId -
+    // é a chance de oferecer as duas saídas ao comercial. `sessoes` ainda tem
+    // a lista antiga (loadData é assíncrono e roda depois), então o paciente
+    // certo ainda está lá pelo id.
+    if (json.avisoIntervalo) {
+      const paciente = sessoes.find(s => s.id === remarcarSessaoId)?.paciente_nome ?? ''
+      setAvisoRemarcacao({ sessaoId: remarcarSessaoId, paciente, mensagem: json.avisoIntervalo })
+    }
     setRemarcarSenhaModal(false)
     setRemarcarSessaoId(null)
     loadData()
@@ -1116,8 +1253,41 @@ export default function PainelTerapeuta() {
     const json = await res.json()
     setRemLoading(false)
     if (!res.ok) { setRemErro(json.error ?? 'Erro'); return }
+    // Mesmo aviso de intervalo do handleRemarcar acima - aqui o paciente é
+    // sempre o do prontuário aberto, então não precisa buscar em lista nenhuma.
+    if (json.avisoIntervalo) {
+      setAvisoRemarcacao({ sessaoId: remSessaoId, paciente: prontuarioSaleMaisRecente?.nome ?? '', mensagem: json.avisoIntervalo })
+    }
     setRemSenhaOpen(false); setOcorrenciaTipo(null)
     setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
+    loadData()
+  }
+
+  // Segunda decisão do fluxo de remarcação do Diagnóstico Guiado: o comercial
+  // escolheu empurrar as sessões seguintes do pacote pra manter os 7 dias
+  // entre elas (rota da Task 9). Pede senha de novo porque é uma ação de
+  // agendamento própria - a senha digitada na remarcação não sobrevive ao
+  // fechamento daquele modal, e o token sozinho só autentica quem tem
+  // dispensa_senha_nas_acoes ligado (hoje, só o Pedro).
+  async function handleEmpurrarSeguintes(senha: string) {
+    if (!avisoRemarcacao) return
+    setAvisoEmpurrarLoading(true)
+    setAvisoEmpurrarErro('')
+    const res = await fetch('/api/terapeutas/sessoes/empurrar-seguintes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessao_id: avisoRemarcacao.sessaoId, usuario_email: adminEmail, senha, token: sessionToken }),
+    })
+    const json = await res.json()
+    setAvisoEmpurrarLoading(false)
+    // Conflito (409) chega com mensagem pronta dizendo qual data bateu em
+    // qual paciente. Nada foi alterado nesse caso - o comercial pode fechar
+    // e escolher manter como está.
+    if (!res.ok) { setAvisoEmpurrarErro(json.error ?? 'Não foi possível empurrar as seguintes.'); return }
+    setAvisoEmpurrarSenhaOpen(false)
+    setAvisoRemarcacao(null)
+    setAvisoEmpurrarSucesso(json.movidas)
+    setAvisoEmpurrarCalendario(json.aviso ?? null)
     loadData()
   }
 
@@ -1560,6 +1730,11 @@ export default function PainelTerapeuta() {
                                       {s.paciente_nome}
                                     </button>
                                     <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                    {s.rotulo_diagnostico && (
+                                      <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                        {s.rotulo_diagnostico}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs px-2 py-0.5 rounded-full text-amber-300 bg-amber-500/15">
@@ -1620,6 +1795,11 @@ export default function PainelTerapeuta() {
                                     <td className="px-4 py-3 text-white">
                                       {s.paciente_nome}
                                       <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                      {s.rotulo_diagnostico && (
+                                        <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                          {s.rotulo_diagnostico}
+                                        </span>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3">
                                       <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
@@ -1703,6 +1883,11 @@ export default function PainelTerapeuta() {
                                       {s.paciente_nome}
                                     </button>
                                     <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                    {s.rotulo_diagnostico && (
+                                      <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                        {s.rotulo_diagnostico}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs px-2 py-0.5 rounded-full text-green-500 bg-green-500/10">
@@ -1764,6 +1949,11 @@ export default function PainelTerapeuta() {
                                         {s.paciente_nome}
                                       </button>
                                       <p className="text-[10px] text-gray-500">Sessão {s.numero_sessao}/{s.total_sessoes}</p>
+                                      {s.rotulo_diagnostico && (
+                                        <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                          {s.rotulo_diagnostico}
+                                        </span>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3">
                                       <LinkMeetCell id={s.id} link={s.link_meet} copiadoId={linkCopiadoId} onCopy={copiarLinkMeet} />
@@ -1856,12 +2046,32 @@ export default function PainelTerapeuta() {
                         <tbody>
                           {pacientesPendentesAgrupados.length === 0 ? (
                             <tr><td colSpan={isTerapeutaSession ? 6 : 7} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhuma venda pendente de agendamento</td></tr>
-                          ) : pacientesPendentesAgrupados.map(p => (
+                          ) : pacientesPendentesAgrupados.map(p => {
+                            // Pacote ainda não agendado: nenhuma sessão entregue,
+                            // então a etiqueta mostra sempre "sessão 1 de N".
+                            const saleDiag = vendasPendentes.find(v => p.saleIds.includes(v.id) && formatoDaVenda(v))
+                            const rotulo = progressoDiagnostico(saleDiag, [])?.rotulo ?? null
+                            // Vendas do Diagnóstico com oferta fora da tabela: aparecem
+                            // com aviso, e o botão "Agendar" delas fica bloqueado - montar
+                            // o pacote exige saber o formato, que só a oferta diz.
+                            const naoMapeadas = vendasPendentes.filter(v => p.saleIds.includes(v.id) && ofertaDiagnosticoNaoMapeada(v))
+                            return (
                             <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                               <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
                               <td className="px-4 py-3">
                                 <p className="text-white font-medium">{p.nome}</p>
                                 <p className="text-xs text-gray-500">{p.email}</p>
+                                {rotulo && (
+                                  <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                    {rotulo}
+                                  </span>
+                                )}
+                                {naoMapeadas.length > 0 && (
+                                  <p className="mt-1 text-[10px] text-amber-400 max-w-[260px]">
+                                    Oferta do Diagnóstico Guiado não mapeada{naoMapeadas.length > 1 ? ` (${naoMapeadas.length} vendas)` : ''}: o pacote não pode
+                                    ser montado até alguém associar essa oferta a um formato. Avise o time técnico.
+                                  </p>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{p.produtos.join(' + ')}</td>
                               <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.qtdVendas > 1 ? `${p.qtdVendas} vendas` : '1 venda'}</td>
@@ -1871,16 +2081,24 @@ export default function PainelTerapeuta() {
                                 <td className="px-4 py-3">
                                   <div className="flex flex-wrap gap-1.5">
                                     {p.saleIds.map((sid, i) => (
+                                      naoMapeadas.some(v => v.id === sid) ? (
+                                        <span key={sid} title="Oferta não mapeada: o formato do pacote é desconhecido."
+                                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-800 text-gray-500 border border-white/10 whitespace-nowrap cursor-not-allowed">
+                                          {p.saleIds.length > 1 ? `Venda ${i + 1}: oferta não mapeada` : 'Oferta não mapeada'}
+                                        </span>
+                                      ) : (
                                       <Link key={sid} href={`/terapeutas/vendas?agendar=${sid}&terapeuta=${id}`}
                                         className="px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-600/80 text-white hover:bg-amber-600 transition-colors whitespace-nowrap">
                                         {p.saleIds.length > 1 ? `Agendar venda ${i + 1}` : 'Agendar'}
                                       </Link>
+                                      )
                                     ))}
                                   </div>
                                 </td>
                               )}
                             </tr>
-                          ))}
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1902,17 +2120,34 @@ export default function PainelTerapeuta() {
                           {(vendasSubTab === 'ativos' ? pacientesAtivos : pacientesConcluidos).length === 0 ? (
                             <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhum paciente encontrado</td></tr>
                           ) : (vendasSubTab === 'ativos' ? pacientesAtivos : pacientesConcluidos).map(p => {
-                            const progresso = p.total > 0 ? Math.min((p.entregues / p.total) * 100, 100) : 0
-                            const concluido = p.entregues === p.total && p.total > 0
+                            const saleDiag = p.saleIds.map(sid => vendas[sid]).find(v => v && formatoDaVenda(v))
+                            const diag = progressoDiagnostico(saleDiag, saleDiag ? sessoesPacoteDiag[saleDiag.id] : undefined)
+                            const rotulo = diag?.rotulo ?? null
+                            // Quando a linha é UM pacote do Diagnóstico e nada mais, a
+                            // barra e o texto passam a contar o pacote inteiro (as duas
+                            // agendas), não só as sessões deste terapeuta - senão o Pedro
+                            // via "2 de 2 · Concluído" com 7 sessões pendentes da Denise.
+                            // Com mais de uma venda no e-mail, o agregado continua valendo:
+                            // ele é a soma real do que este terapeuta tem com o paciente.
+                            const usaPacote = !!diag && p.saleIds.length === 1
+                            const entreguesLinha = usaPacote ? diag!.entregues : p.entregues
+                            const totalLinha = usaPacote ? diag!.total : p.total
+                            const progresso = totalLinha > 0 ? Math.min((entreguesLinha / totalLinha) * 100, 100) : 0
+                            const concluido = entreguesLinha === totalLinha && totalLinha > 0
                             return (
                               <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
                                 <td className="px-4 py-3">
                                   <p className="text-white font-medium">{p.nome}</p>
                                   <p className="text-xs text-gray-500">{p.email}</p>
+                                  {rotulo && (
+                                    <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                      {rotulo}
+                                    </span>
+                                  )}
                                 </td>
-                                <td className="px-4 py-3 text-gray-300">{p.total}</td>
-                                <td className="px-4 py-3 text-green-500 font-medium">{p.entregues}</td>
+                                <td className="px-4 py-3 text-gray-300">{totalLinha}</td>
+                                <td className="px-4 py-3 text-green-500 font-medium">{entreguesLinha}</td>
                                 <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(p.bruto)}</td>
                                 <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(p.liquido)}</td>
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{p.vendedor}</td>
@@ -1921,7 +2156,7 @@ export default function PainelTerapeuta() {
                                     <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{ width: `${progresso}%` }} />
                                   </div>
                                   <p className={`text-[10px] mt-0.5 ${concluido ? 'text-green-500' : 'text-gray-500'}`}>
-                                    {concluido ? 'Concluído ✓' : `${p.entregues} de ${p.total} sessões`}
+                                    {concluido ? 'Concluído ✓' : `${entreguesLinha} de ${totalLinha} sessões`}
                                   </p>
                                 </td>
                                 <td className="px-4 py-3">
@@ -1956,12 +2191,18 @@ export default function PainelTerapeuta() {
                           ) : vendasReembolsadas.map(sale => {
                             const sessoesVenda = sessoes.filter(s => s.sale_id === sale.id)
                             const canceladas = sessoesVenda.filter(s => s.status === 'cancelada').length
+                            const rotulo = progressoDiagnostico(sale, sessoesPacoteDiag[sale.id])?.rotulo ?? null
                             return (
                               <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(sale.data_hora)}</td>
                                 <td className="px-4 py-3">
                                   <p className="text-white font-medium">{sale.nome}</p>
                                   <p className="text-xs text-gray-500">{sale.email}</p>
+                                  {rotulo && (
+                                    <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                      {rotulo}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate">{sale.produto}</td>
                                 <td className="px-4 py-3 text-red-400 whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
@@ -1988,14 +2229,22 @@ export default function PainelTerapeuta() {
                   sessoes={sessoes
                     .filter(s => s.data_agendada && s.status !== 'cancelada'
                       && new Date(s.data_agendada).toDateString() === agendaDiaSelecionado.toDateString())
-                    .map((s): SessaoDia => ({
-                      id: s.id,
-                      paciente_nome: s.paciente_nome,
-                      numero_sessao: s.numero_sessao,
-                      total_sessoes: s.total_sessoes,
-                      status: s.status,
-                      data_agendada: s.data_agendada as string,
-                    }))}
+                    .map((s): SessaoDia => {
+                      // vendas ja traz order_id (correcao desta mesma task) - so
+                      // falta repassar o rotulo pro componente da agenda diaria.
+                      const formatoSessao = formatoDaVenda(vendas[s.sale_id] ?? { id: s.sale_id, order_id: undefined })
+                      return {
+                        id: s.id,
+                        paciente_nome: s.paciente_nome,
+                        numero_sessao: s.numero_sessao,
+                        total_sessoes: s.total_sessoes,
+                        status: s.status,
+                        data_agendada: s.data_agendada as string,
+                        rotulo_diagnostico: formatoSessao
+                          ? rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })
+                          : null,
+                      }
+                    })}
                   compromissos={compromissos.filter(c =>
                     new Date(c.inicio).toDateString() === agendaDiaSelecionado.toDateString())}
                   duracaoSessaoMinutos={terapeuta?.duracao_sessao_minutos ?? 60}
@@ -2365,6 +2614,10 @@ export default function PainelTerapeuta() {
                   ) : prontuarioSessoesOrdenadas.map(s => {
                     const badge = STATUS_LABEL[s.status] ?? { label: s.status, color: 'text-gray-400 bg-gray-400/10' }
                     const remarcacoesSessao = remarcacoes[s.id] ?? []
+                    // Diagnóstico Guiado é um pacote dividido entre dois
+                    // terapeutas - quem lê o prontuário precisa saber que essa
+                    // sessão não é avulsa, é parte de um bloco maior.
+                    const formatoSessao = formatoDaVenda(vendas[s.sale_id] ?? { id: s.sale_id, order_id: undefined })
                     return (
                       <div key={s.id} className="bg-gray-800/40 border border-white/5 rounded-xl p-4">
                         <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -2372,6 +2625,11 @@ export default function PainelTerapeuta() {
                           <span className={`text-[11px] px-2 py-0.5 rounded-full ${badge.color}`}>{badge.label}</span>
                           {s.numero_sessao === s.total_sessoes && (
                             <span className="text-[10px] text-red-400 border border-red-400/30 px-1.5 py-0.5 rounded">Última sessão</span>
+                          )}
+                          {formatoSessao && (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                              {rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })}
+                            </span>
                           )}
                         </div>
 
@@ -2981,6 +3239,19 @@ export default function PainelTerapeuta() {
               <button onClick={() => setAgendaDetalhe(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3 text-sm">
+              {(() => {
+                const formatoAgendaDetalhe = formatoDaVenda(vendas[agendaDetalhe.sale_id] ?? { id: agendaDetalhe.sale_id, order_id: undefined })
+                if (!formatoAgendaDetalhe) return null
+                return (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                    {rotuloDiagnostico({
+                      formato: formatoAgendaDetalhe.formato,
+                      numeroSessao: agendaDetalhe.numero_sessao,
+                      totalSessoes: agendaDetalhe.total_sessoes,
+                    })}
+                  </span>
+                )
+              })()}
               <div className="flex justify-between items-start gap-4">
                 <span className="text-gray-500 shrink-0">Paciente</span>
                 <span className="text-white text-right">{agendaDetalhe.paciente_nome}</span>
@@ -3038,6 +3309,85 @@ export default function PainelTerapeuta() {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Aviso de intervalo do Diagnóstico Guiado - aparece assim que uma
+          remarcação deixa menos de 7 dias até a sessão vizinha do pacote.
+          Sem restrição extra de papel: qualquer um que pôde remarcar (admin,
+          comercial ou o próprio terapeuta) também pode escolher aqui, porque
+          é a mesma ação de agendamento continuando. */}
+      {avisoRemarcacao && !avisoEmpurrarSenhaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-md mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Intervalo entre sessões</h3>
+            {avisoRemarcacao.paciente && (
+              <p className="text-xs text-gray-500 mb-3">{avisoRemarcacao.paciente}</p>
+            )}
+            <p className="text-sm text-gray-300 mb-4">{avisoRemarcacao.mensagem}</p>
+            {/* As duas opções têm custo real - o texto precisa deixar isso
+                explícito, sem eufemismo, porque quem decide é o comercial. */}
+            <p className="text-xs text-gray-500 mb-5 leading-relaxed">
+              <span className="text-gray-300 font-medium">Manter</span> deixa a próxima sessão a menos de 7 dias
+              desta. <span className="text-gray-300 font-medium">Empurrar</span> remarca todas as sessões
+              seguintes deste pacote, mantendo 7 dias entre elas, e o paciente precisa ser avisado.
+            </p>
+            {avisoEmpurrarErro && <p className="text-xs text-red-400 mb-3 whitespace-pre-line">{avisoEmpurrarErro}</p>}
+            <div className="flex gap-3">
+              <button onClick={() => { setAvisoRemarcacao(null); setAvisoEmpurrarErro('') }}
+                className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 hover:bg-gray-700 border border-white/10 rounded-lg transition-colors">
+                Manter as demais como estão
+              </button>
+              <button onClick={() => { setAvisoEmpurrarErro(''); setAvisoEmpurrarSenhaOpen(true) }}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors">
+                Empurrar as seguintes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SenhaModal
+        dispensarSenha={dispensaSenha}
+        isOpen={avisoEmpurrarSenhaOpen}
+        onClose={() => { setAvisoEmpurrarSenhaOpen(false); setAvisoEmpurrarErro('') }}
+        onConfirm={handleEmpurrarSeguintes}
+        titulo="Empurrar sessões seguintes"
+        descricao="Digite sua senha para remarcar as sessões seguintes deste pacote"
+        loading={avisoEmpurrarLoading}
+        erro={avisoEmpurrarErro}
+      />
+
+      {/* Confirmação de sessões empurradas */}
+      {avisoEmpurrarSucesso !== null && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}>
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${avisoEmpurrarCalendario ? 'bg-amber-500/10' : 'bg-green-500/10'}`}>
+              {avisoEmpurrarCalendario
+                ? <AlertTriangle className="w-7 h-7 text-amber-500" />
+                : <CheckCircle className="w-7 h-7 text-green-500" />}
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1">
+              {avisoEmpurrarSucesso === 0 ? 'Nada para empurrar' : 'Sessões remarcadas'}
+            </h3>
+            {/* movidas=0 significa que não havia sessão seguinte no pacote -
+                nada mudou, então não faz sentido pedir pra avisar o paciente
+                de uma mudança que não aconteceu (achado da revisão). */}
+            <p className="text-sm text-gray-400 mb-5">
+              {avisoEmpurrarSucesso === 0
+                ? 'Não havia sessões seguintes neste pacote para mover. Nada foi alterado.'
+                : `${avisoEmpurrarSucesso} sessão(ões) seguinte(s) ${avisoEmpurrarSucesso === 1 ? 'foi remarcada' : 'foram remarcadas'} pra manter os 7 dias entre elas. Avise o paciente sobre as novas datas.`}
+            </p>
+            {avisoEmpurrarCalendario && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mb-5 text-left">
+                {avisoEmpurrarCalendario}
+              </p>
+            )}
+            <button onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}
+              className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+              OK
+            </button>
           </div>
         </div>
       )}

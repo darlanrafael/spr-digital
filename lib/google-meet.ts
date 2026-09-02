@@ -24,31 +24,83 @@ function getAuthClient() {
   })
 }
 
-let calendarIdCache: string | null = null
+// Guarda a PROMESSA, não o id pronto. As rotas de pacote passaram a chamar o
+// Calendar em paralelo (ver empurrar-seguintes): com o cache de string, N
+// chamadas simultâneas em processo frio faziam N calendarList.list() e, se o
+// calendário ainda não existisse, N calendars.insert() - ou seja, calendários
+// duplicados. Guardando a promessa, a primeira chamada resolve e todas as
+// outras esperam por ela. Para quem chama em sequência não muda nada.
+let calendarIdPromise: Promise<string> | null = null
 
 // Procura (ou cria, na primeira vez) o calendário secundário dedicado —
 // evita lotar a agenda pessoal de quem "possui" a conta de serviço com
 // toda sessão de todo terapeuta.
 async function getCalendarId(calendar: ReturnType<typeof google.calendar>): Promise<string> {
-  if (calendarIdCache) return calendarIdCache
-  const { data } = await calendar.calendarList.list()
-  const existente = data.items?.find(c => c.summary === CALENDARIO_NOME)
-  if (existente?.id) {
-    calendarIdCache = existente.id
-    return existente.id
+  if (!calendarIdPromise) {
+    calendarIdPromise = (async () => {
+      const { data } = await calendar.calendarList.list()
+      const existente = data.items?.find(c => c.summary === CALENDARIO_NOME)
+      if (existente?.id) return existente.id
+      const { data: novo } = await calendar.calendars.insert({
+        requestBody: { summary: CALENDARIO_NOME },
+      })
+      // Validado DENTRO da promessa. Sem isso, um corpo sem `id` fazia a
+      // promessa RESOLVER com undefined e ficar em cache para sempre: o
+      // `if (!calendarIdPromise)` acima nunca mais dava verdadeiro e toda
+      // chamada seguinte mandava `calendarId: undefined` até o processo
+      // reciclar. O cache de string de antes se recuperava sozinho, então
+      // isso era regressão. Lançando aqui, cai no catch abaixo, que zera o
+      // cache e deixa a próxima chamada tentar de novo.
+      if (!novo.id) throw new Error('o Google criou o calendário mas não devolveu o id')
+      return novo.id
+    })()
   }
-  const { data: novo } = await calendar.calendars.insert({
-    requestBody: { summary: CALENDARIO_NOME },
-  })
-  calendarIdCache = novo.id as string
-  return calendarIdCache
+  try {
+    return await calendarIdPromise
+  } catch (err) {
+    // Falha de rede não pode virar cache permanente: zera pra próxima
+    // chamada tentar de novo, que era o comportamento de antes.
+    calendarIdPromise = null
+    throw err
+  }
 }
 
+/**
+ * A integração com o Calendar está ligada?
+ *
+ * Existe porque `criarEventoComMeet` devolve null em DOIS casos muito
+ * diferentes: falha de verdade e modo desligado (o no-op documentado no topo
+ * deste arquivo, em que o agendamento continua funcionando sem link). Quem
+ * chama precisa separar os dois - tratar tudo como falha faz a tela avisar
+ * que N pacientes ficaram sem convite quando, no modo desligado, nunca houve
+ * convite nenhum a perder. Bastaria uma das 3 variáveis sumir da Vercel pra
+ * todo agendamento virar "incidente".
+ */
+export function integracaoCalendarAtiva(): boolean {
+  return credenciaisDisponiveis()
+}
+
+export type EventoCriado = {
+  eventId: string
+  /**
+   * null quando o Google aceitou o evento mas ainda não devolveu o
+   * hangoutLink (conferência sendo provisionada). O evento EXISTE no
+   * Calendar, por isso o eventId vem mesmo assim: descartar tudo aqui era o
+   * que deixava evento órfão (no Google, sem referência no banco) e ainda
+   * fazia a tela dizer que o paciente ficou "sem convite", o que é falso.
+   */
+  meetLink: string | null
+}
+
+/**
+ * Devolve null em dois casos, que quem chama separa com
+ * integracaoCalendarAtiva(): integração desligada (não é erro) e falha real.
+ */
 export async function criarEventoComMeet(params: {
   titulo: string
   inicioISO: string
   fimISO: string
-}): Promise<{ eventId: string; meetLink: string } | null> {
+}): Promise<EventoCriado | null> {
   if (!credenciaisDisponiveis()) return null
   try {
     const auth = getAuthClient()
@@ -71,9 +123,10 @@ export async function criarEventoComMeet(params: {
       },
     })
 
-    const meetLink = data.hangoutLink
-    if (!data.id || !meetLink) return null
-    return { eventId: data.id, meetLink }
+    // Sem id não há evento nenhum: isso é falha. Sem hangoutLink o evento
+    // existe e só o link está pendente - ver EventoCriado.meetLink.
+    if (!data.id) return null
+    return { eventId: data.id, meetLink: data.hangoutLink ?? null }
   } catch (err) {
     console.error('[google-meet] falha ao criar evento:', err)
     await notificarAdmin(`Falha ao gerar link do Meet para "${params.titulo}" (início: ${params.inicioISO}). Erro: ${String(err)}`)

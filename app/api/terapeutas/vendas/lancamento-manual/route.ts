@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
   for (const s of sessoes) {
     if (s.status !== 'agendada') continue
     const evento = await criarEventoComMeet({
-      titulo: `Sessão — ${s.paciente_nome}`,
+      titulo: `Sessão - ${s.paciente_nome}`,
       inicioISO: s.data_agendada,
       fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
     })

@@ -134,3 +134,36 @@ export function mensagemConflito(conflitos: Conflito[]): string {
   if (conflitos.length === 1) return `Conflito de horário: ${conflitos[0].descricao}`
   return `Conflito de horário em ${conflitos.length} datas:\n` + conflitos.map(c => `• ${c.descricao}`).join('\n')
 }
+
+/**
+ * Agrupa as datas pedidas por terapeuta. Exportada para teste: e a unica parte
+ * pura de buscarConflitosMultiTerapeuta.
+ */
+export function agruparPorTerapeuta(
+  itens: { terapeuta_id: string; dataISO: string }[],
+): Record<string, string[]> {
+  const g: Record<string, string[]> = {}
+  for (const i of itens) {
+    if (!g[i.terapeuta_id]) g[i.terapeuta_id] = []
+    g[i.terapeuta_id].push(i.dataISO)
+  }
+  return g
+}
+
+/**
+ * Conflito de um pacote cujas sessoes sao de terapeutas diferentes. Cada data e
+ * validada contra a agenda do terapeuta DAQUELA sessao, nao contra um terapeuta
+ * unico. Existe por causa do Diagnostico Guiado, primeiro produto assim.
+ */
+export async function buscarConflitosMultiTerapeuta(params: {
+  itens: { terapeuta_id: string; dataISO: string }[]
+  ignorarSaleId?: string
+}): Promise<Conflito[]> {
+  const grupos = agruparPorTerapeuta(params.itens)
+  const todos: Conflito[] = []
+  for (const [terapeuta_id, datasISO] of Object.entries(grupos)) {
+    const c = await buscarConflitosAgenda({ terapeuta_id, datasISO, ignorarSaleId: params.ignorarSaleId })
+    todos.push(...c)
+  }
+  return todos.sort((a, b) => a.dataISO.localeCompare(b.dataISO))
+}

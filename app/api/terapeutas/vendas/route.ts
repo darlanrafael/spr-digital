@@ -15,6 +15,10 @@ type SaleRow = {
   preco_base: number
   data_hora: string
   status: string | null
+  // Sem order_id a tela não consegue chamar formatoDaVenda(), então o
+  // Diagnóstico Guiado não ganha etiqueta nem quantidade de sessões correta.
+  // Os demais produtos ignoram o campo, então trazê-lo não muda nada pra eles.
+  order_id: string | null
 }
 
 type SessaoRow = {
@@ -116,6 +120,16 @@ export async function GET(req: NextRequest) {
     // (ex: "Mentoria Particular - Pedro Roncada"). Filtra dinamicamente pelo
     // nome de cada terapeuta ativo.
     const nomesTerapeutas = terapeutasRaw.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean)
+    // O Diagnóstico Guiado não tem nome de terapeuta nenhum no produto
+    // ("Diagnóstico Guiado: Programa de acompanhamento Individual"), então o
+    // filtro por primeiro nome acima nunca o encontrava e ele jamais entrava
+    // em vendas_pendentes. Consequência: o botão "Agendar" da tela do Pedro
+    // (que manda pra cá com ?agendar=<sale_id>) abria a página e nada
+    // acontecia, porque a venda não estava na lista. Termo fixo pelo nome do
+    // produto: aqui é só pré-filtro de varredura, quem decide o formato de
+    // verdade é formatoDaVenda(), pela oferta.
+    const TERMO_PRODUTO_DIAGNOSTICO = 'produto.ilike.%Diagnóstico Guiado%'
+    const termosProduto = [...nomesTerapeutas.map(n => `produto.ilike.%${n}%`), TERMO_PRODUTO_DIAGNOSTICO]
     // vendas_a_partir_de: corte de data por terapeuta — vendas anteriores ao
     // corte não aparecem mais em Pendentes/Ativos (paciente é lançado
     // manualmente em vez de reconciliar contra a venda antiga importada).
@@ -150,9 +164,11 @@ export async function GET(req: NextRequest) {
     while (true) {
       let query = supabase
         .from('sales')
-        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status')
+        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status,order_id')
+      // Mantém o comportamento antigo de "sem terapeuta ativo, sem filtro":
+      // nesse caso a varredura já traz tudo, Diagnóstico incluído.
       if (nomesTerapeutas.length > 0) {
-        query = query.or(nomesTerapeutas.map(n => `produto.ilike.%${n}%`).join(','))
+        query = query.or(termosProduto.join(','))
       }
       if (from) query = query.gte('data_hora', from)
       if (to) query = query.lte('data_hora', to)

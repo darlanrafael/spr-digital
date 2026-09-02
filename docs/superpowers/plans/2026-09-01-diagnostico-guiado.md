@@ -57,6 +57,15 @@ test('oferta desconhecida devolve null em vez de adivinhar', () => {
   assert.equal(formatoDaVenda(venda('11111111-2222-3333-4444-555555555555-OFERTANOVA')), null)
 })
 
+test('oferta Padrao de R$ 10,00 do mesmo produto nao vira pacote', () => {
+  assert.equal(formatoDaVenda(venda('11111111-2222-3333-4444-555555555555-wd6AwMQIJGAekPCGCRsb')), null)
+})
+
+test('oferta do Formato 2 devolve 4 sessoes, 1 do Pedro', () => {
+  const f = formatoDaVenda(venda('11111111-2222-3333-4444-555555555555-H8DA8U21x7Lmv3NreVMs'))
+  assert.deepEqual(f, { formato: 2, totalSessoes: 4, sessoesPedro: 1 })
+})
+
 test('lancamento manual nao tem order_id e devolve null', () => {
   assert.equal(formatoDaVenda(venda(undefined, 'manual_1788034875487_zrpmrz')), null)
 })
@@ -89,8 +98,13 @@ import type { Sale } from '@/types'
 // turma) nasce com ID diferente e precisa caber sem trocar codigo.
 export const OFERTAS_DIAGNOSTICO: Record<string, 1 | 2 | 3> = {
   WXwmPZfJxGqeXerA6dkO: 1,
+  H8DA8U21x7Lmv3NreVMs: 2,
   qVvads7GKaI7lN1Kctrr: 3,
 }
+
+// A oferta "Padrao" (wd6AwMQIJGAekPCGCRsb, R$ 10,00) existe no mesmo produto e
+// NAO e mapeada de proposito: nao corresponde a formato nenhum. Compra por ela
+// cai no aviso de oferta desconhecida em vez de montar um pacote errado.
 
 /** Regra do PRODUTO, nao da terapeuta: nos demais produtos a Denise segue com os 30%. */
 export const PAGAMENTO_DENISE_POR_SESSAO = 95
@@ -122,7 +136,7 @@ export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'>): FormatoDiag
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx tsx --test lib/diagnostico-guiado.test.ts`
-Expected: PASS, 5 testes
+Expected: PASS, 7 testes
 
 - [ ] **Step 5: Commit**
 
@@ -706,6 +720,194 @@ Expected: sem erro
 ```bash
 git add lib/diagnostico-guiado.ts lib/diagnostico-guiado.test.ts app/api/terapeutas/sessoes/remarcar/route.ts
 git commit -m "feat: remarcar avisa quando o intervalo de 7 dias quebra"
+```
+
+---
+
+### Task 9: Empurrar as sessões seguintes
+
+**Files:**
+- Create: `app/api/terapeutas/sessoes/empurrar-seguintes/route.ts`
+- Modify: `lib/diagnostico-guiado.ts`
+- Test: `lib/diagnostico-guiado.test.ts`
+
+**Interfaces:**
+- Consumes: `buscarConflitosMultiTerapeuta` (Task 3), `mensagemConflito` de `lib/agenda-conflitos.ts`
+- Produces: `novasDatasSeguintes(params: { baseISO: string; quantidade: number }): string[]`
+
+Quando o comercial escolhe empurrar, as sessões seguintes à remarcada recebem novas
+datas a partir da data nova dela, mantendo os 7 dias. A rota é separada da de
+remarcar de propósito: a remarcação da sessão do meio já aconteceu e foi salva; esta
+é a segunda decisão, tomada depois de ver o aviso.
+
+Vale para qualquer produto cujo pacote siga a régua, não só o Diagnóstico.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+import { novasDatasSeguintes } from './diagnostico-guiado'
+
+test('gera as datas seguintes de 7 em 7 dias a partir da base', () => {
+  const d = novasDatasSeguintes({ baseISO: '2026-09-08T14:00:00.000Z', quantidade: 3 })
+  assert.deepEqual(d, [
+    '2026-09-15T14:00:00.000Z',
+    '2026-09-22T14:00:00.000Z',
+    '2026-09-29T14:00:00.000Z',
+  ])
+})
+
+test('quantidade zero devolve lista vazia', () => {
+  assert.deepEqual(novasDatasSeguintes({ baseISO: '2026-09-08T14:00:00.000Z', quantidade: 0 }), [])
+})
+
+test('a base nunca aparece na lista, ela ja esta marcada', () => {
+  const d = novasDatasSeguintes({ baseISO: '2026-09-08T14:00:00.000Z', quantidade: 2 })
+  assert.equal(d.includes('2026-09-08T14:00:00.000Z'), false)
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx tsx --test lib/diagnostico-guiado.test.ts`
+Expected: FAIL com "novasDatasSeguintes is not a function"
+
+- [ ] **Step 3: Write minimal implementation**
+
+```typescript
+/**
+ * Datas das sessoes seguintes quando o comercial escolhe empurrar a cadeia.
+ * A base e a data NOVA da sessao remarcada, que ja foi salva: por isso ela
+ * nunca aparece no resultado.
+ */
+export function novasDatasSeguintes(params: { baseISO: string; quantidade: number }): string[] {
+  const base = new Date(params.baseISO).getTime()
+  return Array.from({ length: Math.max(0, params.quantidade) }, (_, i) =>
+    new Date(base + (i + 1) * SETE_DIAS_MS).toISOString())
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npm test`
+Expected: PASS
+
+- [ ] **Step 5: Criar a rota**
+
+`app/api/terapeutas/sessoes/empurrar-seguintes/route.ts`, seguindo o mesmo padrao de
+autenticacao e resposta da rota de remarcar. Recebe `{ sessao_id, usuario_email, senha, token }`.
+
+Passos da rota, nesta ordem:
+
+1. Autenticar com `verificarAcesso`, mesmo tratamento de erro da rota de remarcar.
+2. Buscar a sessao pelo `sessao_id`. Se nao existir, 404.
+3. Buscar as sessoes do mesmo `sale_id` com `numero_sessao` maior que o da sessao
+   base, que nao estejam `entregue` nem `cancelada`, ordenadas por `numero_sessao`.
+   Se nao houver nenhuma, devolver `{ success: true, movidas: 0 }`.
+4. Calcular as datas novas com `novasDatasSeguintes({ baseISO: sessao.data_agendada,
+   quantidade: seguintes.length })`.
+5. Checar conflito com `buscarConflitosMultiTerapeuta`, passando um item por sessao
+   com o `terapeuta_id` DAQUELA sessao e a data nova correspondente, e
+   `ignorarSaleId: sessao.sale_id` para as proprias sessoes do pacote nao
+   conflitarem entre si. Se houver conflito, devolver 409 com `mensagemConflito`.
+   Nada e alterado: tudo ou nada, igual ao agendar.
+6. Atualizar cada sessao seguinte com a data nova.
+7. Registrar em `atividades_log` via `registrarAtividade`, descrevendo quantas
+   sessoes foram movidas e do paciente de quem.
+8. Devolver `{ success: true, movidas: <numero> }`.
+
+O link do Google Meet das sessoes movidas fica desatualizado, igual acontece hoje
+quando uma sessao e remarcada sem passar por essa rota. Tratar isso esta fora do
+escopo desta task e fica registrado como pendencia no MD.
+
+- [ ] **Step 6: Verificar**
+
+Run: `npx tsc --noEmit && npm test && npm run build`
+Expected: sem erro
+
+Rodar tambem o grep de travessao longo: `git diff <base>..HEAD | grep -n "travessao longo"` deve voltar vazio.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add lib/diagnostico-guiado.ts lib/diagnostico-guiado.test.ts app/api/terapeutas/sessoes/empurrar-seguintes/route.ts
+git commit -m "feat: rota que empurra as sessoes seguintes mantendo os 7 dias"
+```
+
+---
+
+### Task 10: A escolha do comercial na tela
+
+**Files:**
+- Modify: `app/terapeutas/[id]/page.tsx`
+
+**Interfaces:**
+- Consumes: o campo `avisoIntervalo` que a rota de remarcar ja devolve (Task 7), e a rota
+  `POST /api/terapeutas/sessoes/empurrar-seguintes` (Task 9)
+
+Hoje a tela chama a rota de remarcar e le apenas `res.ok` e `json.error`. O campo
+`avisoIntervalo` chega e e descartado. Esta task fecha o ciclo: mostra o aviso e
+oferece as duas saidas que a spec pede.
+
+- [ ] **Step 1: Guardar o aviso ao remarcar**
+
+Nos dois pontos que chamam a rota de remarcar (por volta das linhas 1112 e 1161),
+depois de confirmar `res.ok`, ler `json.avisoIntervalo`. Quando vier preenchido,
+guardar num state novo junto do `sessao_id` e do nome do paciente:
+
+```typescript
+const [avisoRemarcacao, setAvisoRemarcacao] = useState<{
+  sessaoId: string
+  paciente: string
+  mensagem: string
+} | null>(null)
+```
+
+- [ ] **Step 2: Mostrar o aviso com as duas opcoes**
+
+Um modal, no mesmo padrao visual dos outros modais do arquivo, com:
+
+- Titulo: "Intervalo entre sessoes"
+- A mensagem que veio da API
+- Botao "Manter as demais como estao" que so fecha o modal
+- Botao "Empurrar as seguintes" que chama a rota nova
+
+O texto precisa deixar claro o que cada opcao faz, porque as duas tem custo real:
+
+> Manter deixa a proxima sessao a menos de 7 dias desta. Empurrar remarca todas as
+> sessoes seguintes deste pacote, mantendo 7 dias entre elas, e o paciente precisa
+> ser avisado.
+
+- [ ] **Step 3: Chamar a rota ao escolher empurrar**
+
+```typescript
+const res = await fetch('/api/terapeutas/sessoes/empurrar-seguintes', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sessao_id: avisoRemarcacao.sessaoId, usuario_email: emailSessao, token }),
+})
+const json = await res.json()
+if (!res.ok) { alert(json.error ?? 'Nao foi possivel empurrar as seguintes.'); return }
+alert(`${json.movidas} sessao(oes) remarcada(s).`)
+setAvisoRemarcacao(null)
+await loadData()
+```
+
+Em caso de conflito a rota devolve 409 com a mensagem pronta, entao o `alert` ja
+mostra qual data bateu em qual paciente. Nada foi alterado nesse caso, e o comercial
+pode escolher manter.
+
+- [ ] **Step 4: Verificar**
+
+Run: `npx tsc --noEmit && npm test && npm run build`
+Expected: sem erro
+
+Grep de travessao longo deve voltar vazio.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add "app/terapeutas/[id]/page.tsx"
+git commit -m "feat: comercial escolhe entre manter ou empurrar as sessoes seguintes"
 ```
 
 ---

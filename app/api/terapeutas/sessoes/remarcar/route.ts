@@ -4,6 +4,7 @@ import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO, is
 import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
+import { quebraIntervalo, formatoDaVenda } from '@/lib/diagnostico-guiado'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -25,6 +26,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
   }
 
+  // try/catch externo: antes qualquer falha de rede no meio da rota (consulta
+  // de vizinhas, Google, prontuário) subia como exceção não tratada e derrubava
+  // a remarcação de QUALQUER produto, sem resposta legível pra tela.
+  try {
   const acesso = await verificarAcesso({ usuario_email, senha, token })
   const { valido, usuario } = acesso
   if (!valido) {
@@ -58,6 +63,44 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: mensagemConflito(conflitos), conflitos }, { status: 409 })
   }
 
+  // Aviso do intervalo de 7 dias: SÓ pro Diagnóstico Guiado. A régua é regra
+  // desse produto, não do sistema - medido no banco em 01/09/2026, 123 pacotes
+  // de outros produtos têm 2+ sessões e 41 deles (33%) já têm um par com menos
+  // de 7 dias. Enquanto o cálculo era genérico, remarcar uma Mentoria
+  // Particular disparava o modal "manter ou empurrar" com frequência, oferecendo
+  // ao comercial uma ação que não faz sentido nenhum naquele produto.
+  // Não bloqueia nada, quem decide se mantém ou empurra é o comercial, na tela.
+  //
+  // O erro dessas consultas é engolido de propósito (avisoIntervalo vira null):
+  // o aviso é informativo e não pode derrubar a remarcação de NENHUM produto se
+  // uma delas falhar. Antes rodavam soltas antes do update, sem try/catch
+  // externo, e uma falha de rede aqui virava 500 - a remarcação nem acontecia.
+  let avisoIntervalo: string | null = null
+  try {
+    const { data: venda } = await client
+      .from('sales').select('id,order_id').eq('id', sessao.sale_id).maybeSingle()
+    if (venda && formatoDaVenda(venda as { id: string; order_id?: string })) {
+      // maybeSingle porque a primeira sessão não tem anterior e a última não
+      // tem seguinte.
+      const numeroSessaoAtual = sessao.numero_sessao as number
+      const [{ data: sessaoAnterior }, { data: sessaoSeguinte }] = await Promise.all([
+        client.from('sessoes').select('data_agendada')
+          .eq('sale_id', sessao.sale_id).eq('numero_sessao', numeroSessaoAtual - 1).maybeSingle(),
+        client.from('sessoes').select('data_agendada')
+          .eq('sale_id', sessao.sale_id).eq('numero_sessao', numeroSessaoAtual + 1).maybeSingle(),
+      ])
+      if (quebraIntervalo({
+        novaDataISO,
+        anteriorISO: sessaoAnterior?.data_agendada ?? undefined,
+        seguinteISO: sessaoSeguinte?.data_agendada ?? undefined,
+      })) {
+        avisoIntervalo = 'Esta data deixa menos de 7 dias entre as sessões. Você pode manter assim ou empurrar as seguintes.'
+      }
+    }
+  } catch (err) {
+    console.error('[remarcar] falha ao calcular o aviso de intervalo:', err)
+  }
+
   // A tabela sessoes não tem coluna "observacoes" — motivo/histórico fica
   // só em ocorrencias_prontuario (inserido abaixo). Referenciar uma coluna
   // inexistente aqui fazia esse update falhar com 500 sempre, silenciosamente
@@ -77,7 +120,7 @@ export async function POST(req: NextRequest) {
     await cancelarEvento(sessao.google_event_id as string)
   }
   const evento = await criarEventoComMeet({
-    titulo: `Sessão — ${sessao.paciente_nome}`,
+    titulo: `Sessão - ${sessao.paciente_nome}`,
     inicioISO: novaDataISO,
     fimISO: new Date(new Date(novaDataISO).getTime() + 60 * 60 * 1000).toISOString(),
   })
@@ -145,5 +188,9 @@ export async function POST(req: NextRequest) {
     dados_novos: { data_agendada: novaDataISO, status: 'agendada' },
   })
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ success: true, avisoIntervalo })
+  } catch (err) {
+    console.error('[remarcar]', err)
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }

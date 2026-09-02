@@ -7,6 +7,9 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
+import { formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { resumirReagendamentoTotal } from '@/lib/reagendamento-total'
 
 type TerapeutaSession = { nome: string; email: string; tipo: string }
 
@@ -37,6 +40,10 @@ type Sale = {
   preco_base: number
   data_hora: string
   status: string | null
+  // Precisa vir da API em toda venda: sem order_id, formatoDaVenda() nunca
+  // reconhece um pacote do Diagnóstico Guiado e a tela trata os três formatos
+  // como um produto qualquer de 1 sessão, sem erro nenhum.
+  order_id?: string
 }
 
 type Sessao = {
@@ -137,6 +144,16 @@ function dateToDatetimeLocal(date: Date): string {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
   return d.toISOString().slice(0, 16)
 }
+// Formata "2026-09-08T14:00" como "08/09/2026 14:00" sem passar por Date: a
+// prévia precisa mostrar exatamente o mesmo horário que será enviado, e
+// reconverter pra Date aqui reintroduziria a ambiguidade de fuso que o resto
+// da tela já evita tratando o datetime-local como horário de Brasília.
+function fmtDatetimeLocalBR(valor: string): string {
+  const [data, hora] = valor.split('T')
+  if (!data || !hora) return valor
+  const [ano, mes, dia] = data.split('-')
+  return `${dia}/${mes}/${ano} ${hora.slice(0, 5)}`
+}
 
 // data_agendada vem do banco em UTC (ex.: "2026-07-13T18:00:00+00:00"). Pra
 // pré-preencher um <input type="datetime-local"> mostrando o horário real de
@@ -165,12 +182,40 @@ const TABELA_SESSOES_POR_VALOR: { pedro: Record<number, number>; denise: Record<
   denise: { 550: 1, 790: 2, 1400: 4, 2640: 8 },
 }
 function inferirNumeroSessoesPorValor(sale: Sale, todasVendas: Sale[]): number {
+  // O Diagnóstico Guiado não está na tabela de preços e o nome do produto não
+  // diz quantas sessões são, então sem esta linha ele caía no fallback de 1
+  // sessão. A quantidade é derivada do FORMATO (2, 4 ou 9), nunca do valor: o
+  // valor_pago_cliente varia com parcelamento e o preco_base quebra com cupom.
+  const diagnostico = formatoDaVenda(sale)
+  if (diagnostico) return diagnostico.totalSessoes
   const tabela = sale.produto.toLowerCase().includes('denise') ? TABELA_SESSOES_POR_VALOR.denise : TABELA_SESSOES_POR_VALOR.pedro
   if (tabela[sale.preco_base]) return tabela[sale.preco_base]
   const irmas = todasVendas.filter(v => v.email === sale.email && v.produto === sale.produto)
   const soma = irmas.reduce((a, v) => a + (v.preco_base ?? 0), 0)
   if (irmas.length > 0 && tabela[soma]) return Math.round(tabela[soma] / irmas.length)
   return inferirNumeroSessoes(sale.produto)
+}
+
+// Etiqueta do Diagnóstico Guiado pra uma linha que representa a VENDA inteira
+// (listas do comercial e cabeçalho do prontuário). Total sempre do FORMATO;
+// posição = próxima sessão a entregar, ou a última quando o pacote acabou.
+function rotuloDiagnosticoDaVenda(sale: Sale, sessoes: { status: string }[]): string | null {
+  const formato = formatoDaVenda(sale)
+  if (!formato) return null
+  const entregues = sessoes.filter(s => s.status === 'entregue').length
+  return rotuloDiagnostico({
+    formato: formato.formato,
+    numeroSessao: Math.min(entregues + 1, formato.totalSessoes),
+    totalSessoes: formato.totalSessoes,
+  })
+}
+
+// Venda do produto Diagnóstico Guiado cuja OFERTA não está mapeada (oferta
+// nova, promoção, ou a oferta "Padrão" de R$ 10,00, não mapeada de propósito).
+// Sem o formato não dá pra montar o pacote, então a lista precisa avisar em vez
+// de deixar o comercial tentar agendar e receber um pacote errado.
+function ofertaDiagnosticoNaoMapeada(sale: Sale): boolean {
+  return sale.produto.toLowerCase().includes('diagnóstico guiado') && !formatoDaVenda(sale)
 }
 
 function nomeFromEmail(email: string): string {
@@ -314,7 +359,23 @@ export default function TerapeutasVendas() {
   const [agendarErro, setAgendarErro] = useState('')
   // Modal de confirmação — o toast discreto passava despercebido; aqui o
   // usuário precisa ver claramente que o agendamento foi concluído.
-  const [agendarSucesso, setAgendarSucesso] = useState<{ sessoes: number; nome: string } | null>(null)
+  const [agendarSucesso, setAgendarSucesso] = useState<{ sessoes: number; nome: string; aviso: string | null } | null>(null)
+  // Trava do reagendamento total: quando a venda já tem sessões, confirmar não
+  // é "criar", é "apagar e refazer". Só libera o botão depois de a pessoa
+  // marcar que entendeu o que vai ser destruído.
+  const [agendarSubstituicaoCiente, setAgendarSubstituicaoCiente] = useState(false)
+  // Sessões relidas do banco ao abrir o modal. O aviso de destruição saía de
+  // pageData.sessoes_por_venda, buscado no load da página: sessão criada por
+  // outra pessoa depois disso não aparecia e o modal chegava a mostrar botão
+  // verde de "Confirmar agendamento" pra venda que já tinha pacote. A rota
+  // ainda barra o caso destrutivo, então não havia perda de dado - o que
+  // ficava frouxo era a promessa de declarar ANTES de destruir.
+  // Guarda o sale_id junto com o resultado: assim "o que está na tela é desta
+  // venda?" é derivado, sem precisar zerar o estado dentro do efeito antes de
+  // disparar o fetch (o que faria a resposta de uma venda anterior aparecer
+  // como se fosse da venda aberta agora).
+  const [agendarSessoesLidas, setAgendarSessoesLidas] =
+    useState<{ saleId: string; sessoes: Sessao[] | null; erro: string } | null>(null)
 
   // Prontuário
   const [prontuarioVendaId, setProntuarioVendaId] = useState<string | null>(null)
@@ -344,6 +405,25 @@ export default function TerapeutasVendas() {
   const [remErro, setRemErro] = useState('')
   const [remLoading, setRemLoading] = useState(false)
   const [remSenhaOpen, setRemSenhaOpen] = useState(false)
+  // Aviso de intervalo quebrado (Diagnóstico Guiado) - mesmo fluxo do painel
+  // do terapeuta (app/terapeutas/[id]/page.tsx): quando /remarcar acusa menos
+  // de 7 dias entre sessões do mesmo pacote, o comercial escolhe manter como
+  // está ou empurrar as seguintes. Essa tela é a que o comercial usa no
+  // menu principal, então precisa do mesmo fechamento de ciclo.
+  const [avisoRemarcacao, setAvisoRemarcacao] = useState<{
+    sessaoId: string
+    paciente: string
+    mensagem: string
+  } | null>(null)
+  const [avisoEmpurrarSenhaOpen, setAvisoEmpurrarSenhaOpen] = useState(false)
+  const [avisoEmpurrarErro, setAvisoEmpurrarErro] = useState('')
+  const [avisoEmpurrarLoading, setAvisoEmpurrarLoading] = useState(false)
+  const [avisoEmpurrarSucesso, setAvisoEmpurrarSucesso] = useState<number | null>(null)
+  // Aviso separado do "deu certo": as datas podem ter sido salvas e ainda
+  // assim o convite do Google não ter sido refeito em alguma sessão. Antes a
+  // tela dizia só "N sessões remarcadas" e o paciente ficava com o convite no
+  // horário velho sem ninguém saber.
+  const [avisoEmpurrarCalendario, setAvisoEmpurrarCalendario] = useState<string | null>(null)
   // Reembolso
   const [reeSessoes, setReeSessoes] = useState<string[]>([])
   const [reeMotivo, setReeMotivo] = useState('')
@@ -419,13 +499,20 @@ export default function TerapeutasVendas() {
     if (autoAgendarRef.current || loading) return
     const saleId = searchParams.get('agendar')
     if (!saleId) return
-    const venda = pageData.vendas_pendentes.find(v => v.id === saleId)
-    if (!venda) return
+    // Procura também em Ativos: a venda pode já ter sessões (reagendamento
+    // total). Antes olhava só vendas_pendentes e, quando não achava, o efeito
+    // saía calado - a pessoa clicava em "Agendar" na tela do terapeuta, caía
+    // aqui e não acontecia absolutamente nada, sem erro nenhum na tela.
+    const venda = [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === saleId)
     autoAgendarRef.current = true
+    if (!venda) {
+      setErro('A venda que você tentou agendar não está nesta lista. Atualize a página; se continuar assim, avise o time técnico (a venda pode estar fora do filtro de produto ou do corte de data).')
+      return
+    }
     setAbaAtiva('aprovadas')
     setSubAba('pendentes')
     setAgendarVendaId(saleId)
-    setAgendarDataPrimeira(''); setAgendarErro('')
+    setAgendarDataPrimeira(''); setAgendarErro(''); setAgendarSubstituicaoCiente(false)
     setAgendarNumSessoesInput(String(inferirNumeroSessoesPorValor(venda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])))
     const terapeutaParam = searchParams.get('terapeuta')
     if (terapeutaParam && pageData.terapeutas.some(t => t.id === terapeutaParam)) {
@@ -462,7 +549,65 @@ export default function TerapeutasVendas() {
   const agendarVenda = agendarVendaId
     ? [...pageData.vendas_pendentes, ...pageData.vendas_ativos].find(v => v.id === agendarVendaId)
     : null
-  const agendarNumSessoes = parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
+  // Diagnóstico Guiado: quantidade de sessões e datas são derivadas do
+  // FORMATO (2, 4 ou 9 sessões, 7 dias entre todas), não escolhidas na tela.
+  // Por isso o modal esconde os dois campos e o envio não manda nem
+  // numero_sessoes nem datas_sessoes - a rota recusa datas_sessoes com 400
+  // pro Diagnóstico, e era exatamente isso que travava todo agendamento:
+  // o efeito abaixo sempre preenchia agendarDatasEditadas, então o campo ia
+  // junto em toda requisição.
+  const agendarDiagnostico = agendarVenda ? formatoDaVenda(agendarVenda) : null
+  // Sessões que essa venda JÁ tem, de qualquer terapeuta (sessoes_por_venda
+  // não é filtrado por terapeuta nesta API). O link "Agendar" da tela do
+  // terapeuta chega aqui apontando pra venda que já foi agendada por OUTRO
+  // terapeuta - o produto conjunto "Pedro | Denise" aparece em Pendentes da
+  // Denise mesmo com as sessões do Pedro criadas - e confirmar ali apaga as
+  // sessões dele, cancela os convites do paciente e refaz o pacote com a
+  // comissão da outra pessoa. Antes disso não aparecia em lugar nenhum.
+  // O Pedro sempre começa o pacote; a Denise pega o restante. Quem monta a
+  // divisão é a rota, mas ela ainda exige um terapeuta_id no corpo.
+  const pedroTerapeuta = pageData.terapeutas.find(t => t.nome.trim().toLowerCase().startsWith('pedro')) ?? null
+  const agendarTerapeutaEfetivo = agendarDiagnostico ? (pedroTerapeuta?.id ?? '') : agendarTerapeutaId
+  // Calculado antes do resumo: quantas sessões o pacote novo vai ter decide se
+  // a numeração 1..N colide com sessão que sobrevive ao delete (cancelada, por
+  // exemplo). Mudar a quantidade na tela muda a resposta, igual na rota.
+  const agendarNumSessoes = agendarDiagnostico
+    ? agendarDiagnostico.totalSessoes
+    : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
+  // Enquanto a releitura não volta, usa o que veio do load: é melhor avisar com
+  // dado velho do que não avisar nada. O botão fica travado nesse intervalo.
+  const agendarLeituraDaVenda = agendarSessoesLidas?.saleId === agendarVendaId ? agendarSessoesLidas : null
+  const agendarSessoesCarregando = !!agendarVendaId && agendarLeituraDaVenda === null
+  const agendarSessoesErro = agendarLeituraDaVenda?.erro ?? ''
+  const agendarSessoesExistentes = agendarVendaId
+    ? (agendarLeituraDaVenda?.sessoes ?? pageData.sessoes_por_venda[agendarVendaId] ?? [])
+    : []
+  const agendarResumo = resumirReagendamentoTotal(agendarSessoesExistentes, agendarNumSessoes)
+  const agendarEhSubstituicao = agendarResumo.substituiveis > 0 || agendarResumo.bloqueado
+
+  // Relê as sessões da venda toda vez que o modal abre. `cancelado` evita que a
+  // resposta de uma venda anterior sobrescreva a da venda aberta agora, se
+  // alguém fechar e abrir outra antes da primeira responder.
+  useEffect(() => {
+    if (!agendarVendaId) return
+    const saleId = agendarVendaId
+    let cancelado = false
+    fetch(`/api/terapeutas/sessoes?sale_id=${encodeURIComponent(saleId)}`)
+      .then(async res => {
+        const json = await res.json()
+        if (!res.ok) throw new Error(json.error ?? 'erro')
+        if (!cancelado) setAgendarSessoesLidas({ saleId, sessoes: (json.sessoes ?? []) as Sessao[], erro: '' })
+      })
+      .catch(e => {
+        // Sem a releitura o modal continua mostrando o que veio do load - só
+        // não pode fingir que aquilo está atualizado.
+        if (!cancelado) setAgendarSessoesLidas({ saleId, sessoes: null, erro: String(e instanceof Error ? e.message : e) })
+      })
+    // Descarta a leitura ao fechar (ou ao trocar de venda): reabrir a MESMA
+    // venda tem que esperar uma leitura nova, senão o botão liberaria na hora
+    // com o resultado da abertura anterior.
+    return () => { cancelado = true; setAgendarSessoesLidas(null) }
+  }, [agendarVendaId])
 
   useEffect(() => {
     if (!agendarDataPrimeira || !agendarVenda) { setAgendarDatasEditadas([]); return }
@@ -480,6 +625,9 @@ export default function TerapeutasVendas() {
   const prontuarioSessoes = prontuarioVendaId ? (pageData.sessoes_por_venda[prontuarioVendaId] ?? []) : []
   const prontuarioOcorrencias = prontuarioVendaId ? (pageData.ocorrencias_por_venda[prontuarioVendaId] ?? []) : []
 
+  // Etiqueta por sessão no histórico do prontuário: o formato é da VENDA, então
+  // é calculado uma vez só, fora do laço das sessões.
+  const formatoProntuario = prontuarioSale ? formatoDaVenda(prontuarioSale) : null
   const sessoesPendentesProntuario = prontuarioSessoes.filter(s => s.status === 'agendada' || s.status === 'pendente')
   const entreguesProntuario = prontuarioSessoes.filter(s => s.status === 'entregue').length
   const totalProntuario = prontuarioSessoes[0]?.total_sessoes ?? prontuarioSessoes.length
@@ -510,16 +658,21 @@ export default function TerapeutasVendas() {
 
   // ── Handlers ──
   async function handleAgendar(senha: string) {
-    if (!agendarVendaId || !agendarTerapeutaId || !agendarDataPrimeira) return
+    if (!agendarVendaId || !agendarTerapeutaEfetivo || !agendarDataPrimeira) return
     setAgendarLoading(true); setAgendarErro('')
     const res = await fetch('/api/terapeutas/sessoes/agendar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaId,
+        sale_id: agendarVendaId, terapeuta_id: agendarTerapeutaEfetivo,
         data_primeira_sessao: agendarDataPrimeira,
-        numero_sessoes: agendarNumSessoes,
-        datas_sessoes: agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined,
+        // No Diagnóstico os dois campos ficam de fora: a rota deriva a
+        // quantidade do formato e as datas da régua de 7 dias. Mandar
+        // datas_sessoes ali é recusado com 400 (rede de segurança da rota).
+        numero_sessoes: agendarDiagnostico ? undefined : agendarNumSessoes,
+        datas_sessoes: agendarDiagnostico
+          ? undefined
+          : (agendarDatasEditadas.length === agendarNumSessoes ? agendarDatasEditadas : undefined),
         usuario_email: adminEmail, senha,
       }),
     })
@@ -527,9 +680,10 @@ export default function TerapeutasVendas() {
     setAgendarLoading(false)
     if (!res.ok) { setAgendarErro(json.error ?? 'Erro'); return }
     setAgendarSenhaOpen(false)
-    setAgendarSucesso({ sessoes: json.sessoes_criadas, nome: agendarVenda?.nome ?? '' })
+    setAgendarSucesso({ sessoes: json.sessoes_criadas, nome: agendarVenda?.nome ?? '', aviso: json.aviso ?? null })
     setAgendarVendaId(null)
     setAgendarDataPrimeira('')
+    setAgendarSubstituicaoCiente(false)
     loadData()
   }
 
@@ -618,9 +772,42 @@ export default function TerapeutasVendas() {
     const json = await res.json()
     setRemLoading(false)
     if (!res.ok) { setRemErro(json.error ?? 'Erro'); return }
+    // Guarda o aviso de intervalo (se vier) antes de zerar remSessaoId - é a
+    // chance de oferecer as duas saídas ao comercial. prontuarioSale ainda é
+    // o paciente certo, porque é o prontuário aberto no momento da remarcação.
+    if (json.avisoIntervalo) {
+      setAvisoRemarcacao({ sessaoId: remSessaoId, paciente: prontuarioSale?.nome ?? '', mensagem: json.avisoIntervalo })
+    }
     setRemSenhaOpen(false); setOcorrenciaTipo(null)
     setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
     showToast('✓ Sessão remarcada com sucesso!')
+    loadData()
+  }
+
+  // Segunda decisão do fluxo de remarcação do Diagnóstico Guiado: o comercial
+  // escolheu empurrar as sessões seguintes do pacote pra manter os 7 dias
+  // entre elas (rota da Task 9). Esta tela não tem sessionToken/dispensa de
+  // senha (é o login do dashboard principal, não o do módulo de terapeutas -
+  // handleRemarcar acima também nunca manda token), então pede senha sempre.
+  async function handleEmpurrarSeguintes(senha: string) {
+    if (!avisoRemarcacao) return
+    setAvisoEmpurrarLoading(true)
+    setAvisoEmpurrarErro('')
+    const res = await fetch('/api/terapeutas/sessoes/empurrar-seguintes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessao_id: avisoRemarcacao.sessaoId, usuario_email: adminEmail, senha }),
+    })
+    const json = await res.json()
+    setAvisoEmpurrarLoading(false)
+    // Conflito (409) chega com mensagem pronta dizendo qual data bateu em
+    // qual paciente. Nada foi alterado nesse caso - o comercial pode fechar
+    // e escolher manter como está.
+    if (!res.ok) { setAvisoEmpurrarErro(json.error ?? 'Não foi possível empurrar as seguintes.'); return }
+    setAvisoEmpurrarSenhaOpen(false)
+    setAvisoRemarcacao(null)
+    setAvisoEmpurrarSucesso(json.movidas)
+    setAvisoEmpurrarCalendario(json.aviso ?? null)
     loadData()
   }
 
@@ -784,6 +971,17 @@ export default function TerapeutasVendas() {
                               <td className="px-4 py-3">
                                 <p className="text-white font-medium">{sale.nome}</p>
                                 <p className="text-xs text-gray-500">{sale.email}</p>
+                                {rotuloDiagnosticoDaVenda(sale, []) && (
+                                  <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                    {rotuloDiagnosticoDaVenda(sale, [])}
+                                  </span>
+                                )}
+                                {ofertaDiagnosticoNaoMapeada(sale) && (
+                                  <p className="mt-1 text-[10px] text-amber-400 max-w-[260px]">
+                                    Oferta do Diagnóstico Guiado não mapeada: o pacote não pode ser montado até alguém
+                                    associar essa oferta a um formato. Avise o time técnico.
+                                  </p>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate">{sale.produto}</td>
                               <td className="px-4 py-3 text-center">
@@ -795,14 +993,19 @@ export default function TerapeutasVendas() {
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
                               <td className="px-4 py-3 text-gray-500 text-xs">—</td>
                               <td className="px-4 py-3">
+                                {ofertaDiagnosticoNaoMapeada(sale) ? (
+                                  <span title="Oferta não mapeada: o formato do pacote é desconhecido."
+                                    className="text-xs text-gray-600 whitespace-nowrap cursor-not-allowed">Oferta não mapeada</span>
+                                ) : (
                                 <button onClick={() => {
                                   setAgendarVendaId(sale.id)
                                   setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
-                                  setAgendarDataPrimeira(''); setAgendarErro('')
+                                  setAgendarDataPrimeira(''); setAgendarErro(''); setAgendarSubstituicaoCiente(false)
                                   setAgendarNumSessoesInput(String(inferirNumeroSessoesPorValor(sale, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])))
                                 }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
                                   <Calendar className="w-3 h-3" /> Agendar
                                 </button>
+                                )}
                               </td>
                             </tr>
                           ))}
@@ -844,6 +1047,11 @@ export default function TerapeutasVendas() {
                                 <td className="px-4 py-3">
                                   <p className="text-white font-medium">{sale.nome}</p>
                                   <p className="text-xs text-gray-500">{sale.email}</p>
+                                  {rotuloDiagnosticoDaVenda(sale, sessoes) && (
+                                    <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                                      {rotuloDiagnosticoDaVenda(sale, sessoes)}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-gray-300">{total}</td>
                                 <td className="px-4 py-3 text-green-500 font-medium">{entregues}</td>
@@ -928,57 +1136,214 @@ export default function TerapeutasVendas() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">Agendar sessões — {agendarVenda?.nome}</h3>
+              <h3 className="text-sm font-semibold text-white">
+                {agendarEhSubstituicao ? 'Refazer o pacote inteiro' : 'Agendar sessões'} - {agendarVenda?.nome}
+              </h3>
               <button onClick={() => setAgendarVendaId(null)} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Terapeuta <span className="text-red-400">*</span></label>
-                <select value={agendarTerapeutaId} onChange={e => setAgendarTerapeutaId(e.target.value)}
-                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
-                  {pageData.terapeutas.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
-                </select>
-              </div>
+              {/* Reagendamento total: a venda JÁ tem sessões. Nada aqui é
+                  "acrescentar" - confirmar apaga o que existe e cria tudo de
+                  novo. O modal dizia só "Agendar sessões", então quem clicava
+                  no link "Agendar" da tela do terapeuta não tinha como saber
+                  que estava destruindo o pacote de outra pessoa. Continua
+                  sendo uma operação legítima (é como se corrige um pacote
+                  inteiro marcado errado), só que agora declarada. */}
+              {agendarEhSubstituicao && (
+                <div className={`rounded-lg p-3 border ${agendarResumo.bloqueado ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
+                  <p className={`text-xs font-semibold flex items-center gap-1.5 ${agendarResumo.bloqueado ? 'text-red-300' : 'text-amber-300'}`}>
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    {agendarResumo.motivoBloqueio === 'entregue'
+                      ? `Esta venda tem ${agendarResumo.entregues} sessão(ões) já entregue(s)`
+                      : agendarResumo.motivoBloqueio === 'numeracao'
+                        ? `Esta venda tem ${agendarResumo.colidem.length} sessão(ões) que o refazer não apaga (sessão ${agendarResumo.colidem.join(', ')})`
+                        : `Esta venda já tem ${agendarResumo.substituiveis} sessão(ões) agendada(s)`}
+                  </p>
+                  {agendarResumo.motivoBloqueio === 'entregue' ? (
+                    <p className="text-[11px] text-gray-300 mt-1.5">
+                      Um pacote com sessão entregue não pode ser refeito do zero: as sessões novas
+                      começariam da número 1 e colidiriam com as que já foram feitas. Para mudar as datas
+                      das que faltam, feche esta janela e remarque uma a uma pelo prontuário do paciente.
+                    </p>
+                  ) : agendarResumo.motivoBloqueio === 'numeracao' ? (
+                    /* Sessão cancelada (reembolso parcial aprovado) fica no banco
+                       com o número dela. Refazer criaria de novo a sessão 1..N e
+                       o banco recusaria - depois de as pendentes já terem sido
+                       apagadas e os convites cancelados. */
+                    <p className="text-[11px] text-gray-300 mt-1.5">
+                      Essa(s) sessão(ões) continuam no banco com o número delas (cancelamento por reembolso,
+                      por exemplo) e o refazer não as apaga. Como o pacote novo teria {agendarNumSessoes} sessão(ões)
+                      numeradas de 1 a {agendarNumSessoes}, os números bateriam de frente. Para mudar as datas das
+                      que faltam, feche esta janela e remarque uma a uma pelo prontuário do paciente.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-300 mt-1.5">
+                      Confirmar aqui <strong className="text-white">não acrescenta sessões</strong>: apaga as {agendarResumo.substituiveis} sessão(ões)
+                      abaixo{agendarResumo.comConvite > 0 ? `, cancela os ${agendarResumo.comConvite} convite(s) que o paciente já recebeu no Google Agenda` : ''} e
+                      cria o pacote inteiro de novo, do zero, com as datas e a comissão desta tela.
+                      Quem já tinha essas sessões perde todas elas.
+                    </p>
+                  )}
+                  <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                    {agendarSessoesExistentes
+                      .slice()
+                      .sort((a, b) => a.numero_sessao - b.numero_sessao)
+                      .map(sx => (
+                        <div key={sx.id} className="flex items-center gap-2 text-[11px]">
+                          <span className="text-gray-500 w-16 shrink-0">Sessão {sx.numero_sessao}:</span>
+                          <span className="text-gray-200">{fmtDt(sx.data_agendada)}</span>
+                          <span className="text-gray-500">{sx.terapeutas?.nome ?? '?'}</span>
+                          <span className={sx.status === 'entregue' ? 'text-green-400' : 'text-amber-400'}>{sx.status}</span>
+                          {sx.link_meet && <span className="text-gray-600">convite enviado</span>}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+              {agendarDiagnostico ? (
+                /* Pacote conjunto: quem faz cada sessão é regra do produto, não
+                   escolha da tela. Mostrar um seletor de terapeuta aqui daria a
+                   impressão de que dá pra mandar as 9 sessões pra uma pessoa só. */
+                <div className="bg-violet-500/10 border border-violet-500/30 rounded-lg p-3">
+                  <p className="text-xs font-semibold text-violet-300">
+                    Diagnóstico Guiado · Formato {agendarDiagnostico.formato} · {agendarDiagnostico.totalSessoes} sessões
+                  </p>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Pacote conjunto: {pedroTerapeuta?.nome ?? 'Pedro'} faz {agendarDiagnostico.sessoesPedro === 1 ? 'a 1ª sessão' : `as ${agendarDiagnostico.sessoesPedro} primeiras sessões`} e a Denise as demais,
+                    com 7 dias entre todas. A quantidade e as datas vêm do formato: aqui você escolhe só a data da 1ª sessão.
+                  </p>
+                  {!pedroTerapeuta && (
+                    <p className="text-[11px] text-red-400 mt-1">
+                      Pedro não aparece como terapeuta ativo - o pacote não pode ser montado até isso ser corrigido no cadastro.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Terapeuta <span className="text-red-400">*</span></label>
+                  <select value={agendarTerapeutaId} onChange={e => setAgendarTerapeutaId(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
+                    {pageData.terapeutas.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Data e horário da 1ª sessão <span className="text-red-400">*</span></label>
                 <input type="datetime-local" value={agendarDataPrimeira} onChange={e => setAgendarDataPrimeira(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões <span className="text-red-400">*</span></label>
-                <input type="number" min={1} value={agendarNumSessoesInput} onChange={e => setAgendarNumSessoesInput(e.target.value)}
-                  className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
-                <p className="text-[10px] text-gray-600 mt-1">
-                  Sugerido a partir do nome do produto — confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
-                </p>
-              </div>
-              {agendarDatasEditadas.length > 0 && (
-                <div className="bg-gray-800/60 rounded-lg p-3">
-                  <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {agendarNumSessoes} sessões (intervalo de 7 dias — edite se alguma sessão real sair da regra):</p>
-                  <div className="space-y-1.5">
-                    {agendarDatasEditadas.map((valor, i) => (
-                      <div key={i} className="flex items-center gap-3 text-xs">
-                        <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
-                        <input type="datetime-local" value={valor}
-                          onChange={e => setAgendarDatasEditadas(prev => prev.map((v, idx) => idx === i ? e.target.value : v))}
-                          className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
-                      </div>
-                    ))}
-                  </div>
+              {!agendarDiagnostico && (
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões <span className="text-red-400">*</span></label>
+                  <input type="number" min={1} value={agendarNumSessoesInput} onChange={e => setAgendarNumSessoesInput(e.target.value)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                  <p className="text-[10px] text-gray-600 mt-1">
+                    Sugerido a partir do nome do produto - confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
+                  </p>
                 </div>
+              )}
+              {agendarDatasEditadas.length > 0 && (
+                agendarDiagnostico ? (
+                  /* Prévia somente leitura: as datas são calculadas pela régua
+                     de 7 dias e não podem ser editadas uma a uma sem quebrar o
+                     pacote (a remarcação de uma sessão do meio tem fluxo
+                     próprio, com a escolha entre manter ou empurrar). */
+                  <div className="bg-gray-800/60 rounded-lg p-3">
+                    <p className="text-xs text-gray-400 mb-2 font-medium">
+                      Prévia das {agendarNumSessoes} sessões (7 dias entre todas, calculadas pelo sistema):
+                    </p>
+                    <div className="space-y-1">
+                      {agendarDatasEditadas.map((valor, i) => (
+                        <div key={i} className="flex items-center gap-3 text-xs">
+                          <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
+                          <span className="text-gray-200">{fmtDatetimeLocalBR(valor)}</span>
+                          <span className="text-[10px] text-gray-500">
+                            {i < agendarDiagnostico.sessoesPedro ? (pedroTerapeuta?.nome ?? 'Pedro') : 'Denise'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-gray-800/60 rounded-lg p-3">
+                    <p className="text-xs text-gray-400 mb-2 font-medium">Datas das {agendarNumSessoes} sessões (intervalo de 7 dias - edite se alguma sessão real sair da regra):</p>
+                    <div className="space-y-1.5">
+                      {agendarDatasEditadas.map((valor, i) => (
+                        <div key={i} className="flex items-center gap-3 text-xs">
+                          <span className="text-gray-500 w-16 shrink-0">Sessão {i + 1}:</span>
+                          <input type="datetime-local" value={valor}
+                            onChange={e => setAgendarDatasEditadas(prev => prev.map((v, idx) => idx === i ? e.target.value : v))}
+                            className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
               )}
               {/* whitespace-pre-line: o conflito de agenda pode listar uma
                   data por linha quando várias sessões do pacote batem. */}
+              {/* Só aparece no caminho destrutivo: no agendamento normal (venda
+                  sem sessão nenhuma) nada é apagado e pedir confirmação extra
+                  só atrapalharia o uso do dia a dia. */}
+              {agendarEhSubstituicao && !agendarResumo.bloqueado && (
+                <label className="flex items-start gap-2 text-[11px] text-gray-300 cursor-pointer bg-gray-800/60 rounded-lg p-2.5">
+                  <input type="checkbox" checked={agendarSubstituicaoCiente}
+                    onChange={e => setAgendarSubstituicaoCiente(e.target.checked)}
+                    className="mt-0.5 accent-amber-500" />
+                  <span>
+                    Entendi que as {agendarResumo.substituiveis} sessão(ões) acima serão apagadas
+                    {agendarResumo.comConvite > 0 ? ' e os convites do paciente cancelados' : ''}, e que o pacote será recriado do zero.
+                  </span>
+                </label>
+              )}
+              {agendarSessoesErro && (
+                /* A releitura falhou: o que está na tela veio do carregamento
+                   da página e pode estar velho. A rota ainda barra o caso
+                   destrutivo, mas quem confirma tem que saber disso. */
+                <p className="text-[11px] text-amber-400">
+                  Não deu pra conferir agora as sessões desta venda ({agendarSessoesErro}). O que aparece
+                  acima é do carregamento da página e pode estar desatualizado.
+                </p>
+              )}
               {agendarErro && <p className="text-xs text-red-400 whitespace-pre-line">{agendarErro}</p>}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setAgendarVendaId(null)}
                 className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
-              <button onClick={() => {
-                if (!agendarTerapeutaId || !agendarDataPrimeira) { setAgendarErro('Selecione o terapeuta e a data'); return }
+              {/* Travado enquanto a releitura das sessões não volta: confirmar
+                  antes disso é decidir com o dado do carregamento da página,
+                  que é exatamente o que essa releitura existe pra evitar. */}
+              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando} onClick={() => {
+                if (agendarDiagnostico && !pedroTerapeuta) {
+                  setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
+                  return
+                }
+                if (!agendarTerapeutaEfetivo || !agendarDataPrimeira) {
+                  setAgendarErro(agendarDiagnostico ? 'Informe a data da 1ª sessão' : 'Selecione o terapeuta e a data')
+                  return
+                }
+                // A rota recusa esse caso com 400; a tela para antes pra
+                // ninguém digitar data e senha à toa.
+                if (agendarResumo.bloqueado) {
+                  setAgendarErro(agendarResumo.motivoBloqueio === 'entregue'
+                    ? 'Esta venda tem sessão entregue: refaça as datas uma a uma pelo prontuário.'
+                    : `Esta venda tem sessão(ões) que o refazer não apaga ocupando a numeração 1 a ${agendarNumSessoes} (sessão ${agendarResumo.colidem.join(', ')}): refaça as datas uma a uma pelo prontuário.`)
+                  return
+                }
+                if (agendarEhSubstituicao && !agendarSubstituicaoCiente) {
+                  setAgendarErro('Marque a confirmação acima: este agendamento apaga as sessões que já existem.')
+                  return
+                }
                 setAgendarErro(''); setAgendarSenhaOpen(true)
-              }} className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg transition-colors">
-                Confirmar agendamento
+              }} className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
+                agendarResumo.bloqueado || agendarSessoesCarregando
+                  ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  : agendarEhSubstituicao ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'}`}>
+                {agendarSessoesCarregando
+                  ? 'Conferindo as sessões desta venda...'
+                  : agendarResumo.bloqueado
+                    ? 'Não é possível refazer'
+                    : agendarEhSubstituicao ? `Apagar e refazer as ${agendarResumo.substituiveis} sessões` : 'Confirmar agendamento'}
               </button>
             </div>
           </div>
@@ -995,6 +1360,11 @@ export default function TerapeutasVendas() {
               <div>
                 <h3 className="text-sm font-semibold text-white">Prontuário — {prontuarioSale.nome}</h3>
                 <p className="text-xs text-gray-400 mt-0.5">{prontuarioSale.email}</p>
+                {rotuloDiagnosticoDaVenda(prontuarioSale, prontuarioSessoes) && (
+                  <span className="inline-block mt-1.5 text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                    {rotuloDiagnosticoDaVenda(prontuarioSale, prontuarioSessoes)}
+                  </span>
+                )}
               </div>
               <button onClick={() => setProntuarioVendaId(null)} className="text-gray-500 hover:text-white mt-0.5">
                 <X className="w-4 h-4" />
@@ -1054,6 +1424,11 @@ export default function TerapeutasVendas() {
                         <div className="flex items-center gap-2 mb-3 flex-wrap">
                           <span className="text-xs text-gray-500 font-medium">Sessão {s.numero_sessao} de {s.total_sessoes}</span>
                           <span className={`text-[11px] px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                          {formatoProntuario && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
+                              {rotuloDiagnostico({ formato: formatoProntuario.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })}
+                            </span>
+                          )}
                           {s.status !== 'entregue' && s.status !== 'cancelada' && (
                             <span className={`text-[11px] px-2 py-0.5 rounded-full ${(SC_BADGE[s.status_consulta ?? 'aguardando'] ?? SC_BADGE.aguardando).cls}`}>
                               {(SC_BADGE[s.status_consulta ?? 'aguardando'] ?? SC_BADGE.aguardando).label}
@@ -1476,6 +1851,43 @@ export default function TerapeutasVendas() {
         onConfirm={handleRemarcar} titulo="Confirmar remarcação"
         descricao="Digite sua senha para remarcar a sessão" loading={remLoading} erro={remErro} />
 
+      {/* Aviso de intervalo do Diagnóstico Guiado - aparece assim que uma
+          remarcação deixa menos de 7 dias até a sessão vizinha do pacote. */}
+      {avisoRemarcacao && !avisoEmpurrarSenhaOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-md mx-4">
+            <h3 className="text-sm font-semibold text-white mb-1">Intervalo entre sessões</h3>
+            {avisoRemarcacao.paciente && (
+              <p className="text-xs text-gray-500 mb-3">{avisoRemarcacao.paciente}</p>
+            )}
+            <p className="text-sm text-gray-300 mb-4">{avisoRemarcacao.mensagem}</p>
+            {/* As duas opções têm custo real - o texto precisa deixar isso
+                explícito, sem eufemismo, porque quem decide é o comercial. */}
+            <p className="text-xs text-gray-500 mb-5 leading-relaxed">
+              <span className="text-gray-300 font-medium">Manter</span> deixa a próxima sessão a menos de 7 dias
+              desta. <span className="text-gray-300 font-medium">Empurrar</span> remarca todas as sessões
+              seguintes deste pacote, mantendo 7 dias entre elas, e o paciente precisa ser avisado.
+            </p>
+            {avisoEmpurrarErro && <p className="text-xs text-red-400 mb-3 whitespace-pre-line">{avisoEmpurrarErro}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setAvisoRemarcacao(null); setAvisoEmpurrarErro('') }}
+                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">
+                Manter as demais como estão
+              </button>
+              <button onClick={() => { setAvisoEmpurrarErro(''); setAvisoEmpurrarSenhaOpen(true) }}
+                className="flex-1 px-3 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors">
+                Empurrar as seguintes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SenhaModal isOpen={avisoEmpurrarSenhaOpen} onClose={() => { setAvisoEmpurrarSenhaOpen(false); setAvisoEmpurrarErro('') }}
+        onConfirm={handleEmpurrarSeguintes} titulo="Empurrar sessões seguintes"
+        descricao="Digite sua senha para remarcar as sessões seguintes deste pacote"
+        loading={avisoEmpurrarLoading} erro={avisoEmpurrarErro} />
+
       <SenhaModal isOpen={reeSenhaOpen} onClose={() => { setReeSenhaOpen(false); setReeErro('') }}
         onConfirm={handleReembolso} titulo="Enviar solicitação de reembolso"
         descricao="Digite sua senha para enviar para aprovação do CEO" loading={reeLoading} erro={reeErro} />
@@ -1484,14 +1896,57 @@ export default function TerapeutasVendas() {
       {agendarSucesso && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAgendarSucesso(null)}>
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-7 h-7 text-green-500" />
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${agendarSucesso.aviso ? 'bg-amber-500/10' : 'bg-green-500/10'}`}>
+              {agendarSucesso.aviso
+                ? <AlertTriangle className="w-7 h-7 text-amber-500" />
+                : <CheckCircle className="w-7 h-7 text-green-500" />}
             </div>
             <h3 className="text-base font-semibold text-white mb-1">Agendamento confirmado!</h3>
             <p className="text-sm text-gray-400 mb-5">
               {agendarSucesso.sessoes} sessão(ões) agendada(s){agendarSucesso.nome ? ` para ${agendarSucesso.nome}` : ''} com sucesso.
             </p>
+            {/* As sessões existem no banco; o que pode ter faltado é o convite
+                do Google. Sem isso a tela dizia "confirmado" e o paciente
+                ficava sem convite nenhum, sem ninguém saber. */}
+            {agendarSucesso.aviso && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mb-5 text-left">
+                {agendarSucesso.aviso}
+              </p>
+            )}
             <button onClick={() => setAgendarSucesso(null)}
+              className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmação de sessões empurradas (Diagnóstico Guiado) */}
+      {avisoEmpurrarSucesso !== null && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}>
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${avisoEmpurrarCalendario ? 'bg-amber-500/10' : 'bg-green-500/10'}`}>
+              {avisoEmpurrarCalendario
+                ? <AlertTriangle className="w-7 h-7 text-amber-500" />
+                : <CheckCircle className="w-7 h-7 text-green-500" />}
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1">
+              {avisoEmpurrarSucesso === 0 ? 'Nada para empurrar' : 'Sessões remarcadas'}
+            </h3>
+            {/* movidas=0 significa que não havia sessão seguinte no pacote -
+                nada mudou, então não faz sentido pedir pra avisar o paciente
+                de uma mudança que não aconteceu (achado da revisão). */}
+            <p className="text-sm text-gray-400 mb-5">
+              {avisoEmpurrarSucesso === 0
+                ? 'Não havia sessões seguintes neste pacote para mover. Nada foi alterado.'
+                : `${avisoEmpurrarSucesso} sessão(ões) seguinte(s) ${avisoEmpurrarSucesso === 1 ? 'foi remarcada' : 'foram remarcadas'} pra manter os 7 dias entre elas. Avise o paciente sobre as novas datas.`}
+            </p>
+            {avisoEmpurrarCalendario && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mb-5 text-left">
+                {avisoEmpurrarCalendario}
+              </p>
+            )}
+            <button onClick={() => { setAvisoEmpurrarSucesso(null); setAvisoEmpurrarCalendario(null) }}
               className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
               OK
             </button>
