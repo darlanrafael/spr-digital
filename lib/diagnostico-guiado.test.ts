@@ -298,3 +298,33 @@ test('lista vazia e lista de um item nao quebram', () => {
   assert.deepEqual(avisosDasDatas([]), { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] })
   assert.deepEqual(avisosDasDatas(['2026-09-02T14:20']).foraDaRegua, [])
 })
+
+test('CRITICO: sessoes que se SOBREPOEM sao apontadas, nao so as identicas', () => {
+  // A Denise atende 60 minutos e nao tem grade de horarios: 14:00 e 14:30 no
+  // mesmo dia ja empilha duas consultas na agenda dela. A trava de conflito da
+  // rota ignora as sessoes da propria venda, entao ninguem mais pega isso.
+  const a = avisosDasDatas(['2026-09-02T14:20', '2026-11-10T14:00', '2026-11-10T14:30'])
+  assert.deepEqual(a.duplicadas, [3])
+})
+
+test('exatamente 60 minutos de diferenca NAO e sobreposicao', () => {
+  const a = avisosDasDatas(['2026-09-02T14:00', '2026-11-10T14:00', '2026-11-10T15:00'])
+  assert.deepEqual(a.duplicadas, [])
+})
+
+test('59 minutos e sobreposicao', () => {
+  const a = avisosDasDatas(['2026-09-02T14:00', '2026-11-10T14:00', '2026-11-10T14:59'])
+  assert.deepEqual(a.duplicadas, [3])
+})
+
+test('a sobreposicao aponta a sessao POSTERIOR na lista, nao a primeira', () => {
+  // A primeira e a referencia; quem precisa mudar e a que veio depois.
+  const a = avisosDasDatas(['2026-09-02T10:00', '2026-09-02T10:30', '2026-09-02T10:40'])
+  assert.deepEqual(a.duplicadas, [2, 3])
+})
+
+test('sobreposicao continua valendo com as datas fora de ordem', () => {
+  const a = avisosDasDatas(['2026-09-02T14:00', '2026-09-20T14:30', '2026-09-20T14:00'])
+  assert.deepEqual(a.duplicadas, [3])
+  assert.deepEqual(a.foraDeOrdem, [3])
+})

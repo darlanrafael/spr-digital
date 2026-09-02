@@ -468,8 +468,30 @@ export default function PainelTerapeuta() {
     sessaoId: string
     paciente: string
     mensagem: string
+    /**
+     * Datas atuais das sessões que o empurrar vai reescrever. Desde que as
+     * datas do pacote passaram a ser editáveis (02/09/2026), "empurrar" deixou
+     * de apenas restaurar uma régua que já era verdade: ele pode APAGAR datas
+     * combinadas com o paciente. Esta tela oferece o mesmo botão que a de
+     * Vendas e precisa da mesma lista - corrigir só uma das duas foi o defeito
+     * que a revisão adversarial pegou.
+     */
+    seguintes: { numero: number; dataAtual: string }[]
   } | null>(null)
   const [avisoEmpurrarSenhaOpen, setAvisoEmpurrarSenhaOpen] = useState(false)
+  // Sessões do mesmo pacote que vêm depois da remarcada e ainda podem ser
+  // movidas. Mesmo filtro que `empurrar-seguintes` usa no banco, para o modal
+  // listar exatamente o que a rota vai reescrever.
+  function seguintesDoPacote(sessaoId: string) {
+    const base = sessoes.find(x => x.id === sessaoId)
+    if (!base) return []
+    return sessoes
+      .filter(x => x.sale_id === base.sale_id
+        && x.numero_sessao > base.numero_sessao
+        && x.status !== 'entregue' && x.status !== 'cancelada')
+      .sort((a, b) => a.numero_sessao - b.numero_sessao)
+      .map(x => ({ numero: x.numero_sessao, dataAtual: x.data_agendada ? fmtDt(x.data_agendada) : 'sem data' }))
+  }
   const [avisoEmpurrarErro, setAvisoEmpurrarErro] = useState('')
   const [avisoEmpurrarLoading, setAvisoEmpurrarLoading] = useState(false)
   const [avisoEmpurrarSucesso, setAvisoEmpurrarSucesso] = useState<number | null>(null)
@@ -1194,7 +1216,7 @@ export default function PainelTerapeuta() {
     // certo ainda está lá pelo id.
     if (json.avisoIntervalo) {
       const paciente = sessoes.find(s => s.id === remarcarSessaoId)?.paciente_nome ?? ''
-      setAvisoRemarcacao({ sessaoId: remarcarSessaoId, paciente, mensagem: json.avisoIntervalo })
+      setAvisoRemarcacao({ sessaoId: remarcarSessaoId, paciente, mensagem: json.avisoIntervalo, seguintes: seguintesDoPacote(remarcarSessaoId) })
     }
     setRemarcarSenhaModal(false)
     setRemarcarSessaoId(null)
@@ -1256,7 +1278,7 @@ export default function PainelTerapeuta() {
     // Mesmo aviso de intervalo do handleRemarcar acima - aqui o paciente é
     // sempre o do prontuário aberto, então não precisa buscar em lista nenhuma.
     if (json.avisoIntervalo) {
-      setAvisoRemarcacao({ sessaoId: remSessaoId, paciente: prontuarioSaleMaisRecente?.nome ?? '', mensagem: json.avisoIntervalo })
+      setAvisoRemarcacao({ sessaoId: remSessaoId, paciente: prontuarioSaleMaisRecente?.nome ?? '', mensagem: json.avisoIntervalo, seguintes: seguintesDoPacote(remSessaoId) })
     }
     setRemSenhaOpen(false); setOcorrenciaTipo(null)
     setRemSessaoId(''); setRemNovaData(''); setRemSolicitadoPor(''); setRemMotivo('')
@@ -3328,11 +3350,26 @@ export default function PainelTerapeuta() {
             <p className="text-sm text-gray-300 mb-4">{avisoRemarcacao.mensagem}</p>
             {/* As duas opções têm custo real - o texto precisa deixar isso
                 explícito, sem eufemismo, porque quem decide é o comercial. */}
-            <p className="text-xs text-gray-500 mb-5 leading-relaxed">
+            <p className="text-xs text-gray-500 mb-4 leading-relaxed">
               <span className="text-gray-300 font-medium">Manter</span> deixa a próxima sessão a menos de 7 dias
               desta. <span className="text-gray-300 font-medium">Empurrar</span> remarca todas as sessões
               seguintes deste pacote, mantendo 7 dias entre elas, e o paciente precisa ser avisado.
             </p>
+            {avisoRemarcacao.seguintes.length > 0 && (
+              <div className="bg-gray-800/60 rounded-lg p-3 mb-5">
+                <p className="text-[11px] text-amber-400 mb-2">
+                  Empurrar substitui as datas destas {avisoRemarcacao.seguintes.length} sessão(ões), e o paciente recebe convites novos:
+                </p>
+                <div className="space-y-0.5">
+                  {avisoRemarcacao.seguintes.map(x => (
+                    <div key={x.numero} className="flex items-center gap-2 text-[11px]">
+                      <span className="text-gray-500 w-16 shrink-0">Sessão {x.numero}:</span>
+                      <span className="text-gray-300">{x.dataAtual}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {avisoEmpurrarErro && <p className="text-xs text-red-400 mb-3 whitespace-pre-line">{avisoEmpurrarErro}</p>}
             <div className="flex gap-3">
               <button onClick={() => { setAvisoRemarcacao(null); setAvisoEmpurrarErro('') }}
@@ -3348,8 +3385,12 @@ export default function PainelTerapeuta() {
         </div>
       )}
 
+      {/* SEM `dispensarSenha` de proposito. O Pedro e o unico usuario com
+          dispensa ativa, e o SenhaModal com dispensa auto-confirma no efeito:
+          o clique em "Empurrar as seguintes" dispararia o POST na hora, sem
+          nenhuma segunda confirmacao. Aqui isso reescreve ate 8 sessoes e manda
+          convites novos ao paciente - precisa de um passo deliberado. */}
       <SenhaModal
-        dispensarSenha={dispensaSenha}
         isOpen={avisoEmpurrarSenhaOpen}
         onClose={() => { setAvisoEmpurrarSenhaOpen(false); setAvisoEmpurrarErro('') }}
         onConfirm={handleEmpurrarSeguintes}

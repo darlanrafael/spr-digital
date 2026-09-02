@@ -571,7 +571,14 @@ export default function TerapeutasVendas() {
   // divisão é a rota, mas ela ainda exige um terapeuta_id no corpo.
   const pedroTerapeuta = pageData.terapeutas.find(t => t.nome.trim().toLowerCase().startsWith('pedro')) ?? null
   const agendarTerapeutaEfetivo = agendarDiagnostico ? (pedroTerapeuta?.id ?? '') : agendarTerapeutaId
-  const agendarAvisosDatas = agendarDiagnostico && agendarDatasEditadas.length > 1
+  //
+  // Vale para TODOS os produtos, não só o Diagnóstico: o bloco de datas dos
+  // demais tem os mesmos campos livres, e as travas novas da rota valem para
+  // todos. Sem o aviso aqui, apagar um campo numa Mentoria de 8 sessões só
+  // devolvia o erro DEPOIS de digitar a senha. São 19 vendas de "Mentoria
+  // Particular - Pedro | Denise" contra 7 do Diagnóstico: este é o caminho
+  // mais usado, não o outro.
+  const agendarAvisosDatas = agendarDatasEditadas.length > 1
     ? avisosDasDatas(agendarDatasEditadas)
     : { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] }
 
@@ -1307,7 +1314,7 @@ export default function TerapeutasVendas() {
                     )}
                     {agendarAvisosDatas.duplicadas.length > 0 && (
                       <p className="text-[11px] text-red-400 mt-2">
-                        {agendarAvisosDatas.duplicadas.length === 1 ? `A sessão ${agendarAvisosDatas.duplicadas[0]} está` : `As sessões ${agendarAvisosDatas.duplicadas.join(', ')} estão`} no mesmo horário de outra sessão deste pacote. O paciente receberia dois convites para a mesma hora.
+                        {agendarAvisosDatas.duplicadas.length === 1 ? `A sessão ${agendarAvisosDatas.duplicadas[0]} está` : `As sessões ${agendarAvisosDatas.duplicadas.join(', ')} estão`} em cima de outra sessão deste pacote (menos de 1 hora de diferença). O paciente receberia dois convites sobrepostos.
                       </p>
                     )}
                     {agendarAvisosDatas.foraDeOrdem.length > 0 && (
@@ -1341,6 +1348,19 @@ export default function TerapeutasVendas() {
                         </div>
                       ))}
                     </div>
+                    {/* Os mesmos avisos do Diagnóstico. A rota recusa os dois
+                        casos para qualquer produto; sem isto aqui, o comercial
+                        só descobria depois de digitar a senha. */}
+                    {agendarAvisosDatas.invalidas.length > 0 && (
+                      <p className="text-[11px] text-red-400 mt-2">
+                        Preencha a data {agendarAvisosDatas.invalidas.length === 1 ? 'da sessão' : 'das sessões'} {agendarAvisosDatas.invalidas.join(', ')} para poder confirmar.
+                      </p>
+                    )}
+                    {agendarAvisosDatas.duplicadas.length > 0 && (
+                      <p className="text-[11px] text-red-400 mt-2">
+                        {agendarAvisosDatas.duplicadas.length === 1 ? `A sessão ${agendarAvisosDatas.duplicadas[0]} fica` : `As sessões ${agendarAvisosDatas.duplicadas.join(', ')} ficam`} em cima de outra sessão deste pacote (menos de 1 hora de diferença).
+                      </p>
+                    )}
                   </div>
                 )
               )}
@@ -1398,7 +1418,7 @@ export default function TerapeutasVendas() {
                   return
                 }
                 if (agendarAvisosDatas.duplicadas.length > 0) {
-                  setAgendarErro(`As sessões ${agendarAvisosDatas.duplicadas.join(', ')} estão no mesmo horário de outra sessão deste pacote. Ajuste antes de confirmar.`)
+                  setAgendarErro(`As sessões ${agendarAvisosDatas.duplicadas.join(', ')} ficam em cima de outra sessão deste pacote, com menos de 1 hora de diferença. Ajuste antes de confirmar.`)
                   return
                 }
                 // A rota recusa esse caso com 400; a tela para antes pra
@@ -1416,6 +1436,7 @@ export default function TerapeutasVendas() {
                 setAgendarErro(''); setAgendarSenhaOpen(true)
               }} className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
                 agendarResumo.bloqueado || agendarSessoesCarregando
+                  || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0
                   ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   : agendarEhSubstituicao ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'}`}>
                 {agendarSessoesCarregando

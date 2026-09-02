@@ -5,6 +5,7 @@ import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
+import { validarDatasDoPacote, mensagemDoProblema } from '@/lib/datas-do-pacote'
 import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagendamento-total'
 
 // Sem `maxDuration` declarado, a Vercel corta a função em 10 s. Um
@@ -157,35 +158,16 @@ export async function POST(req: NextRequest) {
     ? datas_sessoes.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
     : null
 
-  // Data em branco NAO lanca: `brasiliaLocalToISO('')` monta ':00-03:00' e o
-  // parser legado do V8 aceita, devolvendo 01/01/2000. A sessao ia para o banco
-  // 26 anos no passado, a trava de conflito aceitava (data finita) e o paciente
-  // recebia convite retroativo. Ano de 2 digitos ("26" em vez de "2026") tem o
-  // mesmo destino: o campo datetime-local aceita ano 0026 como valor valido.
-  // Com 8 campos editaveis num Formato 1, e erro de digitacao esperado.
+  // Validacao das datas digitadas, ANTES de qualquer escrita. A decisao vive
+  // em lib/datas-do-pacote.ts, pura e testada, pelo mesmo motivo de
+  // lib/reagendamento-total.ts: `npm test` roda so `lib/*.test.ts`, entao regra
+  // dentro do handler e regra sem teste - e foi assim que passou o defeito em
+  // que limpar um campo de data derrubava a tela inteira.
   if (datasExplicitas) {
-    const foraDaFaixa = datasExplicitas
-      .map((iso, i) => ({ ano: new Date(iso).getUTCFullYear(), numero: i + 1 }))
-      .filter(x => !Number.isFinite(x.ano) || x.ano < 2020 || x.ano > 2100)
-    if (foraDaFaixa.length > 0) {
-      return NextResponse.json(
-        { error: `Data inválida na sessão ${foraDaFaixa.map(x => x.numero).join(', ')}. Confira o ano e preencha todos os campos.` },
-        { status: 400 },
-      )
-    }
-    // Duas sessoes no mesmo horario passariam pela trava de conflito: ela
-    // compara as datas pedidas contra o BANCO e `ignorarSaleId` tira dali as
-    // sessoes desta propria venda, entao as datas do pacote novo nunca sao
-    // comparadas entre si. Ate a edicao manual existir isso era impossivel,
-    // porque a regua garantia datas distintas.
-    const repetidas = datasExplicitas
-      .map((iso, i) => ({ iso, numero: i + 1 }))
-      .filter((x, i, arr) => arr.findIndex(y => y.iso === x.iso) !== i)
-    if (repetidas.length > 0) {
-      return NextResponse.json(
-        { error: `As sessões ${repetidas.map(x => x.numero).join(', ')} estão no mesmo horário de outra sessão deste pacote.` },
-        { status: 409 },
-      )
+    const problema = validarDatasDoPacote({ datasISO: datasExplicitas, ehDiagnostico: !!diagnostico })
+    if (problema) {
+      const { texto, status } = mensagemDoProblema(problema)
+      return NextResponse.json({ error: texto }, { status })
     }
   }
 

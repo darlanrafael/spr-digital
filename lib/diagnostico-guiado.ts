@@ -131,9 +131,29 @@ export type AvisosDasDatas = {
   foraDeOrdem: number[]
   /** Sessoes com data vazia ou impossivel de interpretar. */
   invalidas: number[]
-  /** Sessoes que caem no MESMO horario de outra do proprio pacote. */
+  /**
+   * Sessoes que caem em cima de outra do proprio pacote - mesmo horario ou
+   * perto demais para caber uma consulta.
+   */
   duplicadas: number[]
 }
+
+/**
+ * Distancia minima entre duas sessoes do mesmo pacote para elas nao se
+ * sobreporem, em minutos.
+ *
+ * A trava de conflito da agenda compara sobreposicao de intervalo, mas ignora
+ * as sessoes da propria venda (`ignorarSaleId`), entao as datas de um pacote
+ * novo nunca sao comparadas entre si. Comparar so igualdade exata deixava
+ * passar o caso real: a Denise atende 60 minutos e nao tem grade de horarios,
+ * entao marcar as sessoes 8 e 9 as 14:00 e 14:30 do mesmo dia empilha duas
+ * consultas na agenda dela e manda dois convites sobrepostos ao paciente.
+ *
+ * 60 minutos e a duracao cadastrada da Denise, que e quem atende a maioria das
+ * sessoes do pacote. E limite de AVISO, nao de agenda: a checagem real, com a
+ * duracao de cada terapeuta, continua sendo a da rota.
+ */
+export const MINUTOS_MINIMOS_ENTRE_SESSOES = 60
 
 /**
  * Avisos sobre as datas escolhidas a mao. Serve para a tela AVISAR, nunca para
@@ -177,13 +197,12 @@ export function avisosDasDatas(datas: (string | null | undefined)[]): AvisosDasD
   // o banco e ignora as sessoes desta venda, entao duas datas iguais do pacote
   // novo passariam batido: o paciente receberia dois convites para o mesmo
   // horario e a terapeuta veria duas consultas empilhadas.
-  const vistos = new Map<number, number>()
-  ms.forEach((t, i) => {
-    if (Number.isNaN(t)) return
-    const antes = vistos.get(t)
-    if (antes !== undefined) duplicadas.push(i + 1)
-    else vistos.set(t, i + 1)
-  })
+  const minimoMs = MINUTOS_MINIMOS_ENTRE_SESSOES * 60 * 1000
+  const validas = ms.map((t, i) => ({ t, numero: i + 1 })).filter(x => !Number.isNaN(x.t))
+  for (const x of validas) {
+    const colide = validas.some(y => y.numero < x.numero && Math.abs(x.t - y.t) < minimoMs)
+    if (colide) duplicadas.push(x.numero)
+  }
 
   return { foraDaRegua, foraDeOrdem, invalidas, duplicadas }
 }
