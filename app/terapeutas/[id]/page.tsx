@@ -243,17 +243,42 @@ function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
-// Etiqueta do Diagnóstico Guiado pra uma linha que representa o PACIENTE
-// inteiro (aba Vendas: Pendentes/Ativos/Concluídos/Reembolsados), não uma
-// sessão isolada - mostra a posição atual do pacote (próxima sessão a
-// entregar, ou a última quando já concluído).
-function rotuloDiagnosticoAgregado(sale: SaleInfo | undefined, entregues: number, total: number): string | null {
+// Progresso e etiqueta do Diagnóstico Guiado pra uma linha que representa o
+// PACIENTE inteiro (aba Vendas: Pendentes/Ativos/Concluídos/Reembolsados).
+//
+// O total vem SEMPRE do formato (2, 4 ou 9) e as entregues SEMPRE das sessões
+// daquele sale_id no pacote inteiro - nunca do agregado por e-mail. O agregado
+// soma todas as vendas do paciente com ESTE terapeuta, e as sessões carregadas
+// nesta tela são só as dele: quando o Pedro entregava as 2 sessões dele de um
+// Formato 1, a linha mostrava "sessão 2 de 2", barra em 100% e "Concluído",
+// com 7 sessões ainda por fazer com a Denise. O mesmo agregado também errava
+// quando o paciente tinha dois pacotes ao mesmo tempo.
+function progressoDiagnostico(
+  sale: SaleInfo | undefined,
+  sessoesDoPacote: { status: string }[] | undefined,
+): { formato: 1 | 2 | 3; entregues: number; total: number; rotulo: string } | null {
   if (!sale) return null
   const formato = formatoDaVenda(sale)
   if (!formato) return null
-  const totalSessoes = total || formato.totalSessoes
-  const numeroSessao = Math.min(entregues + 1, totalSessoes)
-  return rotuloDiagnostico({ formato: formato.formato, numeroSessao, totalSessoes })
+  const total = formato.totalSessoes
+  const entregues = (sessoesDoPacote ?? []).filter(s => s.status === 'entregue').length
+  const numeroSessao = Math.min(entregues + 1, total)
+  return {
+    formato: formato.formato,
+    entregues,
+    total,
+    rotulo: rotuloDiagnostico({ formato: formato.formato, numeroSessao, totalSessoes: total }),
+  }
+}
+
+// Venda do produto Diagnóstico Guiado cuja OFERTA não está mapeada em
+// OFERTAS_DIAGNOSTICO (oferta nova, promoção, ou a oferta "Padrão" de R$ 10,00
+// que existe no mesmo produto de propósito). A spec manda deixá-la pendente com
+// um aviso pedindo a associação - antes ela era descartada em silêncio e
+// simplesmente sumia da tela, sem ninguém saber que existia.
+function ofertaDiagnosticoNaoMapeada(sale: SaleInfo | undefined): boolean {
+  if (!sale) return false
+  return sale.produto.toLowerCase().includes('diagnóstico guiado') && !formatoDaVenda(sale)
 }
 const FECHAMENTO_SESSOES_PAGE_SIZE = 12
 function exportFechamentoCSV(f: FechamentoHistorico) {
@@ -394,6 +419,11 @@ export default function PainelTerapeuta() {
   const [outrasTerapeutas, setOutrasTerapeutas] = useState<{ id: string; nome: string }[]>([])
   const [sessoes, setSessoes] = useState<Sessao[]>([])
   const [vendas, setVendas] = useState<Record<string, SaleInfo>>({})
+  // Sessões do PACOTE inteiro das vendas do Diagnóstico, de todos os
+  // terapeutas. `sessoes` acima é filtrado por terapeuta_id, então sozinho ele
+  // nunca enxerga o pacote completo (o Pedro só vê as dele, a Denise só as
+  // dela) - e é disso que o progresso do Diagnóstico precisa.
+  const [sessoesPacoteDiag, setSessoesPacoteDiag] = useState<Record<string, { numero_sessao: number; status: string }[]>>({})
   const [ocorrencias, setOcorrencias] = useState<Record<string, Ocorrencia[]>>({})
   const [remarcacoes, setRemarcacoes] = useState<Record<string, Remarcacao[]>>({})
   const [loading, setLoading] = useState(true)
@@ -644,6 +674,22 @@ export default function PainelTerapeuta() {
     }
     setVendas(vendasMap)
 
+    // Consulta extra só pras vendas do Diagnóstico: sem filtro de terapeuta,
+    // porque o pacote é dividido entre dois e o progresso real depende dos
+    // dois. São no máximo algumas dezenas de sale_ids, e a consulta nem roda
+    // quando não há nenhum Diagnóstico na tela.
+    const saleIdsDiag = Object.values(vendasMap).filter(v => formatoDaVenda(v)).map(v => v.id)
+    const pacoteDiagMap: Record<string, { numero_sessao: number; status: string }[]> = {}
+    if (saleIdsDiag.length > 0) {
+      const { data: sessoesPacote } = await client
+        .from('sessoes').select('sale_id,numero_sessao,status').in('sale_id', saleIdsDiag)
+      for (const s of (sessoesPacote ?? []) as { sale_id: string; numero_sessao: number; status: string }[]) {
+        if (!pacoteDiagMap[s.sale_id]) pacoteDiagMap[s.sale_id] = []
+        pacoteDiagMap[s.sale_id].push({ numero_sessao: s.numero_sessao, status: s.status })
+      }
+    }
+    setSessoesPacoteDiag(pacoteDiagMap)
+
     // Terapeuta em modo "começar do zero" (vendas_a_partir_de configurado):
     // sessão só conta se a venda que a originou é depois do corte — histórico
     // real continua no banco, só some da tela (Overview/Ativos/Agenda) até o
@@ -743,7 +789,12 @@ export default function PainelTerapeuta() {
         }
         const { data: diag } = await diagQuery
         for (const v of (diag ?? []) as (SaleInfo & { order_id?: string })[]) {
-          if (!formatoDaVenda(v)) continue
+          // Oferta desconhecida NÃO é descartada aqui. Antes um `continue`
+          // fazia a venda sumir da tela sem aviso nenhum - ninguém ficava
+          // sabendo que existia uma compra esperando agendamento. A spec pede
+          // o contrário: ela fica pendente, com aviso pedindo a associação da
+          // oferta. Quem mostra o aviso e bloqueia o botão "Agendar" é a
+          // tabela de Pendentes, via ofertaDiagnosticoNaoMapeada().
           if (saleIds.includes(v.id)) continue
           if (pendentes.some(p => p.id === v.id)) continue
           pendentes.push(v)
@@ -1993,7 +2044,11 @@ export default function PainelTerapeuta() {
                             // Pacote ainda não agendado: nenhuma sessão entregue,
                             // então a etiqueta mostra sempre "sessão 1 de N".
                             const saleDiag = vendasPendentes.find(v => p.saleIds.includes(v.id) && formatoDaVenda(v))
-                            const rotulo = rotuloDiagnosticoAgregado(saleDiag, 0, 0)
+                            const rotulo = progressoDiagnostico(saleDiag, [])?.rotulo ?? null
+                            // Vendas do Diagnóstico com oferta fora da tabela: aparecem
+                            // com aviso, e o botão "Agendar" delas fica bloqueado - montar
+                            // o pacote exige saber o formato, que só a oferta diz.
+                            const naoMapeadas = vendasPendentes.filter(v => p.saleIds.includes(v.id) && ofertaDiagnosticoNaoMapeada(v))
                             return (
                             <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                               <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
@@ -2005,6 +2060,12 @@ export default function PainelTerapeuta() {
                                     {rotulo}
                                   </span>
                                 )}
+                                {naoMapeadas.length > 0 && (
+                                  <p className="mt-1 text-[10px] text-amber-400 max-w-[260px]">
+                                    Oferta do Diagnóstico Guiado não mapeada{naoMapeadas.length > 1 ? ` (${naoMapeadas.length} vendas)` : ''}: o pacote não pode
+                                    ser montado até alguém associar essa oferta a um formato. Avise o time técnico.
+                                  </p>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-gray-300 text-xs max-w-[200px] truncate">{p.produtos.join(' + ')}</td>
                               <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.qtdVendas > 1 ? `${p.qtdVendas} vendas` : '1 venda'}</td>
@@ -2014,10 +2075,17 @@ export default function PainelTerapeuta() {
                                 <td className="px-4 py-3">
                                   <div className="flex flex-wrap gap-1.5">
                                     {p.saleIds.map((sid, i) => (
+                                      naoMapeadas.some(v => v.id === sid) ? (
+                                        <span key={sid} title="Oferta não mapeada: o formato do pacote é desconhecido."
+                                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-800 text-gray-500 border border-white/10 whitespace-nowrap cursor-not-allowed">
+                                          {p.saleIds.length > 1 ? `Venda ${i + 1}: oferta não mapeada` : 'Oferta não mapeada'}
+                                        </span>
+                                      ) : (
                                       <Link key={sid} href={`/terapeutas/vendas?agendar=${sid}&terapeuta=${id}`}
                                         className="px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-600/80 text-white hover:bg-amber-600 transition-colors whitespace-nowrap">
                                         {p.saleIds.length > 1 ? `Agendar venda ${i + 1}` : 'Agendar'}
                                       </Link>
+                                      )
                                     ))}
                                   </div>
                                 </td>
@@ -2046,10 +2114,20 @@ export default function PainelTerapeuta() {
                           {(vendasSubTab === 'ativos' ? pacientesAtivos : pacientesConcluidos).length === 0 ? (
                             <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-600 text-xs">Nenhum paciente encontrado</td></tr>
                           ) : (vendasSubTab === 'ativos' ? pacientesAtivos : pacientesConcluidos).map(p => {
-                            const progresso = p.total > 0 ? Math.min((p.entregues / p.total) * 100, 100) : 0
-                            const concluido = p.entregues === p.total && p.total > 0
                             const saleDiag = p.saleIds.map(sid => vendas[sid]).find(v => v && formatoDaVenda(v))
-                            const rotulo = rotuloDiagnosticoAgregado(saleDiag, p.entregues, p.total)
+                            const diag = progressoDiagnostico(saleDiag, saleDiag ? sessoesPacoteDiag[saleDiag.id] : undefined)
+                            const rotulo = diag?.rotulo ?? null
+                            // Quando a linha é UM pacote do Diagnóstico e nada mais, a
+                            // barra e o texto passam a contar o pacote inteiro (as duas
+                            // agendas), não só as sessões deste terapeuta - senão o Pedro
+                            // via "2 de 2 · Concluído" com 7 sessões pendentes da Denise.
+                            // Com mais de uma venda no e-mail, o agregado continua valendo:
+                            // ele é a soma real do que este terapeuta tem com o paciente.
+                            const usaPacote = !!diag && p.saleIds.length === 1
+                            const entreguesLinha = usaPacote ? diag!.entregues : p.entregues
+                            const totalLinha = usaPacote ? diag!.total : p.total
+                            const progresso = totalLinha > 0 ? Math.min((entreguesLinha / totalLinha) * 100, 100) : 0
+                            const concluido = entreguesLinha === totalLinha && totalLinha > 0
                             return (
                               <tr key={p.email} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(p.dataCompraMaisRecente)}</td>
@@ -2062,8 +2140,8 @@ export default function PainelTerapeuta() {
                                     </span>
                                   )}
                                 </td>
-                                <td className="px-4 py-3 text-gray-300">{p.total}</td>
-                                <td className="px-4 py-3 text-green-500 font-medium">{p.entregues}</td>
+                                <td className="px-4 py-3 text-gray-300">{totalLinha}</td>
+                                <td className="px-4 py-3 text-green-500 font-medium">{entreguesLinha}</td>
                                 <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(p.bruto)}</td>
                                 <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(p.liquido)}</td>
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{p.vendedor}</td>
@@ -2072,7 +2150,7 @@ export default function PainelTerapeuta() {
                                     <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{ width: `${progresso}%` }} />
                                   </div>
                                   <p className={`text-[10px] mt-0.5 ${concluido ? 'text-green-500' : 'text-gray-500'}`}>
-                                    {concluido ? 'Concluído ✓' : `${p.entregues} de ${p.total} sessões`}
+                                    {concluido ? 'Concluído ✓' : `${entreguesLinha} de ${totalLinha} sessões`}
                                   </p>
                                 </td>
                                 <td className="px-4 py-3">
@@ -2107,9 +2185,7 @@ export default function PainelTerapeuta() {
                           ) : vendasReembolsadas.map(sale => {
                             const sessoesVenda = sessoes.filter(s => s.sale_id === sale.id)
                             const canceladas = sessoesVenda.filter(s => s.status === 'cancelada').length
-                            const entreguesVenda = sessoesVenda.filter(s => s.status === 'entregue').length
-                            const totalVenda = sessoesVenda[0]?.total_sessoes ?? 0
-                            const rotulo = rotuloDiagnosticoAgregado(sale, entreguesVenda, totalVenda)
+                            const rotulo = progressoDiagnostico(sale, sessoesPacoteDiag[sale.id])?.rotulo ?? null
                             return (
                               <tr key={sale.id} className="border-b border-white/5 hover:bg-white/2 transition-colors">
                                 <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(sale.data_hora)}</td>
