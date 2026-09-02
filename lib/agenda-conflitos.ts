@@ -21,6 +21,13 @@ export type Conflito = {
   descricao: string
 }
 
+/** Só a hora, para dizer o intervalo que o item ocupa. */
+function hora(iso: string): string {
+  return new Date(iso).toLocaleTimeString('pt-BR', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
+  })
+}
+
 function fmt(iso: string): string {
   const d = new Date(iso)
   const data = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })
@@ -49,7 +56,11 @@ export async function buscarConflitosAgenda(params: {
   const client = getSupabaseAdmin()
 
   const { data: terapeuta } = await client
-    .from('terapeutas').select('duracao_sessao_minutos,horarios_fixos').eq('id', terapeuta_id).single()
+    .from('terapeutas').select('nome,duracao_sessao_minutos,horarios_fixos').eq('id', terapeuta_id).single()
+  // Nome do terapeuta na mensagem: sem ele o comercial nao sabe DE QUEM e a
+  // agenda que esta ocupada, e num pacote com dois terapeutas isso e a primeira
+  // coisa que ele precisa saber.
+  const nomeTerapeuta = ((terapeuta?.nome as string | null) ?? 'o terapeuta').trim()
   const duracaoMin = (terapeuta?.duracao_sessao_minutos as number | null) ?? 60
   const horariosFixos = (terapeuta?.horarios_fixos as string[] | null) ?? null
   const duracaoMs = duracaoMin * 60000
@@ -120,14 +131,20 @@ export async function buscarConflitosAgenda(params: {
         inicio: new Date(s.data_agendada).getTime(),
         fim: fimRealMs(s.data_agendada),
         tipo: 'sessao' as const,
-        rotulo: `já tem a consulta de ${s.paciente_nome} (sessão ${s.numero_sessao}/${s.total_sessoes})`,
+        rotulo: `${nomeTerapeuta} já atende ${s.paciente_nome} das ${hora(s.data_agendada)} às ${hora(new Date(fimRealMs(s.data_agendada)).toISOString())} (sessão ${s.numero_sessao} de ${s.total_sessoes}). Escolha outro horário.`,
       })),
     ...((compromissos ?? []) as { titulo: string; inicio: string; fim: string }[])
       .map(c => ({
         inicio: new Date(c.inicio).getTime(),
         fim: new Date(c.fim).getTime(),
         tipo: 'compromisso' as const,
-        rotulo: `horário bloqueado: ${c.titulo}`,
+        // Precisa dizer as tres coisas: DE QUEM e a agenda, QUE HORAS o
+        // bloqueio ocupa, e que e um BLOQUEIO e nao consulta marcada. A
+        // mensagem antiga era so `horário bloqueado: <titulo>`, e como o time
+        // reserva a vaga com o nome do paciente no titulo, o comercial lia
+        // "horário bloqueado: Juliane Eller" enquanto agendava a Juliane - e
+        // entendia que ela ja estava agendada. Caso real de 02/09/2026.
+        rotulo: `a agenda de ${nomeTerapeuta} tem um bloqueio das ${hora(c.inicio)} às ${hora(c.fim)}: "${c.titulo}". É um compromisso lançado na agenda, não uma consulta marcada.`,
       })),
   ]
 
@@ -137,7 +154,7 @@ export async function buscarConflitosAgenda(params: {
     const fimPedido = fimRealMs(p.iso)
     const bateu = ocupados.find(o => p.inicio < o.fim && fimPedido > o.inicio)
     if (bateu) {
-      conflitos.push({ dataISO: p.iso, tipo: bateu.tipo, descricao: `${fmt(p.iso)} — ${bateu.rotulo}` })
+      conflitos.push({ dataISO: p.iso, tipo: bateu.tipo, descricao: `em ${fmt(p.iso)}: ${bateu.rotulo}` })
     }
   }
   return conflitos
@@ -159,10 +176,19 @@ export function soCompromissos(conflitos: Conflito[]): boolean {
   return conflitos.length > 0 && conflitos.every(c => c.tipo === 'compromisso')
 }
 
-/** Mensagem única pro front, listando cada data que bateu. */
+/**
+ * Mensagem única pro front, listando cada data que bateu.
+ *
+ * Diz sempre POR QUE está bloqueado, não só que está: de quem é a agenda, o que
+ * ocupa o horário e em que intervalo. Sem isso o comercial não tem como decidir
+ * se muda a data, se apaga um bloqueio que ele mesmo criou, ou se fala com o
+ * terapeuta.
+ */
 export function mensagemConflito(conflitos: Conflito[]): string {
-  if (conflitos.length === 1) return `Conflito de horário: ${conflitos[0].descricao}`
-  return `Conflito de horário em ${conflitos.length} datas:\n` + conflitos.map(c => `• ${c.descricao}`).join('\n')
+  if (conflitos.length === 1) {
+    return `Não dá para marcar ${conflitos[0].descricao}`
+  }
+  return `${conflitos.length} horários do pacote estão ocupados:\n` + conflitos.map(c => `• ${c.descricao}`).join('\n')
 }
 
 /**
