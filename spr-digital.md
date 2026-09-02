@@ -103,6 +103,7 @@ anterior dera por fechada. O detalhe fica no item 37 do historico.
 | O cache do `calendarId` valida o id dentro da promessa | `lib/google-meet.ts` | corpo sem `id` fazia a promessa RESOLVER com `undefined` e ficar em cache para sempre - toda chamada seguinte mandava `calendarId: undefined` ate o processo reciclar. O cache de string anterior se recuperava sozinho, entao era regressao |
 | O modal de agendamento rele as sessoes da venda ao abrir (`GET /api/terapeutas/sessoes?sale_id=`) | `app/api/terapeutas/sessoes/route.ts`, `app/terapeutas/vendas/page.tsx` | o aviso de destruicao saia do carregamento da pagina: sessao criada por outra pessoa depois disso nao aparecia e o modal podia mostrar botao verde de "Confirmar agendamento" para venda que ja tinha pacote |
 | Titulo do evento no Google com hifen simples nas quatro rotas | `/agendar`, `/remarcar`, `/empurrar-seguintes`, `/vendas/lancamento-manual` | duas rotas usavam travessao longo e duas hifen, entao o calendario tinha dois formatos e uma remarcacao trocava o traco do evento existente |
+| Um `insert` que falha tambem cancela os convites das sessoes ja apagadas (`cancelarEventosAntigos()`) | `.../sessoes/agendar/route.ts` | mover o laco para o fim da rota fez o ramo de erro do insert pular o cancelamento: as sessoes antigas ja tinham sumido do banco levando junto o `google_event_id`, unica forma de achar o evento, e os convites ficavam de pe para sempre. O comercial repetia a operacao e o terapeuta passava a ver o pacote duplicado, metade dele impossivel de localizar pelo sistema |
 
 `lib/reagendamento-total.test.ts` foi corrigido junto: o teste
 `'cancelada nao bloqueia nem entra na lista de substituicao'` cristalizava o
@@ -111,6 +112,20 @@ testes no arquivo agora (93 no projeto).
 
 **Nenhum efeito colateral externo foi disparado nesta rodada** - ver a nota de
 procedimento no risco 12 abaixo.
+
+Dois achados menores da ultima revisao ficaram **registrados sem correcao**,
+porque so disparam com a integracao do Google desligada ou com a rede
+pendurada, e nenhum dos dois perde dado:
+
+- Com o Google desligado, `/empurrar-seguintes` preserva o `link_meet` junto
+  com o `google_event_id`, entao a data muda no banco e o link continua sendo
+  o da reuniao no horario velho. O proprio projeto declara o principio
+  contrario em `/remarcar` ("link valido com o horario errado seria pior que
+  nao ter link"). Nao e regressao: antes o paciente tambem ficava com o
+  convite no horario velho, so que sem o link aparecendo na tela.
+- A releitura das sessoes no modal nao tem `AbortController` nem timeout: um
+  `fetch` que fique pendurado sem rejeitar deixa o botao em "Conferindo as
+  sessoes desta venda..." ate a pessoa fechar e reabrir o modal.
 
 ### Resolvido e EM PRODUÇÃO desde 17/08 (`fe1fae3`)
 
