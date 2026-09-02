@@ -31,9 +31,50 @@ test('lancamento manual nao tem order_id e devolve null', () => {
   assert.equal(formatoDaVenda(venda(undefined, 'manual_1788034875487_zrpmrz')), null)
 })
 
-test('venda da Juliane (real, Formato 3)', () => {
-  const f = formatoDaVenda(venda('347281e4-f007-44ac-9264-e41da730b2e4-qVvads7GKaI7lN1Kctrr'))
-  assert.equal(f?.formato, 3)
+// As vendas REAIS que ja existem no banco, uma por uma, com o nome do
+// paciente no titulo do teste. A spec pede exatamente isso: se alguem
+// quebrar a regra da oferta, o teste falha dizendo de quem e a venda que
+// parou de ser reconhecida, em vez de um "esperava 9, recebeu null".
+//
+// Os order_id sao os do banco de producao, conferidos em 01/09/2026.
+// Reparar que Formato 1 se repete com order_id diferente: a oferta e a mesma
+// (WXwmPZfJxGqeXerA6dkO), o que muda e o id da fatura antes do hifen.
+const VENDAS_REAIS: { paciente: string; orderId: string; formato: 1 | 2 | 3 }[] = [
+  { paciente: 'Rafaela Pires Anchieta Silva', orderId: '06547c74-56d5-4cd6-9046-289d8f3ab9bd-WXwmPZfJxGqeXerA6dkO', formato: 1 },
+  { paciente: 'Juliane Eller', orderId: '347281e4-f007-44ac-9264-e41da730b2e4-qVvads7GKaI7lN1Kctrr', formato: 3 },
+  { paciente: 'Francisco Geraldo Silveira do Nascimento', orderId: 'a24bf3c3-2733-45f4-aab3-35a6829a8063-WXwmPZfJxGqeXerA6dkO', formato: 1 },
+  { paciente: 'Bruno Cavallini de Queiroz', orderId: 'fcdf9256-d34c-4209-8719-ccdf98e20351-WXwmPZfJxGqeXerA6dkO', formato: 1 },
+  { paciente: 'Valdir Sabino', orderId: '2dc6e39d-a6e5-49d1-b9c6-9eca6dbc88dd-WXwmPZfJxGqeXerA6dkO', formato: 1 },
+  { paciente: 'Gisela Palos', orderId: '0f9a0dfa-cbf5-41ac-b4d0-9268ea5ce5b6-H8DA8U21x7Lmv3NreVMs', formato: 2 },
+]
+
+const SESSOES_ESPERADAS: Record<1 | 2 | 3, { totalSessoes: number; sessoesPedro: number }> = {
+  1: { totalSessoes: 9, sessoesPedro: 2 },
+  2: { totalSessoes: 4, sessoesPedro: 1 },
+  3: { totalSessoes: 2, sessoesPedro: 1 },
+}
+
+for (const v of VENDAS_REAIS) {
+  test(`venda real de ${v.paciente} (Formato ${v.formato})`, () => {
+    assert.deepEqual(formatoDaVenda(venda(v.orderId)), { formato: v.formato, ...SESSOES_ESPERADAS[v.formato] })
+  })
+}
+
+// O Francisco e o Bruno compraram o MESMO formato pagando valores
+// diferentes (parcelamento com juros). E o caso que sustenta a decisao de
+// identificar pela oferta e nunca pelo preco.
+test('Francisco e Bruno caem no mesmo formato apesar de valores diferentes', () => {
+  const francisco = formatoDaVenda(venda('a24bf3c3-2733-45f4-aab3-35a6829a8063-WXwmPZfJxGqeXerA6dkO'))
+  const bruno = formatoDaVenda(venda('fcdf9256-d34c-4209-8719-ccdf98e20351-WXwmPZfJxGqeXerA6dkO'))
+  assert.deepEqual(francisco, bruno)
+})
+
+// Gisela e a primeira venda do Formato 2, que ate ela so existia na teoria.
+test('venda da Gisela monta 4 sessoes: 1 do Pedro e 3 da Denise', () => {
+  const f = formatoDaVenda(venda('0f9a0dfa-cbf5-41ac-b4d0-9268ea5ce5b6-H8DA8U21x7Lmv3NreVMs'))!
+  const pacote = montarPacote({ formato: f, primeiraDataISO: '2026-09-08T14:00:00.000Z', pedroId: 'PEDRO', deniseId: 'DENISE' })
+  assert.deepEqual(pacote.map(s => s.terapeuta_id), ['PEDRO', 'DENISE', 'DENISE', 'DENISE'])
+  assert.deepEqual(pacote.map(s => s.comissao_valor), [0, 95, 95, 95])
 })
 
 const F1 = { formato: 1 as const, totalSessoes: 9, sessoesPedro: 2 }
