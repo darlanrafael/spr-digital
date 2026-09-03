@@ -164,7 +164,9 @@ export async function GET(req: NextRequest) {
     while (true) {
       let query = supabase
         .from('sales')
-        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status,order_id')
+        // `oferta_nome` e a fonte da QUANTIDADE de sessoes do pacote, e
+        // `pacote_pai_id` diz que esta venda ja foi agendada junto de outra.
+        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status,order_id,oferta_nome,pacote_pai_id')
       // Mantém o comportamento antigo de "sem terapeuta ativo, sem filtro":
       // nesse caso a varredura já traz tudo, Diagnóstico incluído.
       if (nomesTerapeutas.length > 0) {
@@ -266,6 +268,12 @@ export async function GET(req: NextRequest) {
     const vendasPendentes = vendasAprovadas.filter(v =>
       (!sessoesPorVenda[v.id] || sessoesPorVenda[v.id].length === 0) && saleAposCorte(v)
       && !v.produto.toLowerCase().includes('grupo')
+      // Venda ligada a outro pacote ja foi agendada junto dele. Sem isto, a
+      // segunda compra de um pacote pago em duas vezes fica presa em Pendentes
+      // para sempre - as sessoes estao na venda irma, e a regra de pendente e
+      // "venda sem nenhuma sessao". Caso real: Amanda da Silva Rios, 24 e
+      // 25/08/2026, duas ofertas de "Formato - 4 Sessão" somando o pacote de 8.
+      && !(v as { pacote_pai_id?: string | null }).pacote_pai_id
     )
     const vendasAtivos = vendasAprovadas.filter(v =>
       sessoesPorVenda[v.id] && sessoesPorVenda[v.id].length > 0

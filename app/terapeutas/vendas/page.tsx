@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle, Copy, Check } from 'lucide-react'
 import Header from '@/components/Header'
@@ -8,6 +8,8 @@ import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda, avisosDasDatas } from '@/lib/diagnostico-guiado'
+import { conferirQuantidade } from '@/lib/sessoes-da-oferta'
+import { candidataAoMesmoPacote } from '@/lib/pacote-de-vendas'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 import { resumirReagendamentoTotal } from '@/lib/reagendamento-total'
 
@@ -44,6 +46,13 @@ type Sale = {
   // reconhece um pacote do Diagnóstico Guiado e a tela trata os três formatos
   // como um produto qualquer de 1 sessão, sem erro nenhum.
   order_id?: string
+  /**
+   * Nome da oferta ("Formato - 4 Sessão"). Fonte da QUANTIDADE de sessões do
+   * pacote - regra do negócio, não escolha de quem agenda.
+   */
+  oferta_nome?: string | null
+  /** Venda que carrega as sessões deste pacote, quando pago em mais de uma compra. */
+  pacote_pai_id?: string | null
 }
 
 type Sessao = {
@@ -597,8 +606,41 @@ export default function TerapeutasVendas() {
   // `new Date('').toISOString()` lança RangeError. Isto roda a cada render do
   // modal, então a exceção derrubava a página inteira e apagava os ajustes que
   // ele já tinha feito nas outras sessões.
+  // A QUANTIDADE de sessoes e regra do negocio, nao escolha de quem agenda
+  // (usuario, 03/09/2026). Vem do nome da oferta, com o preco conferindo; o
+  // comercial decide só QUANDO cada sessao acontece.
+  const agendarConfere = useMemo(() => {
+    if (!agendarVenda || agendarDiagnostico) return null
+    const irmas = [...pageData.vendas_pendentes, ...pageData.vendas_ativos]
+      .filter(v => v.pacote_pai_id === agendarVenda.id)
+    const tabela: 'pedro' | 'denise' = agendarVenda.produto.toLowerCase().includes('denise') ? 'denise' : 'pedro'
+    return conferirQuantidade({
+      vendas: [agendarVenda, ...irmas].map(v => ({ ofertaNome: v.oferta_nome, precoBase: v.preco_base })),
+      tabela,
+    })
+  }, [agendarVenda, agendarDiagnostico, pageData.vendas_pendentes, pageData.vendas_ativos])
+
+  // Outra compra do mesmo paciente e produto que pode ser o MESMO pacote.
+  // O sistema propoe; quem confirma e o comercial.
+  const agendarCandidataPacote = useMemo(() => {
+    if (!agendarVenda || agendarDiagnostico) return null
+    const todas = [...pageData.vendas_pendentes, ...pageData.vendas_ativos]
+    const paraCandidata = (v: typeof agendarVenda) => ({
+      id: v.id, email: v.email, produto: v.produto, data_hora: v.data_hora,
+      ofertaNome: v.oferta_nome, precoBase: v.preco_base,
+      entregues: (pageData.sessoes_por_venda[v.id] ?? []).filter(s => s.status === 'entregue').length,
+      pacotePaiId: v.pacote_pai_id,
+    })
+    return candidataAoMesmoPacote({
+      venda: paraCandidata(agendarVenda),
+      outras: todas.map(paraCandidata),
+    })
+  }, [agendarVenda, agendarDiagnostico, pageData])
+
   const agendarNumSessoes = agendarDiagnostico
     ? agendarDiagnostico.totalSessoes
+    : agendarConfere && agendarConfere.situacao !== 'indeterminado'
+    ? agendarConfere.sessoes
     : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
   // Enquanto a releitura não volta, usa o que veio do load: é melhor avisar com
   // dado velho do que não avisar nada. O botão fica travado nesse intervalo.
@@ -1285,14 +1327,36 @@ export default function TerapeutasVendas() {
                 <input type="datetime-local" value={agendarDataPrimeira} onChange={e => setAgendarDataPrimeira(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
+              {/* A quantidade de sessões é REGRA DO NEGÓCIO, não escolha de quem
+                  agenda (usuário, 03/09/2026). Vem do nome da oferta, com o preço
+                  conferindo. Antes era um campo editável com um aviso mandando o
+                  comercial conferir numa planilha - ou seja, o sistema empurrava
+                  para ele uma responsabilidade que é da regra. O que ele decide,
+                  com autonomia total, é QUANDO cada sessão acontece. */}
               {!agendarDiagnostico && (
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões <span className="text-red-400">*</span></label>
-                  <input type="number" min={1} value={agendarNumSessoesInput} onChange={e => setAgendarNumSessoesInput(e.target.value)}
-                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
-                  <p className="text-[10px] text-gray-600 mt-1">
-                    Sugerido a partir do nome do produto - confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
-                  </p>
+                  <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões</label>
+                  {agendarConfere?.situacao === 'indeterminado' ? (
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                      <p className="text-xs text-red-300 font-medium">Não foi possível determinar a quantidade</p>
+                      <p className="text-[11px] text-red-400/80 mt-1">
+                        O nome da oferta não diz quantas sessões são{agendarVenda?.oferta_nome ? ` ("${agendarVenda.oferta_nome}")` : ' (a venda não tem oferta registrada)'} e o valor
+                        de R$ {(agendarVenda?.preco_base ?? 0).toLocaleString('pt-BR')} não bate com nenhum pacote de tabela.
+                        Ajuste a oferta na plataforma ou fale com o financeiro antes de agendar.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-full bg-gray-800/60 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200">
+                        {agendarNumSessoes} {agendarNumSessoes === 1 ? 'sessão' : 'sessões'}
+                      </div>
+                      <p className="text-[10px] text-gray-600 mt-1">
+                        {agendarVenda?.oferta_nome
+                          ? `Definido pela oferta "${agendarVenda.oferta_nome}".`
+                          : 'Definido pelo valor do pacote.'} Não é editável: a quantidade vem da venda.
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
               {agendarDatasEditadas.length > 0 && (

@@ -39,6 +39,17 @@ export interface Sale {
   /** "{idDaFatura}-{idDoProduto}" — duas linhas da mesma fatura compartilham
    *  o prefixo do UUID. Usado pela conferência do fechamento. */
   order_id?: string
+  /**
+   * Nome da oferta na plataforma ("Formato - 4 Sessão"). Fonte da QUANTIDADE de
+   * sessões do pacote - regra do negócio, não escolha de quem agenda.
+   */
+  oferta_nome?: string | null
+  /**
+   * Venda que carrega as sessões deste pacote. Preenchido quando o paciente
+   * pagou o mesmo pacote em mais de uma compra; venda com este campo não entra
+   * em Pendentes de Agendamento.
+   */
+  pacote_pai_id?: string | null
   preco_base: number
   valor_pago_cliente: number
   valor_com_juros?: number
