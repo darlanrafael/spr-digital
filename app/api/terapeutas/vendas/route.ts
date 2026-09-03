@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
-import { classificarVendas, COLUNAS_DA_TELA_DE_VENDAS } from '@/lib/vendas-por-situacao'
+import { classificarVendas, COLUNAS_DA_TELA_DE_VENDAS, termosDeProduto } from '@/lib/vendas-por-situacao'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SaleRow = {
@@ -136,8 +136,7 @@ export async function GET(req: NextRequest) {
     // acontecia, porque a venda não estava na lista. Termo fixo pelo nome do
     // produto: aqui é só pré-filtro de varredura, quem decide o formato de
     // verdade é formatoDaVenda(), pela oferta.
-    const TERMO_PRODUTO_DIAGNOSTICO = 'produto.ilike.%Diagnóstico Guiado%'
-    const termosProduto = [...nomesTerapeutas.map(n => `produto.ilike.%${n}%`), TERMO_PRODUTO_DIAGNOSTICO]
+    const termosProduto = termosDeProduto(nomesTerapeutas)
     // vendas_a_partir_de: corte de data por terapeuta — vendas anteriores ao
     // corte não aparecem mais em Pendentes/Ativos (paciente é lançado
     // manualmente em vez de reconciliar contra a venda antiga importada).

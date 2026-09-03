@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classificarVendas, ehPendenteDeAgendamento, ehVendaFilha, COLUNAS_DA_TELA_DE_VENDAS, COLUNAS_DO_DASHBOARD, ehDoTerapeuta, ehDiagnosticoGuiado, entrouNoCaixa, STATUS_DE_REEMBOLSO } from './vendas-por-situacao'
+import { classificarVendas, ehPendenteDeAgendamento, ehVendaFilha, COLUNAS_DA_TELA_DE_VENDAS, COLUNAS_DO_DASHBOARD, ehDoTerapeuta, ehDiagnosticoGuiado, entrouNoCaixa, STATUS_DE_REEMBOLSO, termosDeProduto } from './vendas-por-situacao'
 
 type V = { id: string; produto: string; status?: string | null; pacote_pai_id?: string | null }
 const MENTORIA = 'Mentoria Particular - Pedro Roncada'
@@ -120,4 +120,20 @@ test('o select do dashboard carrega oferta_nome: sem ele a projecao volta a chut
   // na tabela e dividem por 2 irmas - projetando 4 onde o pacote tem 8.
   assert.ok(COLUNAS_DO_DASHBOARD.includes('oferta_nome'))
   assert.ok(COLUNAS_DO_DASHBOARD.includes('pacote_pai_id'))
+})
+
+test('toda varredura de vendas dos terapeutas tem de trazer o Diagnostico', () => {
+  // O produto do Diagnostico nao contem nome de terapeuta nenhum. A varredura
+  // do dashboard filtrava so por nome, entao as vendas dele ficavam de fora, e
+  // como `consultas_hoje` e `proximas_consultas` sao filtradas por
+  // `.in('sale_id', saleIds)`, as sessoes do Diagnostico sumiam do Overview
+  // inteiro: 11 sessoes de 7 pacientes invisiveis, medido em 03/09/2026.
+  const t = termosDeProduto(['pedro', 'denise'])
+  assert.deepEqual(t, [
+    'produto.ilike.%pedro%',
+    'produto.ilike.%denise%',
+    'produto.ilike.%Diagnóstico Guiado%',
+  ])
+  // Mesmo sem terapeuta nenhum na lista, o Diagnostico continua entrando.
+  assert.deepEqual(termosDeProduto([]), ['produto.ilike.%Diagnóstico Guiado%'])
 })

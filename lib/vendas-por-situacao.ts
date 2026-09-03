@@ -33,6 +33,26 @@ export const STATUS_DE_REEMBOLSO = ['reembolsada', 'chargeback', 'cancelada', 'e
  */
 export const TERMO_DIAGNOSTICO = 'diagnóstico guiado'
 
+/**
+ * O termo do PostgREST que traz o Diagnóstico Guiado numa varredura de `sales`.
+ *
+ * Toda consulta que monta a lista de vendas dos terapeutas filtra por "o
+ * produto contém o nome de algum terapeuta". O Diagnóstico não contém nenhum,
+ * então precisa deste termo a mais em TODA varredura - a tela do comercial já
+ * o tinha, o dashboard não, e por isso as sessões do Diagnóstico não apareciam
+ * no Overview (elas são filtradas por `.in('sale_id', saleIds)`, e o
+ * `saleIds` saía dessa varredura).
+ *
+ * É só pré-filtro de varredura: quem decide o formato de verdade é
+ * `formatoDaVenda()`, pela oferta.
+ */
+export const TERMO_SQL_DIAGNOSTICO = 'produto.ilike.%Diagnóstico Guiado%'
+
+/** Os termos de produto de uma varredura de vendas dos terapeutas. */
+export function termosDeProduto(nomesTerapeutas: string[]): string[] {
+  return [...nomesTerapeutas.map(n => `produto.ilike.%${n}%`), TERMO_SQL_DIAGNOSTICO]
+}
+
 export function ehDiagnosticoGuiado(produto: string): boolean {
   return produto.toLowerCase().includes(TERMO_DIAGNOSTICO)
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { saleIdsComAsFilhas } from '@/lib/dinheiro-do-pacote'
-import { ehDoTerapeuta } from '@/lib/vendas-por-situacao'
+import { ehDoTerapeuta, termosDeProduto } from '@/lib/vendas-por-situacao'
 import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
@@ -204,8 +204,13 @@ export async function GET(req: NextRequest) {
       let q = supabase
         .from('sales')
         .select(COLUNAS_DO_DASHBOARD)
+      // O Diagnostico Guiado entra por termo proprio: o produto dele nao tem
+      // nome de terapeuta dentro, entao ele ficava de fora desta varredura -
+      // e como `consultas_hoje` e `proximas_consultas` sao filtradas por
+      // `.in('sale_id', saleIds)`, as sessoes do Diagnostico sumiam do
+      // Overview inteiro. A tela do comercial ja abria essa excecao; esta nao.
       if (nomesTerapeutas.length > 0) {
-        q = q.or(nomesTerapeutas.map(n => `produto.ilike.%${n}%`).join(','))
+        q = q.or(termosDeProduto(nomesTerapeutas).join(','))
       }
       if (from) q = q.gte('data_hora', from)
       if (to) q = q.lte('data_hora', to)
