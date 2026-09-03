@@ -766,7 +766,7 @@ export default function PainelTerapeuta() {
       const primeiroNome = nomeTerapeuta.split(' ')[0]
       let candidatasQuery = client
         .from('sales')
-        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status')
+        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,pacote_pai_id')
         .ilike('produto', `%${primeiroNome}%`)
         // Mentoria em Grupo não é agendamento individual — não deve cair em
         // Pendentes de Agendamento junto com a Mentoria Particular.
@@ -779,7 +779,11 @@ export default function PainelTerapeuta() {
         candidatasQuery = candidatasQuery.gte('data_hora', terapeutaResp.vendas_a_partir_de)
       }
       const { data: candidatas } = await candidatasQuery
-      let pendentes = ((candidatas ?? []) as SaleInfo[]).filter(v => !saleIds.includes(v.id))
+      // Venda ligada a outro pacote sai daqui tambem: ela ja foi agendada com
+      // a venda-pai, e o botao "Agendar" mandaria para /terapeutas/vendas, onde
+      // ela foi filtrada - devolvendo erro sem explicacao nenhuma.
+      let pendentes = ((candidatas ?? []) as SaleInfo[])
+        .filter(v => !saleIds.includes(v.id) && !(v as { pacote_pai_id?: string | null }).pacote_pai_id)
       // Terapeuta em modo "começar do zero" só reconhece produto exclusivo
       // dele — nunca um produto conjunto (ex: "Mentoria Particular - Pedro |
       // Denise") que bate com o nome de outro terapeuta ativo também. Esse

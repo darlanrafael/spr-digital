@@ -111,6 +111,8 @@ type Terapeuta = { id: string; nome: string }
 type PageData = {
   counts: { aprovadas: number; pendentes: number; ativos: number; reembolsos: number }
   vendas_pendentes: Sale[]
+  /** Vendas ligadas a outro pacote. Fora de Pendentes, mas necessárias para somar o pacote. */
+  vendas_filhas: Sale[]
   vendas_ativos: Sale[]
   vendas_reembolsos: Sale[]
   sessoes_por_venda: Record<string, Sessao[]>
@@ -292,7 +294,7 @@ function calcularReembolsoLocal(params: {
 
 const EMPTY_DATA: PageData = {
   counts: { aprovadas: 0, pendentes: 0, ativos: 0, reembolsos: 0 },
-  vendas_pendentes: [], vendas_ativos: [], vendas_reembolsos: [],
+  vendas_pendentes: [], vendas_filhas: [], vendas_ativos: [], vendas_reembolsos: [],
   sessoes_por_venda: {}, ocorrencias_por_venda: {}, remarcacoes_por_sessao: {},
   terapeutas: [], formatos: [],
 }
@@ -619,16 +621,32 @@ export default function TerapeutasVendas() {
   // A QUANTIDADE de sessoes e regra do negocio, nao escolha de quem agenda
   // (usuario, 03/09/2026). Vem do nome da oferta, com o preco conferindo; o
   // comercial decide só QUANDO cada sessao acontece.
+  // `pacoteResposta` e resposta SOBRE UMA VENDA. Sem limpar ao trocar de venda,
+  // ela vazava: depois de responder "e o mesmo pacote" uma vez, toda venda
+  // agendada na mesma sessao de pagina mandava a mesma resposta - travando o
+  // agendamento (400 sem candidata) ou juntando duas compras que ninguem
+  // confirmou.
+  useEffect(() => {
+    setPacoteResposta(null)
+    setPacotePagaDiferenca(null)
+    setPacoteOutraCompra(null)
+    setPacoteJustificativa('')
+    setPacoteErro('')
+  }, [agendarVendaId])
+
   const agendarConfere = useMemo(() => {
     if (!agendarVenda || agendarDiagnostico) return null
-    const irmas = [...pageData.vendas_pendentes, ...pageData.vendas_ativos]
-      .filter(v => v.pacote_pai_id === agendarVenda.id)
+    // `vendas_filhas` e a unica lista que contem venda ligada a outro pacote:
+    // ela sai de Pendentes por definicao e nao entra em Ativos (nao tem sessao).
+    // Procurar as irmas nas outras duas devolvia sempre vazio, e a soma do
+    // pacote - o coracao da feature - nunca acontecia em producao.
+    const irmas = pageData.vendas_filhas.filter(v => v.pacote_pai_id === agendarVenda.id)
     const tabela: 'pedro' | 'denise' = agendarVenda.produto.toLowerCase().includes('denise') ? 'denise' : 'pedro'
     return conferirQuantidade({
       vendas: [agendarVenda, ...irmas].map(v => ({ ofertaNome: v.oferta_nome, precoBase: v.preco_base })),
       tabela,
     })
-  }, [agendarVenda, agendarDiagnostico, pageData.vendas_pendentes, pageData.vendas_ativos])
+  }, [agendarVenda, agendarDiagnostico, pageData.vendas_filhas])
 
   // Outra compra do mesmo paciente e produto que pode ser o MESMO pacote.
   // O sistema propoe; quem confirma e o comercial.
@@ -651,6 +669,11 @@ export default function TerapeutasVendas() {
     ? agendarDiagnostico.totalSessoes
     : agendarConfere && agendarConfere.situacao !== 'indeterminado'
     ? agendarConfere.sessoes
+    // `indeterminado` NAO pode virar 1: cair no palpite antigo daria ao paciente
+    // uma sessao onde ele comprou quatro ou oito, e a tela ja diz em vermelho
+    // que nao foi possivel determinar. 0 aqui e sinal, e o botao fica travado.
+    : agendarConfere?.situacao === 'indeterminado'
+    ? 0
     : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
   // Enquanto a releitura não volta, usa o que veio do load: é melhor avisar com
   // dado velho do que não avisar nada. O botão fica travado nesse intervalo.
@@ -775,10 +798,13 @@ export default function TerapeutasVendas() {
     // precisam estar ligadas antes de montar as sessões, senão o agendamento
     // cria 4 em vez de 8. Se falhar, para aqui - agendar com o pacote errado é
     // pior que não agendar.
-    if (pacoteResposta) {
+    // `ignorarCompromissos` e retry do MESMO agendamento: a resposta ja foi
+    // gravada na primeira tentativa. Regravar batia em 409 e travava o fluxo
+    // para sempre, ou duplicava ocorrencia e nota de prontuario.
+    if (pacoteResposta && !ignorarCompromissos) {
       const ok = await responderPacote(pacoteResposta, senha)
       if (!ok) { setAgendarLoading(false); setAgendarErro(pacoteErro || 'Não foi possível registrar a resposta sobre o pacote.'); return }
-    } else if (agendarConfere?.situacao === 'valor_divergente') {
+    } else if (agendarConfere?.situacao === 'valor_divergente' && !ignorarCompromissos) {
       const ok = await responderPacote('valor_divergente', senha)
       if (!ok) { setAgendarLoading(false); setAgendarErro(pacoteErro || 'Não foi possível registrar a resposta sobre o valor.'); return }
     }
@@ -1618,7 +1644,7 @@ export default function TerapeutasVendas() {
               {/* Travado enquanto a releitura das sessões não volta: confirmar
                   antes disso é decidir com o dado do carregamento da página,
                   que é exatamente o que essa releitura existe pra evitar. */}
-              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0} onClick={() => {
+              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0 || agendarConfere?.situacao === 'indeterminado'} onClick={() => {
                 if (agendarDiagnostico && !pedroTerapeuta) {
                   setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
                   return
@@ -1658,6 +1684,7 @@ export default function TerapeutasVendas() {
               }} className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
                 agendarResumo.bloqueado || agendarSessoesCarregando
                   || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0
+                  || agendarConfere?.situacao === 'indeterminado'
                   ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   : agendarEhSubstituicao ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'}`}>
                 {agendarSessoesCarregando

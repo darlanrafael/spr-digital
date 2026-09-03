@@ -132,6 +132,11 @@ export async function POST(req: NextRequest) {
                 preco_base:         sale.preco_base,
                 valor_pago_cliente: sale.valor_pago_cliente,
                 valor_liquido:      sale.valor_liquido,
+                // O offer e autoritativo tambem no nome da oferta, e agora esse
+                // campo decide a QUANTIDADE DE SESSOES do pacote. Deixar de
+                // fora faria a correcao de valor apagar a informacao que manda
+                // no agendamento.
+                oferta_nome:        sale.oferta_nome,
               })
               .eq('order_id', orderId)
             if (updateError) {

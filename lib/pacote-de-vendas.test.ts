@@ -97,3 +97,18 @@ test('vendasDoPacote junta a principal com as ligadas a ela', () => {
   const todas = [p, { id: 'filha', pacotePaiId: 'principal' }, { id: 'outra', pacotePaiId: 'outro' }, { id: 'solta', pacotePaiId: null }]
   assert.deepEqual(vendasDoPacote(p, todas).map(x => x.id), ['principal', 'filha'])
 })
+
+test('CRITICO: a propria venda NAO pode ser candidata de si mesma', () => {
+  // A tela passa a lista inteira em `outras`, incluindo a venda aberta. Sem a
+  // guarda de id, ela vira candidata com distancia zero - ou seja, SEMPRE a
+  // escolhida - e o comercial veria "encontramos outra compra" apontando para
+  // a mesma venda. Esta mutacao sobrevivia a suite inteira.
+  const a = v({ id: 'a', data_hora: '2026-08-25T12:00:00Z' })
+  assert.equal(candidataAoMesmoPacote({ venda: a, outras: [a] }), null)
+})
+
+test('a propria venda no meio da lista tambem e ignorada', () => {
+  const a = v({ id: 'a', data_hora: '2026-08-25T12:00:00Z' })
+  const b = v({ id: 'b', data_hora: '2026-08-25T14:00:00Z' })
+  assert.equal(candidataAoMesmoPacote({ venda: a, outras: [a, b] })?.id, 'b')
+})

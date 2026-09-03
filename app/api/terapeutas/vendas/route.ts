@@ -278,6 +278,15 @@ export async function GET(req: NextRequest) {
     const vendasAtivos = vendasAprovadas.filter(v =>
       sessoesPorVenda[v.id] && sessoesPorVenda[v.id].length > 0
     )
+    // Vendas que fazem parte de outro pacote. Saem de Pendentes (ja foram
+    // agendadas junto) mas PRECISAM chegar na tela: e delas que sai a soma de
+    // sessoes e de valor do pacote. Sem esta lista, a tela procurava as irmas
+    // dentro de Pendentes - de onde acabaram de ser removidas - e a soma virava
+    // codigo morto: o comercial respondia "e o mesmo pacote" e o sistema
+    // agendava 4 sessoes em vez de 8.
+    const vendasFilhas = vendasAprovadas.filter(v =>
+      !!(v as { pacote_pai_id?: string | null }).pacote_pai_id
+    )
     const formatos = [...new Set(vendasAll.map(v => v.produto))].sort()
 
     return NextResponse.json({
@@ -288,6 +297,7 @@ export async function GET(req: NextRequest) {
         reembolsos: vendasReembolsos.length,
       },
       vendas_pendentes: vendasPendentes,
+      vendas_filhas: vendasFilhas,
       vendas_ativos: vendasAtivos,
       vendas_reembolsos: vendasReembolsos,
       sessoes_por_venda: sessoesPorVenda,

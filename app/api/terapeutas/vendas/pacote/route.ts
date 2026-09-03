@@ -56,17 +56,49 @@ export async function POST(req: NextRequest) {
     const client = getSupabaseAdmin()
 
     const { data: venda, error: vErr } = await client
-      .from('sales').select('id, nome, produto').eq('id', sale_id).single()
+      .from('sales').select('id, nome, produto, email, pacote_pai_id').eq('id', sale_id).single()
     if (vErr || !venda) return NextResponse.json({ error: 'Venda não encontrada' }, { status: 404 })
 
     if (tipo === 'mesmo_pacote') {
-      // A irmã aponta para ESTA venda, que é a que vai carregar as sessões.
+      // A rota NÃO confia na tela. Ligar duas vendas erradas dá ao paciente
+      // menos sessões do que ele pagou e some com a segunda compra de
+      // Pendentes, então cada condição é conferida aqui também.
+      if (sale_irma_id === sale_id) {
+        return NextResponse.json({ error: 'Uma venda não pode ser parte dela mesma.' }, { status: 400 })
+      }
+      // Esta venda já é filha de outra: ligá-la como pai criaria corrente (ou
+      // ciclo, com A->B e B->A) que nenhuma tela sabe mostrar.
+      if ((venda as { pacote_pai_id?: string | null }).pacote_pai_id) {
+        return NextResponse.json({ error: 'Esta venda já faz parte de outro pacote.' }, { status: 409 })
+      }
       const { data: irma, error: iErr } = await client
-        .from('sales').select('id, pacote_pai_id').eq('id', sale_irma_id as string).single()
+        .from('sales').select('id, pacote_pai_id, email, produto, status').eq('id', sale_irma_id as string).single()
       if (iErr || !irma) return NextResponse.json({ error: 'A outra venda não foi encontrada' }, { status: 404 })
-      // Já ligada a um pacote: não sobrescreve em silêncio.
-      if ((irma as { pacote_pai_id?: string | null }).pacote_pai_id) {
+      const i = irma as { pacote_pai_id?: string | null; email?: string | null; produto: string; status?: string | null }
+      if (i.pacote_pai_id) {
         return NextResponse.json({ error: 'Essa outra venda já faz parte de outro pacote.' }, { status: 409 })
+      }
+      // Mesmo paciente, por E-MAIL. Cruzar por nome já produziu falso positivo
+      // neste projeto.
+      const emailA = ((venda as { email?: string | null }).email ?? '').trim().toLowerCase()
+      const emailB = (i.email ?? '').trim().toLowerCase()
+      if (!emailA || !emailB || emailA !== emailB) {
+        return NextResponse.json({ error: 'As duas vendas precisam ser do mesmo paciente.' }, { status: 400 })
+      }
+      if (i.produto !== (venda as { produto: string }).produto) {
+        return NextResponse.json({ error: 'As duas vendas precisam ser do mesmo produto.' }, { status: 400 })
+      }
+      if (i.status !== 'aprovada') {
+        return NextResponse.json({ error: 'A outra venda não está aprovada.' }, { status: 400 })
+      }
+      // Irmã COM sessões já é um pacote agendado por conta própria. Ligá-la
+      // aqui esconderia as sessões dela de todas as telas, que passam a olhar
+      // só a venda-pai.
+      const { data: sessoesIrma, error: sErr } = await client
+        .from('sessoes').select('id').eq('sale_id', sale_irma_id as string).limit(1)
+      if (sErr) return NextResponse.json({ error: sErr.message }, { status: 500 })
+      if ((sessoesIrma ?? []).length > 0) {
+        return NextResponse.json({ error: 'A outra venda já tem sessões agendadas: ela é um pacote próprio.' }, { status: 409 })
       }
       const { error: upErr } = await client
         .from('sales').update({ pacote_pai_id: sale_id }).eq('id', sale_irma_id as string)

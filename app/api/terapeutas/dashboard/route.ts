@@ -192,7 +192,7 @@ export async function GET(req: NextRequest) {
     while (true) {
       let q = supabase
         .from('sales')
-        .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros')
+        .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros,pacote_pai_id')
       if (nomesTerapeutas.length > 0) {
         q = q.or(nomesTerapeutas.map(n => `produto.ilike.%${n}%`).join(','))
       }
@@ -282,6 +282,9 @@ export async function GET(req: NextRequest) {
       const pendentes = vendasRaw.filter(v => {
         // Mentoria em Grupo não é agendamento individual — não deve entrar
         // na contagem de sessões/comissão pendente de agendamento.
+        // Venda ligada a outro pacote ja foi agendada junto dele: contar como
+        // pendente somaria sessoes e comissao projetada que nunca serao pagas.
+        if ((v as { pacote_pai_id?: string | null }).pacote_pai_id) return false
         if (v.status !== 'aprovada' || saleIdsComSessao.has(v.id) || !v.produto.toLowerCase().includes(primeiroNome) || !saleAposCorte(v) || v.produto.toLowerCase().includes('grupo')) return false
         if (t.vendas_a_partir_de) {
           const outrosQueTambemBatem = todosNomesTerapeutas.filter(n => n !== primeiroNome && v.produto.toLowerCase().includes(n))

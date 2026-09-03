@@ -128,3 +128,28 @@ test('valor ACIMA do pacote tambem gera pergunta', () => {
   if (r.situacao !== 'valor_divergente') return
   assert.equal(r.diferenca, -220, 'diferenca negativa quando pagou a mais')
 })
+
+test('CRITICO: pacote com UMA venda sem oferta legivel e INDETERMINADO, nao soma so as legiveis', () => {
+  // Somar so as ofertas legiveis daria um total menor que o comprado, e o
+  // paciente receberia menos sessoes do que pagou. Melhor perguntar do que
+  // somar errado. Esta mutacao sobrevivia a suite inteira.
+  const r = conferirQuantidade({
+    vendas: [
+      { ofertaNome: 'Formato - 4 Sessão', precoBase: 2860 },
+      { ofertaNome: 'Restante', precoBase: 500 },
+    ],
+    tabela: 'pedro',
+  })
+  assert.equal(r.situacao, 'indeterminado')
+})
+
+test('todas as vendas com oferta legivel: soma normalmente', () => {
+  const r = conferirQuantidade({
+    vendas: [
+      { ofertaNome: 'Formato - 4 Sessão', precoBase: 2600 },
+      { ofertaNome: 'Formato - 4 Sessão', precoBase: 2680 },
+    ],
+    tabela: 'pedro',
+  })
+  assert.deepEqual(r, { situacao: 'ok', sessoes: 8 })
+})
