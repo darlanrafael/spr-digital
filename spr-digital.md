@@ -2886,9 +2886,28 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     3. **A comissao ja gravada nunca e recalculada.** Hoje custa **R$ 0,00** porque o Pedro e socio a 0%, mas `percentual_comissao` e campo de banco: basta ele deixar de ser 0 e as 410 sessoes dele entram de uma vez.
     4. **Custo de trafego do Perpetuo CCC nunca aplicado:** R$ 3.234,23 x 1,1385 = **R$ 3.682,17**, fechamento `close_1786731068074`.
     5. **Marcar "Abater aqui" para os R$ 1.560 do Miguel** no proximo fechamento (Pedro absorve R$ 1.014, SPR R$ 546).
-    6. **Bug de fuso na tela de fechamento:** 516 de 1.892 vendas da Hubla caem no dia errado.
+    6. ~~**Bug de fuso na tela de fechamento:** 516 de 1.892 vendas da Hubla caem no dia errado.~~ **NAO EXISTE. Medido e descartado em 03/09/2026** - ver 46.12.
     7. **`order_ref` da Kiwify nunca e gravado.**
     8. **A varredura preventiva diaria nunca foi construida.**
     9. **Estender o "agendar assim mesmo" para `remarcar` e `empurrar-seguintes`** (213 de 627 vagas da grade do Pedro estao bloqueadas so por compromisso).
     10. **A exclusao de compromisso por fora do app nao deixa rastro** em `atividades_log` (o caminho da tela grava).
     11. **Residuo antigo no banco:** usuario `FELIPE TESTE` ativo desde 19/06, 28 linhas de `atividades_log` orfas, 2 solicitacoes de reembolso apontando para sessao inexistente, 1 ocorrencia "TESTE TESTE".
+
+
+    ---
+
+    ## 46.12. Uma pendencia que nao era pendencia: o "bug de fuso da tela de fechamento"
+
+    **Este item vinha sendo carregado de lista em lista sem nunca ter sido medido.** Foi medido em 03/09/2026, a pedido do usuario ("nao entendi isso cara"), e **descartado**.
+
+    **A hipotese era:** `app/fechamentos/page.tsx:298` faz `const d = s.data_hora.slice(0, 10)` para decidir se a venda cai no periodo do fechamento. Como a Hubla grava `data_hora` em UTC real, uma venda feita as 23:06 de 25/08 no Brasil e gravada como `2026-08-26T02:06:37Z`; cortar a string daria `2026-08-26` e jogaria a venda para o dia seguinte.
+
+    **A medicao:** 10.055 vendas no banco, 2.656 da Hubla. Destas, **655 tem hora UTC entre 00:00 e 02:59**, ou seja, foram feitas a noite no Brasil e a data crua difere da data BRT nas 655. Exemplos reais: `2026-08-26T02:06:37Z` -> 25/08 23:06 BRT; `2026-06-10T01:05:05Z` -> 09/06 22:05 BRT; `2026-07-22T01:57:14Z` -> 21/07 22:57 BRT.
+
+    **Por que nao acontece:** `getSales()` aplica `normTs()` em `data_hora` (`lib/services.ts:189`) **antes** de a venda chegar em qualquer tela, e `normTs` subtrai 3h de tudo que nao e Kiwify. Quando `page.tsx:298` corta a string, ela **ja esta em BRT**. Vendas caindo no dia errado hoje: **0**.
+
+    **Os dois unicos lugares do sistema que cortam `data_hora` para virar data** sao `app/fechamentos/page.tsx:298` e `lib/alertas-reembolso.ts:94`, e os dois recebem objetos `Sale` vindos de `getSales()`. Nao ha terceiro caminho.
+
+    **A Kiwify tambem esta certa, por um motivo oposto:** ela grava BRT com sufixo `+00:00` (nao e UTC de verdade), e `normTs` **nao** subtrai nada quando a plataforma e Kiwify. As 350 vendas da Kiwify com hora entre 00:00 e 02:59 estao no dia certo justamente porque a subtracao nao acontece.
+
+    **A licao, que vale para a lista de pendencias inteira:** um item herdado de outra rodada nao e um achado ate ser medido. Este ficou meses na lista, foi repetido em varias entregas e custou tempo do usuario para ser explicado, quando dez minutos de medicao o teriam eliminado na origem. **Antes de apresentar uma pendencia, reproduza-a com numero; se nao reproduzir, ela sai da lista.**
