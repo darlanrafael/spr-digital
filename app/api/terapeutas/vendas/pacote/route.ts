@@ -75,8 +75,22 @@ export async function POST(req: NextRequest) {
         .from('sales').select('id, pacote_pai_id, email, produto, status').eq('id', sale_irma_id as string).single()
       if (iErr || !irma) return NextResponse.json({ error: 'A outra venda não foi encontrada' }, { status: 404 })
       const i = irma as { pacote_pai_id?: string | null; email?: string | null; produto: string; status?: string | null }
-      if (i.pacote_pai_id) {
+      // Idempotente de proposito: se a irma JA aponta para esta venda, a
+      // resposta ja foi gravada numa tentativa anterior. Recusar aqui prendia o
+      // comercial - qualquer falha do agendamento (conflito de agenda, 500,
+      // timeout) fazia a proxima tentativa bater em 409 e nunca mais agendar,
+      // sem nada na tela dizendo o motivo.
+      const jaLigadaAqui = i.pacote_pai_id === sale_id
+      if (i.pacote_pai_id && !jaLigadaAqui) {
         return NextResponse.json({ error: 'Essa outra venda já faz parte de outro pacote.' }, { status: 409 })
+      }
+      // Corrente de 3: A->B ligado, agendamento falha, depois B->C deixaria
+      // B->A->C e uma compra fora da soma. Nenhuma tela sabe mostrar isso.
+      const { data: filhas, error: fErr } = await client
+        .from('sales').select('id').eq('pacote_pai_id', sale_irma_id as string).limit(1)
+      if (fErr) return NextResponse.json({ error: fErr.message }, { status: 500 })
+      if ((filhas ?? []).length > 0) {
+        return NextResponse.json({ error: 'Essa outra venda já é o pacote principal de outra compra.' }, { status: 409 })
       }
       // Mesmo paciente, por E-MAIL. Cruzar por nome já produziu falso positivo
       // neste projeto.
@@ -100,9 +114,11 @@ export async function POST(req: NextRequest) {
       if ((sessoesIrma ?? []).length > 0) {
         return NextResponse.json({ error: 'A outra venda já tem sessões agendadas: ela é um pacote próprio.' }, { status: 409 })
       }
-      const { error: upErr } = await client
-        .from('sales').update({ pacote_pai_id: sale_id }).eq('id', sale_irma_id as string)
-      if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
+      if (!jaLigadaAqui) {
+        const { error: upErr } = await client
+          .from('sales').update({ pacote_pai_id: sale_id }).eq('id', sale_irma_id as string)
+        if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
+      }
     }
 
     const { error: ocErr } = await client.from('ocorrencias_pacote').insert({
@@ -119,7 +135,14 @@ export async function POST(req: NextRequest) {
       respondido_por_nome: nomeUsuario,
       respondido_por_email: usuario_email,
     })
-    if (ocErr) return NextResponse.json({ error: ocErr.message }, { status: 500 })
+    if (ocErr) {
+      // Sem auditoria o link nao pode ficar de pe: o CEO nao teria como saber
+      // que duas compras foram juntadas, e nao ha tela que desfaca.
+      if (tipo === 'mesmo_pacote' && sale_irma_id) {
+        await client.from('sales').update({ pacote_pai_id: null }).eq('id', sale_irma_id)
+      }
+      return NextResponse.json({ error: ocErr.message }, { status: 500 })
+    }
 
     const descricao =
       tipo === 'mesmo_pacote'
@@ -153,6 +176,75 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true })
   } catch (err) {
     console.error('[vendas/pacote]', err)
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+  }
+}
+
+// Desfaz a ligação entre duas compras.
+//
+// Existe porque um clique errado em "É o mesmo pacote" fazia a venda sumir de
+// Pendentes, do dashboard e da tela do terapeuta, sem nenhuma tela mostrando
+// que ela virou filha de outra - a única saída seria cirurgia no banco.
+export async function DELETE(req: NextRequest) {
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
+  }
+  const { sale_id, usuario_email, senha, token } = body as {
+    sale_id: string
+    usuario_email: string
+    senha?: string
+    token?: string
+  }
+  if (!sale_id || !usuario_email || (!senha && !token)) {
+    return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
+  }
+
+  try {
+    const acesso = await verificarAcesso({ usuario_email, senha, token })
+    if (!acesso.valido) {
+      const { error, status } = erroAcesso(acesso)
+      return NextResponse.json({ error }, { status })
+    }
+    const usuario = acesso.usuario as Record<string, unknown> | undefined
+    const nomeUsuario = (usuario?.nome as string) ?? usuario_email
+
+    const client = getSupabaseAdmin()
+    const { data: venda, error: vErr } = await client
+      .from('sales').select('id, nome, produto, pacote_pai_id').eq('id', sale_id).single()
+    if (vErr || !venda) return NextResponse.json({ error: 'Venda não encontrada' }, { status: 404 })
+
+    const v = venda as { nome: string; produto: string; pacote_pai_id?: string | null }
+    if (!v.pacote_pai_id) {
+      return NextResponse.json({ error: 'Esta venda não faz parte de outro pacote.' }, { status: 400 })
+    }
+
+    const { error: upErr } = await client
+      .from('sales').update({ pacote_pai_id: null }).eq('id', sale_id)
+    if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
+
+    const descricao = `Compra desligada do pacote por ${nomeUsuario}. Ela volta para Pendentes de Agendamento.`
+    await client.from('ocorrencias_pacote').insert({
+      sale_id,
+      sale_irma_id: v.pacote_pai_id,
+      paciente_nome: v.nome,
+      produto: v.produto,
+      tipo: 'compra_separada',
+      justificativa: descricao,
+      respondido_por_nome: nomeUsuario,
+      respondido_por_email: usuario_email,
+    })
+    await registrarAtividade({
+      usuario_nome: nomeUsuario,
+      usuario_tipo: (usuario?.tipo as string) ?? 'admin',
+      tipo_acao: 'nota',
+      sale_id,
+      descricao,
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    console.error('[vendas/pacote DELETE]', err)
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }
 }

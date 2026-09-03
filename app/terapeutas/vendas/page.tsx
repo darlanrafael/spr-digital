@@ -634,20 +634,6 @@ export default function TerapeutasVendas() {
     setPacoteErro('')
   }, [agendarVendaId])
 
-  const agendarConfere = useMemo(() => {
-    if (!agendarVenda || agendarDiagnostico) return null
-    // `vendas_filhas` e a unica lista que contem venda ligada a outro pacote:
-    // ela sai de Pendentes por definicao e nao entra em Ativos (nao tem sessao).
-    // Procurar as irmas nas outras duas devolvia sempre vazio, e a soma do
-    // pacote - o coracao da feature - nunca acontecia em producao.
-    const irmas = pageData.vendas_filhas.filter(v => v.pacote_pai_id === agendarVenda.id)
-    const tabela: 'pedro' | 'denise' = agendarVenda.produto.toLowerCase().includes('denise') ? 'denise' : 'pedro'
-    return conferirQuantidade({
-      vendas: [agendarVenda, ...irmas].map(v => ({ ofertaNome: v.oferta_nome, precoBase: v.preco_base })),
-      tabela,
-    })
-  }, [agendarVenda, agendarDiagnostico, pageData.vendas_filhas])
-
   // Outra compra do mesmo paciente e produto que pode ser o MESMO pacote.
   // O sistema propoe; quem confirma e o comercial.
   const agendarCandidataPacote = useMemo(() => {
@@ -664,6 +650,37 @@ export default function TerapeutasVendas() {
       outras: todas.map(paraCandidata),
     })
   }, [agendarVenda, agendarDiagnostico, pageData])
+
+  const agendarConfere = useMemo(() => {
+    if (!agendarVenda || agendarDiagnostico) return null
+    // Lançamento manual não vem de plataforma: não tem oferta e o `preco_base`
+    // costuma ser 0. Aplicar a regra da oferta ali deixaria essas vendas
+    // impossíveis de agendar por caminho nenhum - e são 34 nos últimos 90 dias.
+    // A quantidade delas continua vindo de quem lançou, como sempre veio.
+    if (agendarVenda.id.startsWith('manual_')) return null
+    // `vendas_filhas` e a unica lista que contem venda ligada a outro pacote:
+    // ela sai de Pendentes por definicao e nao entra em Ativos (nao tem sessao).
+    // Procurar as irmas nas outras duas devolvia sempre vazio, e a soma do
+    // pacote - o coracao da feature - nunca acontecia em producao.
+    const irmas = pageData.vendas_filhas.filter(v => v.pacote_pai_id === agendarVenda.id)
+    // A candidata que o comercial ACABOU de confirmar entra na conta agora, sem
+    // esperar recarregar. Sem isto, o link e o agendamento acontecem no mesmo
+    // clique e a quantidade enviada e a de ANTES do link: o sistema juntava as
+    // vendas e agendava 4 sessoes de um pacote de 8, com o modal dizendo
+    // "4 sessoes agendadas". A correcao anterior arrumou de ONDE vem a lista, e
+    // o defeito era QUANDO ela existe.
+    const confirmada = pacoteResposta === 'mesmo_pacote' && agendarCandidataPacote
+      ? [{ ofertaNome: agendarCandidataPacote.ofertaNome, precoBase: agendarCandidataPacote.precoBase }]
+      : []
+    const tabela: 'pedro' | 'denise' = agendarVenda.produto.toLowerCase().includes('denise') ? 'denise' : 'pedro'
+    return conferirQuantidade({
+      vendas: [
+        ...[agendarVenda, ...irmas].map(v => ({ ofertaNome: v.oferta_nome, precoBase: v.preco_base })),
+        ...confirmada,
+      ],
+      tabela,
+    })
+  }, [agendarVenda, agendarDiagnostico, pageData.vendas_filhas, pacoteResposta, agendarCandidataPacote])
 
   const agendarNumSessoes = agendarDiagnostico
     ? agendarDiagnostico.totalSessoes
@@ -763,10 +780,12 @@ export default function TerapeutasVendas() {
   //
   // Roda ANTES do agendamento e com a MESMA senha: se a resposta é "mesmo
   // pacote", as duas vendas precisam estar ligadas antes de o pacote ser
-  // montado, senão o agendamento cria 4 sessões em vez de 8. E pedir senha duas
-  // vezes na mesma ação seria atrito sem ganho nenhum.
-  async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente', senha: string): Promise<boolean> {
-    if (!agendarVenda) return true
+  // montado. A QUANTIDADE enviada já leva a candidata em conta desde o momento
+  // em que o comercial responde - ver o cálculo de agendarConfere -, senão o
+  // link acontecia e o agendamento ia com o número de antes dele. E pedir senha
+  // duas vezes na mesma ação seria atrito sem ganho nenhum.
+  async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente', senha: string): Promise<string | null> {
+    if (!agendarVenda) return null
     setPacoteLoading(true); setPacoteErro('')
     const res = await fetch('/api/terapeutas/vendas/pacote', {
       method: 'POST',
@@ -786,9 +805,13 @@ export default function TerapeutasVendas() {
     })
     const json = await res.json()
     setPacoteLoading(false)
-    if (!res.ok) { setPacoteErro(json.error ?? 'Erro'); return false }
+    // Devolve a mensagem para quem chamou: ler `pacoteErro` no mesmo tick em
+    // que ele foi setado pega o valor ANTIGO, e a caixa que o mostraria fica
+    // escondida quando a resposta e "mesmo pacote". O comercial via sempre a
+    // frase generica, nunca o motivo real.
+    if (!res.ok) { const m = json.error ?? 'Erro'; setPacoteErro(m); return m }
     setPacotePagaDiferenca(null); setPacoteOutraCompra(null); setPacoteJustificativa('')
-    return true
+    return null
   }
 
   async function handleAgendar(senha: string, ignorarCompromissos = false) {
@@ -802,11 +825,11 @@ export default function TerapeutasVendas() {
     // gravada na primeira tentativa. Regravar batia em 409 e travava o fluxo
     // para sempre, ou duplicava ocorrencia e nota de prontuario.
     if (pacoteResposta && !ignorarCompromissos) {
-      const ok = await responderPacote(pacoteResposta, senha)
-      if (!ok) { setAgendarLoading(false); setAgendarErro(pacoteErro || 'Não foi possível registrar a resposta sobre o pacote.'); return }
+      const erro = await responderPacote(pacoteResposta, senha)
+      if (erro) { setAgendarLoading(false); setAgendarErro(erro); return }
     } else if (agendarConfere?.situacao === 'valor_divergente' && !ignorarCompromissos) {
-      const ok = await responderPacote('valor_divergente', senha)
-      if (!ok) { setAgendarLoading(false); setAgendarErro(pacoteErro || 'Não foi possível registrar a resposta sobre o valor.'); return }
+      const erro = await responderPacote('valor_divergente', senha)
+      if (erro) { setAgendarLoading(false); setAgendarErro(erro); return }
     }
     if (!ignorarCompromissos) setAgendarConflitoCompromisso(null)
     const res = await fetch('/api/terapeutas/sessoes/agendar', {
