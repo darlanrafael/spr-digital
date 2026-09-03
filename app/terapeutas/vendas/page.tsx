@@ -7,6 +7,8 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
+import { brutoDoPacote } from '@/lib/dinheiro-do-pacote'
+import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda, avisosDasDatas } from '@/lib/diagnostico-guiado'
 import { decidirAgendamento, type RespostaDoComercial } from '@/lib/decisao-de-agendamento'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
@@ -198,6 +200,13 @@ function inferirNumeroSessoesPorValor(sale: Sale, todasVendas: Sale[]): number {
   // valor_pago_cliente varia com parcelamento e o preco_base quebra com cupom.
   const diagnostico = formatoDaVenda(sale)
   if (diagnostico) return diagnostico.totalSessoes
+  // O NOME DA OFERTA vem antes de qualquer chute por valor. A quantidade é
+  // regra da empresa e está escrita na oferta vendida; o chute erra justo no
+  // caso que importa - uma venda cuja irmã já foi LIGADA sai da lista de
+  // candidatas, a soma não fecha mais o preço do pacote, e a linha mostrava
+  // "Qtd. Sessões: 1" para um pacote de 8 enquanto o modal calculava 8.
+  const daOferta = sessoesDoNomeDaOferta(sale.oferta_nome)
+  if (daOferta) return daOferta
   const tabela = sale.produto.toLowerCase().includes('denise') ? TABELA_SESSOES_POR_VALOR.denise : TABELA_SESSOES_POR_VALOR.pedro
   if (tabela[sale.preco_base]) return tabela[sale.preco_base]
   const irmas = todasVendas.filter(v => v.email === sale.email && v.produto === sale.produto)
@@ -653,7 +662,11 @@ export default function TerapeutasVendas() {
       Object.entries(pageData.sessoes_por_venda).map(([id, ss]) => [id, ss.filter(x => x.status === 'entregue').length]),
     ),
     resposta: pacoteResposta,
-  }), [agendarVenda, agendarDiagnostico, pageData, pacoteResposta])
+    // O campo existia e nunca era preenchido: quem decidia "retry nao regrava a
+    // resposta" era um ternario no `handleAgendar`, duplicando a decisao fora
+    // do alcance dos testes. Agora ela vive num lugar so.
+    ehRetryDeCompromisso: !!agendarConflitoCompromisso,
+  }), [agendarVenda, agendarDiagnostico, pageData, pacoteResposta, agendarConflitoCompromisso])
 
   const agendarCandidataPacote = decisaoPacote.candidata
   const agendarConfere = decisaoPacote.confere
@@ -731,13 +744,16 @@ export default function TerapeutasVendas() {
         // menos do que ele pagou. Caso real da Amanda, JA nesse estado hoje:
         // a tela oferecia R$ 1.380 onde ela pagou R$ 5.280 em duas compras e
         // tem direito a R$ 3.980 - faltavam R$ 2.600.
-        valor_pago: prontuarioSale.valor_pago_cliente
-          + pageData.vendas_filhas
-              .filter(v => v.pacote_pai_id === prontuarioSale.id)
-              .reduce((a, v) => a + (v.valor_pago_cliente ?? 0), 0),
+        valor_pago: brutoDoPacote(prontuarioSale, pageData.vendas_filhas),
       })
     : null
   const valorReembolso = reembolsoCalc?.valor_reembolso ?? 0
+
+  // As compras ligadas a esta venda. Uma função só, usada em Pendentes e no
+  // prontuário: eram duas listas escritas à mão que já divergiram uma vez.
+  function filhasDaVenda(saleId: string) {
+    return pageData.vendas_filhas.filter(v => v.pacote_pai_id === saleId)
+  }
 
   function getVendedor(saleId: string): string {
     const sessoes = pageData.sessoes_por_venda[saleId] ?? []
@@ -767,16 +783,24 @@ export default function TerapeutasVendas() {
   async function desfazerPacote(senha: string) {
     if (!desfazerPacoteId) return
     setDesfazerLoading(true); setDesfazerErro('')
-    const res = await fetch('/api/terapeutas/vendas/pacote', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sale_id: desfazerPacoteId, usuario_email: adminEmail, senha }),
-    })
-    const json = await res.json()
-    setDesfazerLoading(false)
-    if (!res.ok) { setDesfazerErro(json.error ?? 'Erro'); return }
-    setDesfazerPacoteId(null)
-    loadData()
+    // O try/catch não é zelo: sem ele um fetch que rejeita - rede caída, corpo
+    // não-JSON - deixava `desfazerLoading` em `true` para sempre e o botão
+    // preso em "Verificando...", sem mensagem nenhuma.
+    try {
+      const res = await fetch('/api/terapeutas/vendas/pacote', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sale_id: desfazerPacoteId, usuario_email: adminEmail, senha }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setDesfazerErro(json.error ?? `Erro ${res.status}`); return }
+      setDesfazerPacoteId(null)
+      loadData()
+    } catch (e) {
+      setDesfazerErro(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDesfazerLoading(false)
+    }
   }
 
   async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente', senha: string): Promise<string | null> {
@@ -787,7 +811,13 @@ export default function TerapeutasVendas() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sale_id: agendarVenda.id,
-        sale_irma_id: tipo === 'mesmo_pacote' ? agendarCandidataPacote?.id : null,
+        // A irmã vai junto TAMBÉM em "compra separada": se ela já tiver sido
+        // ligada numa tentativa anterior, essa resposta é uma retratação e a
+        // rota precisa saber qual ligação desfazer. Sem isso o comercial podia
+        // juntar, ver o agendamento falhar, trocar para "é compra separada" e
+        // seguir com o `pacote_pai_id` ainda gravado - pacote de 8 agendado
+        // com 4 sessões, e a outra compra escondida de todas as telas.
+        sale_irma_id: agendarCandidataPacote?.id ?? null,
         tipo,
         diferenca: agendarConfere?.situacao === 'valor_divergente' ? agendarConfere.diferenca : null,
         sessoes_do_pacote: agendarConfere && agendarConfere.situacao !== 'indeterminado' ? agendarConfere.sessoes : null,
@@ -816,12 +846,10 @@ export default function TerapeutasVendas() {
     // precisam estar ligadas antes de montar as sessões, senão o agendamento
     // cria 4 em vez de 8. Se falhar, para aqui - agendar com o pacote errado é
     // pior que não agendar.
-    // `ignorarCompromissos` e retry do MESMO agendamento: a resposta ja foi
-    // gravada na primeira tentativa. Regravar batia em 409 e travava o fluxo
-    // para sempre, ou duplicava ocorrencia e nota de prontuario.
-    // `tipoAResponder` já sabe que retry de compromisso não regrava a resposta:
-    // regravar batia em 409 e travava o fluxo para sempre.
-    const tipoAResponder = ignorarCompromissos ? null : decisaoPacote.tipoAResponder
+    // `tipoAResponder` ja sabe que retry de compromisso nao regrava a resposta,
+    // e que uma ligacao ja gravada no banco nao precisa de segunda ocorrencia -
+    // ver lib/decisao-de-agendamento.ts. A decisao mora la, nao aqui.
+    const tipoAResponder = decisaoPacote.tipoAResponder
     if (tipoAResponder) {
       const erro = await responderPacote(tipoAResponder, senha)
       if (erro) { setAgendarLoading(false); setAgendarErro(erro); return }
@@ -859,6 +887,12 @@ export default function TerapeutasVendas() {
       // recusado pela própria reserva. Guarda a senha para o "agendar assim
       // mesmo" não obrigar a digitar de novo.
       if (json.soCompromissos) setAgendarConflitoCompromisso({ mensagem: json.error ?? '', senha })
+      // Recarrega mesmo tendo falhado: a resposta sobre o pacote foi gravada
+      // ANTES do agendamento, então a ligação já existe no banco e a tela
+      // ainda não sabe. Sem isto, a segunda tentativa recalculava a soma sem a
+      // irmã - `vendas_filhas` vazia, `confirmada` vazia - e mandava agendar 4
+      // sessões num pacote de 8.
+      if (tipoAResponder === 'mesmo_pacote') loadData()
       return
     }
     setAgendarSenhaOpen(false)
@@ -1184,7 +1218,28 @@ export default function TerapeutasVendas() {
                               </td>
                               <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
-                              <td className="px-4 py-3 text-gray-500 text-xs">—</td>
+                              <td className="px-4 py-3 text-gray-500 text-xs">
+                                {/* O aviso de pacote e o "Separar" moravam SÓ no
+                                    prontuário, e o prontuário só abre na aba de
+                                    Ativos. No estado em que o Separar existe
+                                    para servir - ligação criada, agendamento
+                                    falhou, o pai ainda em Pendentes - não havia
+                                    como desfazer pela tela: voltava a ser
+                                    cirurgia no banco, que é exatamente o que o
+                                    botão veio eliminar. */}
+                                {filhasDaVenda(sale.id).map(f => (
+                                  <div key={f.id} className="flex items-center gap-1.5 whitespace-nowrap">
+                                    <span className="text-sky-300" title={`Também entrou ${fmtBRL(f.valor_pago_cliente)} em ${fmtDt(f.data_hora)}${f.oferta_nome ? ` (${f.oferta_nome})` : ''}`}>
+                                      + {fmtBRL(f.valor_pago_cliente)} juntados
+                                    </span>
+                                    <button onClick={() => { setDesfazerPacoteId(f.id); setDesfazerErro('') }}
+                                      className="text-[10px] px-1.5 py-0.5 rounded border border-white/15 text-gray-300 hover:bg-gray-800">
+                                      Separar
+                                    </button>
+                                  </div>
+                                ))}
+                                {filhasDaVenda(sale.id).length === 0 && '—'}
+                              </td>
                               <td className="px-4 py-3">
                                 {ofertaDiagnosticoNaoMapeada(sale) ? (
                                   <span title="Oferta não mapeada: o formato do pacote é desconhecido."
@@ -1734,7 +1789,7 @@ export default function TerapeutasVendas() {
                 {/* Compras juntadas neste pacote. Sem isto, uma venda ligada
                     sumia de Pendentes, do dashboard e da tela do terapeuta, e
                     nenhuma tela dizia por quê. */}
-                {pageData.vendas_filhas.filter(v => v.pacote_pai_id === prontuarioSale.id).map(f => (
+                {filhasDaVenda(prontuarioSale.id).map(f => (
                   <div key={f.id} className="mt-2 flex items-center gap-2 text-[11px] bg-sky-500/10 border border-sky-500/30 rounded-lg px-2.5 py-1.5">
                     <span className="text-sky-300">
                       Pacote pago em mais de uma compra: também entrou {fmtBRL(f.valor_pago_cliente)} em {fmtDt(f.data_hora)}
@@ -2065,8 +2120,14 @@ export default function TerapeutasVendas() {
                       ) : (
                         <div className="space-y-1.5">
                           {sessoesPendentesProntuario.map(s => {
+                            // O valor por sessao sai do PACOTE INTEIRO. O
+                            // `totalProntuario` ja conta as sessoes das duas
+                            // compras (elas vivem todas na venda-pai), entao
+                            // dividir so o valor de uma delas mostrava R$ 335
+                            // por sessao onde a Amanda pagou R$ 660 - a mesma
+                            // metade que o reembolso oferecia.
                             const valorSessao = prontuarioSale
-                              ? prontuarioSale.valor_pago_cliente / (totalProntuario || 1)
+                              ? brutoDoPacote(prontuarioSale, pageData.vendas_filhas) / (totalProntuario || 1)
                               : 0
                             return (
                               <label key={s.id} className="flex items-center gap-2.5 cursor-pointer p-2 bg-gray-700/50 rounded-lg hover:bg-gray-700">
@@ -2168,14 +2229,16 @@ export default function TerapeutasVendas() {
       )}
 
       {/* ── SenhaModals ── */}
-      {/* Separar as compras exige senha, como toda ação que muda dado. Desfazer
-          devolve a venda para Pendentes de Agendamento, e se o pacote já foi
-          montado o paciente fica com sessões a mais do que a venda-pai sozinha
-          justifica - por isso a mensagem diz o que vai acontecer. */}
+      {/* Separar as compras exige senha, como toda ação que muda dado.
+          A mensagem antiga dizia "As sessões já criadas não são alteradas",
+          que é tranquilizador e era o oposto do que interessa: se o pacote já
+          foi montado, deixar as sessões como estão é justamente o problema - o
+          pai fica com 8 sessões sustentadas por uma compra que vale 4. A rota
+          agora RECUSA nesse estado, e a mensagem diz isso antes do clique. */}
       <SenhaModal isOpen={!!desfazerPacoteId}
         onClose={() => { setDesfazerPacoteId(null); setDesfazerErro('') }}
         onConfirm={desfazerPacote} titulo="Separar as compras"
-        descricao="A compra volta para Pendentes de Agendamento e deixa de somar neste pacote. As sessões já criadas não são alteradas."
+        descricao="A compra volta para Pendentes de Agendamento e deixa de somar neste pacote. Só é possível enquanto o pacote não tiver sessões agendadas - depois disso, anule ou reagende as sessões da venda principal antes."
         loading={desfazerLoading} erro={desfazerErro} />
 
       <SenhaModal isOpen={agendarSenhaOpen && !agendarConflitoCompromisso}

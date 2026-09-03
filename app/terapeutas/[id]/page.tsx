@@ -18,11 +18,12 @@ import AgendaDiaTerapeuta, {
   JANELA_INICIO_MIN, JANELA_FIM_MIN,
 } from '@/components/terapeutas/AgendaDiaTerapeuta'
 import { fimEfetivoSessao } from '@/lib/agenda-horarios'
+import { saleIdsComAsFilhas } from '@/lib/dinheiro-do-pacote'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
-import { ehPendenteDeAgendamento } from '@/lib/vendas-por-situacao'
+import { ehPendenteDeAgendamento, ehVendaFilha } from '@/lib/vendas-por-situacao'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -822,7 +823,7 @@ export default function PainelTerapeuta() {
         // nome identico.
         let diagQuery = client
           .from('sales')
-          .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id')
+          .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id,oferta_nome')
           .ilike('produto', '%Diagnóstico Guiado%')
           .eq('status', 'aprovada')
           .not('id', 'like', 'manual_%')
@@ -842,6 +843,11 @@ export default function PainelTerapeuta() {
           // tabela de Pendentes, via ofertaDiagnosticoNaoMapeada().
           if (saleIds.includes(v.id)) continue
           if (pendentes.some(p => p.id === v.id)) continue
+          // Venda ligada a outro pacote nao e pendente: as sessoes dela estao
+          // na venda-pai. Esta consulta reimplementava a regra a mao e nao
+          // conhecia o `pacote_pai_id`, entao uma compra do Diagnostico ja
+          // juntada voltaria a aparecer aqui pedindo agendamento.
+          if (ehVendaFilha(v)) continue
           pendentes.push(v)
         }
       }
@@ -1035,7 +1041,15 @@ export default function PainelTerapeuta() {
       if (p.vendedor === '—' && (s.vendedor_nome || s.agendado_por)) p.vendedor = s.vendedor_nome ?? s.agendado_por ?? '—'
     }
     for (const p of Object.values(map)) {
-      const vendasDoPaciente = p.saleIds.map(sid => vendas[sid]).filter((v): v is SaleInfo => !!v)
+      // As vendas FILHAS entram aqui. `p.saleIds` sai das SESSÕES, e a filha,
+      // por definição, não tem nenhuma - é a venda-pai que carrega o pacote.
+      // Carregá-las no mapa não bastava: sem somá-las, o bruto e o líquido do
+      // paciente ficavam pela metade, e o reembolso, que sai desse mesmo
+      // número, oferecia metade do devido. Caso real da Amanda: esta tela
+      // calculava R$ 1.380 enquanto a tela do comercial calculava R$ 3.980
+      // para o mesmo paciente, e as DUAS geram pedido de reembolso.
+      const vendasDoPaciente = saleIdsComAsFilhas(p.saleIds, Object.values(vendas))
+        .map(sid => vendas[sid]).filter((v): v is SaleInfo => !!v)
       // O manual conta a SESSÃO, nunca o DINHEIRO — mesma regra do item 26 do
       // spr-digital.md, aplicada em 10/08 no /api/terapeutas/dashboard e que
       // tinha ficado de fora desta tela. Lançamento manual do módulo de

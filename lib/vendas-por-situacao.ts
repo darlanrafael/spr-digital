@@ -17,6 +17,32 @@ export type VendaClassificavel = {
 
 export const STATUS_DE_REEMBOLSO = ['reembolsada', 'chargeback', 'cancelada', 'em_protesto']
 
+/**
+ * O Diagnóstico Guiado, que não traz nome de terapeuta no produto.
+ *
+ * As três telas de Pendentes escolhiam de quem é a venda por "o nome do produto
+ * contém o primeiro nome do terapeuta". "Diagnóstico Guiado: Programa de
+ * acompanhamento Individual" não contém nem "pedro" nem "denise", então a tela
+ * do comercial (que abre exceção por este termo) mostrava a venda e o dashboard
+ * e a tela do terapeuta não - discordância medida em 03/09/2026 sobre a venda
+ * do Francisco Geraldo, R$ 4.997.
+ *
+ * O pacote é dividido entre os dois terapeutas por formato, mas quem o INICIA é
+ * sempre o Pedro: agendar pela venda cria as sessões dos dois. Por isso ele
+ * aparece nos Pendentes do Pedro, como a tela dele já fazia.
+ */
+export const TERMO_DIAGNOSTICO = 'diagnóstico guiado'
+
+export function ehDiagnosticoGuiado(produto: string): boolean {
+  return produto.toLowerCase().includes(TERMO_DIAGNOSTICO)
+}
+
+/** Se esta venda entra nos Pendentes deste terapeuta, pelo nome do produto. */
+export function ehDoTerapeuta(produto: string, primeiroNome: string): boolean {
+  if (ehDiagnosticoGuiado(produto)) return primeiroNome.toLowerCase() === 'pedro'
+  return produto.toLowerCase().includes(primeiroNome.toLowerCase())
+}
+
 /** Mentoria em Grupo não é agendamento individual. */
 export function ehMentoriaEmGrupo(produto: string): boolean {
   return produto.toLowerCase().includes('grupo')
@@ -30,6 +56,19 @@ export function ehMentoriaEmGrupo(produto: string): boolean {
  */
 export function ehVendaFilha(v: VendaClassificavel): boolean {
   return !!v.pacote_pai_id
+}
+
+/**
+ * O dinheiro desta venda entrou no caixa e continua lá.
+ *
+ * É a mesma pergunta que a tela faz para montar a lista de aprovadas
+ * (`!status || status === 'aprovada'`), isolada aqui porque a rota de agendar
+ * também precisa dela: a comissão soma o líquido das vendas do pacote, e uma
+ * filha reembolsada some da tela mas seguia somando na comissão - o terapeuta
+ * recebia sobre dinheiro que voltou para o cliente.
+ */
+export function entrouNoCaixa(status: string | null | undefined): boolean {
+  return !status || status === 'aprovada'
 }
 
 export type ContextoDaVenda<T> = {
@@ -74,7 +113,15 @@ export function classificarVendas<T extends VendaClassificavel>(params: {
     aprovadas,
     pendentes: aprovadas.filter(v => ehPendenteDeAgendamento(v, { temSessao, aposCorte })),
     ativos: aprovadas.filter(temSessao),
-    filhas: aprovadas.filter(ehVendaFilha),
+    // Sai de `vendas`, não de `aprovadas`: uma segunda compra estornada
+    // continua com o `pacote_pai_id` gravado e o pacote continua agendado.
+    // Filtrando por aprovada, o prontuário do pai perdia o aviso de "pago em
+    // mais de uma compra" e o botão de separar, e a filha aparecia na aba de
+    // Reembolsos sem nada dizendo que fazia parte de um pacote de 8 sessões.
+    // Chargeback de uma das duas parcelas é justamente o motivo pelo qual
+    // alguém paga em duas compras. Quem decide se ela vale DINHEIRO é
+    // `filhasDoPacote`, em lib/dinheiro-do-pacote.ts, não esta lista.
+    filhas: vendas.filter(ehVendaFilha),
     reembolsos: vendas.filter(v => STATUS_DE_REEMBOLSO.includes(v.status ?? '')),
   }
 }
@@ -89,4 +136,4 @@ export const COLUNAS_DA_TELA_DE_VENDAS =
   'id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status,order_id,oferta_nome,pacote_pai_id'
 
 export const COLUNAS_DO_DASHBOARD =
-  'id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros,pacote_pai_id'
+  'id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros,pacote_pai_id,oferta_nome'

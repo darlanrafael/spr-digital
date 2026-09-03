@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
-import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, type VendaParaLigar, type Veredicto } from '@/lib/ligacao-de-pacote'
+import { MARCA_DESFAZER } from '@/lib/conferencia-de-pacote'
+import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, refazerLinkSeAuditoriaFalhar, type VendaParaLigar, type Veredicto } from '@/lib/ligacao-de-pacote'
 
 // Resposta do comercial sobre pacote pago em mais de uma compra.
 //
@@ -20,12 +21,34 @@ import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, type VendaParaLigar, typ
 // solicitações, assim como já acontece com os reembolsos". Sem esta rota a
 // tabela era write-only: gravava e ninguém lia, então a metade da feature que
 // existe para o CEO enxergar não existia de fato.
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const client = getSupabaseAdmin()
+
+    // A lista traz nome do paciente, produto e a `justificativa` de texto livre
+    // que o comercial digita sobre ele - o campo mais sensível do módulo. Sem
+    // nenhuma checagem, bastava a URL.
+    //
+    // A checagem é por usuário ATIVO, não por senha nem por token, e isso é uma
+    // escolha consciente: a tela de Aprovações guarda só `{nome, email, tipo}`
+    // em `localStorage`, sem token, e `verificarAcesso` por token só passa para
+    // quem tem `dispensa_senha_nas_acoes`. Exigir qualquer um dos dois deixaria
+    // a conferência do CEO inacessível para ele mesmo.
+    //
+    // O que isto protege: varredura anônima da URL. O que NÃO protege: alguém
+    // que saiba um e-mail cadastrado. As rotas GET de /vendas e /aprovacoes têm
+    // exatamente a mesma lacuna e precisam da mesma decisão - autenticação de
+    // GET neste módulo é item aberto, registrado no spr-digital.md.
+    const email = (req.nextUrl.searchParams.get('usuario_email') ?? '').trim().toLowerCase()
+    if (!email) return NextResponse.json({ error: 'Informe o usuário.' }, { status: 401 })
+    const { data: quem } = await client
+      .from('usuarios_sistema').select('id').ilike('email', email).eq('ativo', true).maybeSingle()
+    if (!quem) return NextResponse.json({ error: 'Usuário não autorizado.' }, { status: 401 })
     const { data, error } = await client
       .from('ocorrencias_pacote')
-      .select('*')
+      // Colunas nomeadas, nao `*`: o dia em que a tabela ganhar uma coluna
+      // nova, ela nao vaza sozinha por esta rota.
+      .select('id,sale_id,sale_irma_id,paciente_nome,produto,tipo,diferenca,sessoes_do_pacote,paciente_paga_diferenca,havera_outra_compra,justificativa,respondido_por_nome,created_at')
       .order('created_at', { ascending: false })
       .limit(100)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -87,12 +110,14 @@ export async function POST(req: NextRequest) {
     // sessões do que ele pagou e some com a segunda compra de Pendentes, então
     // cada condição é conferida aqui também. O I/O fica aqui; a DECISÃO fica em
     // lib/ligacao-de-pacote.ts, onde os testes a alcançam.
-    if (tipo === 'mesmo_pacote') {
+    if (sale_irma_id) {
       const { data: irma } = await client
-        .from('sales').select('id, pacote_pai_id, email, produto, status').eq('id', sale_irma_id as string).single()
+        .from('sales').select('id, pacote_pai_id, email, produto, status, data_hora').eq('id', sale_irma_id as string).single()
       const i = (irma ?? null) as VendaParaLigar | null
       let irmaTemFilhas = false, irmaTemSessoes = false
-      if (i) {
+      // As duas contagens só interessam para LIGAR. Numa resposta de "compras
+      // separadas" elas seriam duas idas ao banco sem uso.
+      if (i && tipo === 'mesmo_pacote') {
         const { data: filhas, error: fErr } = await client
           .from('sales').select('id').eq('pacote_pai_id', sale_irma_id as string).limit(1)
         if (fErr) return NextResponse.json({ error: fErr.message }, { status: 500 })
@@ -114,6 +139,11 @@ export async function POST(req: NextRequest) {
           .from('sales').update({ pacote_pai_id: sale_id }).eq('id', sale_irma_id as string)
         if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
       }
+      if (veredictoDoLink.acao === 'desligar') {
+        const { error: upErr } = await client
+          .from('sales').update({ pacote_pai_id: null }).eq('id', sale_irma_id as string)
+        if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
+      }
     }
 
     const { error: ocErr } = await client.from('ocorrencias_pacote').insert({
@@ -126,7 +156,13 @@ export async function POST(req: NextRequest) {
       sessoes_do_pacote: sessoes_do_pacote ?? null,
       paciente_paga_diferenca: paciente_paga_diferenca ?? null,
       havera_outra_compra: havera_outra_compra ?? null,
-      justificativa: justificativa ?? null,
+      // A retratação (respondeu "mesmo pacote", o agendamento falhou, trocou
+      // para "compra separada") carrega a marca do desfazer: sem ela o CEO lia
+      // "Compras separadas" e concluía que foi resposta do comercial, quando na
+      // verdade uma junção já registrada foi anulada.
+      justificativa: veredictoDoLink.acao === 'desligar'
+        ? `${MARCA_DESFAZER}: a resposta mudou para "compras separadas".${justificativa ? ` ${justificativa}` : ''}`
+        : justificativa ?? null,
       respondido_por_nome: nomeUsuario,
       respondido_por_email: usuario_email,
     })
@@ -139,6 +175,10 @@ export async function POST(req: NextRequest) {
         const { error: rbErr } = await client.from('sales').update({ pacote_pai_id: null }).eq('id', sale_irma_id)
         if (rbErr) console.error('[vendas/pacote] rollback do link falhou', sale_irma_id, rbErr.message)
       }
+      if (refazerLinkSeAuditoriaFalhar(veredictoDoLink) && sale_irma_id) {
+        const { error: rbErr } = await client.from('sales').update({ pacote_pai_id: sale_id }).eq('id', sale_irma_id)
+        if (rbErr) console.error('[vendas/pacote] rollback do desligamento falhou', sale_irma_id, rbErr.message)
+      }
       return NextResponse.json({ error: ocErr.message }, { status: 500 })
     }
 
@@ -146,7 +186,7 @@ export async function POST(req: NextRequest) {
       tipo === 'mesmo_pacote'
         ? `Compras juntadas no mesmo pacote${sessoes_do_pacote ? ` (${sessoes_do_pacote} sessões)` : ''}, respondido por ${nomeUsuario}`
         : tipo === 'compra_separada'
-          ? `Compras tratadas como pacotes separados, respondido por ${nomeUsuario}`
+          ? `Compras tratadas como pacotes separados, respondido por ${nomeUsuario}${veredictoDoLink.acao === 'desligar' ? ' (a ligação anterior entre elas foi desfeita)' : ''}`
           : `Valor do pacote divergente${diferenca ? ` em ${diferenca > 0 ? 'falta' : 'sobra'} de R$ ${Math.abs(diferenca).toLocaleString('pt-BR')}` : ''}, respondido por ${nomeUsuario}`
 
     // Tipo 'nota': e o unico que o check constraint de ocorrencias_prontuario
@@ -217,14 +257,42 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Esta venda não faz parte de outro pacote.' }, { status: 400 })
     }
 
+    // O pacote JÁ MONTADO não pode ser desfeito por aqui.
+    //
+    // As sessões da venda-pai foram criadas contando as duas compras, e a
+    // comissão gravada em cada uma saiu do líquido do pacote inteiro. Desligar
+    // sem tocar nelas deixa o pai com 8 sessões sustentadas por uma compra que
+    // vale 4, devolve a filha a Pendentes com o botão "Agendar" ativo, e o
+    // paciente termina com 8 + 4 = 12 sessões tendo pago 8 - com a comissão do
+    // pacote inteiro nas primeiras e uma comissão nova por cima nas últimas.
+    // Dimensionado no par real do Fábio Nery (R$ 700 + R$ 700, Denise a 30%):
+    // R$ 531,15 no lugar de R$ 354,10, 50% a mais.
+    //
+    // O "Separar" existe para o clique errado em "É o mesmo pacote" - estado em
+    // que o pai ainda não tem sessão nenhuma - e nesse estado ele continua
+    // funcionando. Depois de agendado, desfazer é anular as sessões primeiro.
+    const { data: sessoesDoPai, error: sErr } = await client
+      .from('sessoes').select('id').eq('sale_id', v.pacote_pai_id)
+    if (sErr) return NextResponse.json({ error: sErr.message }, { status: 500 })
+    const qtdSessoes = (sessoesDoPai ?? []).length
+    if (qtdSessoes > 0) {
+      return NextResponse.json({
+        error: `O pacote já foi agendado: a venda principal tem ${qtdSessoes} ${qtdSessoes === 1 ? 'sessão criada' : 'sessões criadas'}, e elas contam as duas compras. Separar agora deixaria o paciente com sessões a mais e a comissão em dobro. Anule ou reagende as sessões da venda principal antes de separar as compras.`,
+      }, { status: 409 })
+    }
+
     const { error: upErr } = await client
       .from('sales').update({ pacote_pai_id: null }).eq('id', sale_id)
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
-    const descricao = `Compra desligada do pacote por ${nomeUsuario}. Ela volta para Pendentes de Agendamento.`
-    await client.from('ocorrencias_pacote').insert({
-      sale_id,
-      sale_irma_id: v.pacote_pai_id,
+    const descricao = `${MARCA_DESFAZER} por ${nomeUsuario}. Ela volta para Pendentes de Agendamento.`
+    // `sale_id` é o PAI e `sale_irma_id` é a outra compra, na mesma direção do
+    // POST. Antes estava invertido: quem consultasse `ocorrencias_pacote` pelo
+    // id do pai - que é para isso que o índice existe - encontrava a junção e
+    // nunca o desfazer que a anulou.
+    const { error: ocErr } = await client.from('ocorrencias_pacote').insert({
+      sale_id: v.pacote_pai_id,
+      sale_irma_id: sale_id,
       paciente_nome: v.nome,
       produto: v.produto,
       tipo: 'compra_separada',
@@ -232,6 +300,30 @@ export async function DELETE(req: NextRequest) {
       respondido_por_nome: nomeUsuario,
       respondido_por_email: usuario_email,
     })
+    if (ocErr) {
+      // Simétrico ao POST: sem auditoria o desligamento não pode ficar de pé.
+      // Antes o erro era ignorado e a rota devolvia `success` de qualquer jeito
+      // - desligar sem registro nenhum passava em silêncio.
+      const { error: rbErr } = await client.from('sales').update({ pacote_pai_id: v.pacote_pai_id }).eq('id', sale_id)
+      if (rbErr) console.error('[vendas/pacote DELETE] rollback falhou', sale_id, rbErr.message)
+      return NextResponse.json({ error: ocErr.message }, { status: 500 })
+    }
+
+    // A nota de prontuário do POST ("Compras juntadas no mesmo pacote") fica
+    // gravada para sempre. Sem esta, o prontuário - que é o registro que o
+    // terapeuta e o comercial leem - continuava dizendo que as compras estão
+    // juntas depois de elas terem sido separadas.
+    await client.from('ocorrencias_prontuario').insert({
+      sale_id: v.pacote_pai_id,
+      tipo: 'nota',
+      titulo: 'Compras separadas: ligação desfeita',
+      descricao,
+      dados_extras: { sale_irma_id: sale_id, tipo: 'desfazer_pacote' },
+      criado_por_nome: nomeUsuario,
+      criado_por_tipo: (usuario?.tipo as string) ?? 'admin',
+      criado_por_email: usuario_email,
+    })
+
     await registrarAtividade({
       usuario_nome: nomeUsuario,
       usuario_tipo: (usuario?.tipo as string) ?? 'admin',

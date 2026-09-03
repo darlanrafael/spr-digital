@@ -1,9 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  classificarVendas, ehPendenteDeAgendamento, ehVendaFilha,
-  COLUNAS_DA_TELA_DE_VENDAS, COLUNAS_DO_DASHBOARD,
-} from './vendas-por-situacao'
+import { classificarVendas, ehPendenteDeAgendamento, ehVendaFilha, COLUNAS_DA_TELA_DE_VENDAS, COLUNAS_DO_DASHBOARD, ehDoTerapeuta, ehDiagnosticoGuiado, entrouNoCaixa, STATUS_DE_REEMBOLSO } from './vendas-por-situacao'
 
 type V = { id: string; produto: string; status?: string | null; pacote_pai_id?: string | null }
 const MENTORIA = 'Mentoria Particular - Pedro Roncada'
@@ -73,4 +70,54 @@ test('o select da tela de vendas carrega as colunas de que a regra depende', () 
 
 test('o select do dashboard carrega pacote_pai_id', () => {
   assert.ok(COLUNAS_DO_DASHBOARD.split(',').includes('pacote_pai_id'))
+})
+
+test('o Diagnostico Guiado nao some dos Pendentes por nao ter nome de terapeuta', () => {
+  // As tres telas escolhiam de quem e a venda por "o produto contem o primeiro
+  // nome do terapeuta". O Diagnostico nao contem nenhum, entao a tela do
+  // comercial (que abria excecao) mostrava e as outras duas nao. Medido em
+  // 03/09/2026 na venda do Francisco Geraldo, R$ 4.997.
+  const DIAG = 'Diagnóstico Guiado: Programa de acompanhamento Individual'
+  assert.equal(ehDoTerapeuta(DIAG, 'Pedro'), true)
+  assert.equal(ehDoTerapeuta(DIAG, 'Denise'), false)
+  assert.equal(ehDiagnosticoGuiado(DIAG), true)
+})
+
+test('a regra antiga continua valendo para os demais produtos', () => {
+  assert.equal(ehDoTerapeuta('Mentoria Particular - Pedro Roncada', 'Pedro'), true)
+  assert.equal(ehDoTerapeuta('Mentoria Particular - Pedro Roncada', 'Denise'), false)
+  assert.equal(ehDoTerapeuta('Mentoria Particular - Pedro | Denise', 'Denise'), true)
+  assert.equal(ehDiagnosticoGuiado('Mentoria Particular - Pedro Roncada'), false)
+})
+
+test('venda ligada a outro pacote fica FORA das aprovadas-pendentes mas DENTRO das filhas', () => {
+  // As filhas saem de `vendas`, nao de `aprovadas`: uma segunda compra
+  // estornada continua com o `pacote_pai_id` gravado e o pacote continua
+  // agendado. Filtrando por aprovada, o prontuario do pai perdia o aviso de
+  // "pago em mais de uma compra" e o botao de separar, e a filha aparecia em
+  // Reembolsos sem nada dizendo que fazia parte de um pacote de 8.
+  const pai = { id: 'pai', produto: 'Mentoria Particular - Pedro', status: 'aprovada' }
+  const filhaEstornada = { id: 'f', produto: 'Mentoria Particular - Pedro', status: 'reembolsada', pacote_pai_id: 'pai' }
+  const r = classificarVendas({
+    vendas: [pai, filhaEstornada],
+    aprovada: v => !v.status || v.status === 'aprovada',
+    temSessao: v => v.id === 'pai',
+  })
+  assert.deepEqual(r.filhas.map(v => v.id), ['f'])
+  assert.deepEqual(r.reembolsos.map(v => v.id), ['f'])
+  assert.deepEqual(r.pendentes.map(v => v.id), [])
+})
+
+test('entrouNoCaixa e a mesma pergunta que a lista de aprovadas faz', () => {
+  assert.equal(entrouNoCaixa('aprovada'), true)
+  assert.equal(entrouNoCaixa(null), true)
+  assert.equal(entrouNoCaixa(undefined), true)
+  for (const s of STATUS_DE_REEMBOLSO) assert.equal(entrouNoCaixa(s), false, s)
+})
+
+test('o select do dashboard carrega oferta_nome: sem ele a projecao volta a chutar', () => {
+  // Sem a oferta, duas compras do mesmo pacote somam R$ 5.280, acham 8 sessoes
+  // na tabela e dividem por 2 irmas - projetando 4 onde o pacote tem 8.
+  assert.ok(COLUNAS_DO_DASHBOARD.includes('oferta_nome'))
+  assert.ok(COLUNAS_DO_DASHBOARD.includes('pacote_pai_id'))
 })

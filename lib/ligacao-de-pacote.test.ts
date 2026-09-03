@@ -1,10 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, type PedidoDeLigacao, type VendaParaLigar } from './ligacao-de-pacote'
+import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, refazerLinkSeAuditoriaFalhar, type PedidoDeLigacao, type VendaParaLigar } from './ligacao-de-pacote'
 
 const PRODUTO = 'Mentoria Particular - Pedro Roncada'
-const venda: VendaParaLigar = { id: 'pai', email: 'amanda@x.com', produto: PRODUTO, status: 'aprovada' }
-const irma: VendaParaLigar = { id: 'irma', email: 'amanda@x.com', produto: PRODUTO, status: 'aprovada' }
+// Datas reais das duas compras da Amanda: 15h de distancia, dentro da janela.
+const venda: VendaParaLigar = { id: 'pai', email: 'amanda@x.com', produto: PRODUTO, status: 'aprovada', data_hora: '2026-08-25T12:43:00Z' }
+const irma: VendaParaLigar = { id: 'irma', email: 'amanda@x.com', produto: PRODUTO, status: 'aprovada', data_hora: '2026-08-24T21:28:00Z' }
 
 const p = (o: Partial<PedidoDeLigacao> = {}): PedidoDeLigacao => ({
   tipo: 'mesmo_pacote', irmaId: 'irma', venda, irma,
@@ -85,4 +86,55 @@ test('a auditoria falhando desfaz SÓ o link criado nesta tentativa', () => {
   assert.equal(desfazerLinkSeAuditoriaFalhar({ acao: 'ligar' }), true)
   assert.equal(desfazerLinkSeAuditoriaFalhar({ acao: 'ja_ligada' }), false)
   assert.equal(desfazerLinkSeAuditoriaFalhar({ acao: 'so_registrar' }), false)
+})
+
+test('a janela de 24h vale no SERVIDOR, nao so na tela', () => {
+  // A regra central do negocio vivia so no cliente: a rota aceitava juntar duas
+  // compras separadas por meses - exatamente o caso que a regra existe para nao
+  // juntar (pacote consumido e recomprado depois).
+  const r = avaliarLigacao(p({ irma: { ...irma, data_hora: '2026-06-19T12:00:00Z' } }))
+  assert.equal(r.acao, 'recusar')
+  assert.equal(r.acao === 'recusar' && r.status, 409)
+  assert.match(r.acao === 'recusar' ? r.erro : '', /acima do limite de 24h/)
+})
+
+test('exatamente na janela ainda liga; um minuto depois nao', () => {
+  const em24h = { ...irma, data_hora: '2026-08-24T12:43:00Z' }
+  assert.deepEqual(avaliarLigacao(p({ irma: em24h })), { acao: 'ligar' })
+  const passou = { ...irma, data_hora: '2026-08-24T12:42:00Z' }
+  assert.equal(avaliarLigacao(p({ irma: passou })).acao, 'recusar')
+})
+
+test('sem data das duas compras nao da para conferir a janela: recusa', () => {
+  // Recusar e o comportamento certo: assumir que passa juntaria compras
+  // distantes sem ninguem ver.
+  assert.equal(avaliarLigacao(p({ irma: { ...irma, data_hora: null } })).acao, 'recusar')
+  assert.equal(avaliarLigacao(p({ irma: { ...irma, data_hora: 'nao-e-data' } })).acao, 'recusar')
+})
+
+test('RETRATACAO: dizer "compra separada" sobre uma irma JA ligada desfaz a ligacao', () => {
+  // Sequencia real que isso destravava: o comercial junta as compras, o
+  // agendamento falha por conflito de horario, ele reconsidera, clica em "E
+  // compra separada" e segue. Antes a ligacao continuava gravada e o pacote de
+  // 8 era agendado com 4 sessoes, com a outra compra escondida de todas as
+  // telas para sempre.
+  const ligada = { ...irma, pacote_pai_id: 'pai' }
+  assert.deepEqual(avaliarLigacao(p({ tipo: 'compra_separada', irma: ligada })), { acao: 'desligar' })
+  assert.deepEqual(avaliarLigacao(p({ tipo: 'valor_divergente', irma: ligada })), { acao: 'desligar' })
+})
+
+test('"compra separada" sobre irma NAO ligada continua so registrando', () => {
+  assert.deepEqual(avaliarLigacao(p({ tipo: 'compra_separada' })), { acao: 'so_registrar' })
+  // E nao desliga a filha de OUTRO pacote.
+  const deOutro = { ...irma, pacote_pai_id: 'terceiro' }
+  assert.deepEqual(avaliarLigacao(p({ tipo: 'compra_separada', irma: deOutro })), { acao: 'so_registrar' })
+})
+
+test('a auditoria falhando REFAZ so o desligamento feito nesta tentativa', () => {
+  assert.equal(refazerLinkSeAuditoriaFalhar({ acao: 'desligar' }), true)
+  assert.equal(refazerLinkSeAuditoriaFalhar({ acao: 'ligar' }), false)
+  assert.equal(refazerLinkSeAuditoriaFalhar({ acao: 'ja_ligada' }), false)
+  assert.equal(refazerLinkSeAuditoriaFalhar({ acao: 'so_registrar' }), false)
+  // E o de desfazer nao dispara no desligamento.
+  assert.equal(desfazerLinkSeAuditoriaFalhar({ acao: 'desligar' }), false)
 })

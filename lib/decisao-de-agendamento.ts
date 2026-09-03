@@ -103,7 +103,14 @@ export function decidirAgendamento(e: EstadoDoModal): DecisaoDoAgendamento {
   // A candidata que o comercial ACABOU de confirmar entra na conta agora: o
   // link e o agendamento acontecem no mesmo clique, e esperar o recarregamento
   // fazia o pacote de 8 ser agendado com 4.
-  const confirmada = respostaEfetiva === 'mesmo_pacote' && candidata
+  //
+  // `jaEstaNasIrmas` evita contar a mesma compra duas vezes. Quando o
+  // agendamento falha depois de a resposta ter sido gravada, a tela recarrega
+  // (a ligação já existe no banco) e a candidata passa a chegar TAMBÉM por
+  // `filhas`. Sem esta guarda, a segunda tentativa somava 4 + 4 + 4 e pedia 12
+  // sessões num pacote de 8.
+  const jaEstaNasIrmas = !!candidata && irmas.some(v => v.id === candidata.id)
+  const confirmada = respostaEfetiva === 'mesmo_pacote' && candidata && !jaEstaNasIrmas
     ? [{ ofertaNome: candidata.ofertaNome, precoBase: candidata.precoBase }]
     : []
   const tabela: 'pedro' | 'denise' = venda.produto.toLowerCase().includes('denise') ? 'denise' : 'pedro'
@@ -120,7 +127,16 @@ export function decidirAgendamento(e: EstadoDoModal): DecisaoDoAgendamento {
   const numeroDeSessoes = confere.situacao === 'indeterminado' ? 0 : confere.sessoes
   const travado = confere.situacao === 'indeterminado'
 
-  const tipoAResponder = e.ehRetryDeCompromisso
+  // "É o mesmo pacote" sem candidata não tem o que gravar: não há ligação nova
+  // a criar. É o estado da SEGUNDA tentativa - a primeira gravou o link, a
+  // irmã saiu de Pendentes e entrou em `filhas`, e por isso
+  // `candidataAoMesmoPacote` já não a encontra. Antes, um agendamento que
+  // falhava e era repetido gravava uma segunda `ocorrencias_pacote`, uma
+  // segunda nota de prontuário e uma segunda linha de log dizendo a mesma
+  // coisa: o CEO via a mesma junção duas vezes na conferência e não tinha como
+  // saber se foram dois eventos ou um repetido.
+  const nadaNovoALigar = respostaEfetiva === 'mesmo_pacote' && !candidata
+  const tipoAResponder = e.ehRetryDeCompromisso || nadaNovoALigar
     ? null
     : respostaEfetiva ?? (confere.situacao === 'valor_divergente' ? 'valor_divergente' as const : null)
 

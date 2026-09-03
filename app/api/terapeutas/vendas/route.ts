@@ -20,6 +20,13 @@ type SaleRow = {
   // Diagnóstico Guiado não ganha etiqueta nem quantidade de sessões correta.
   // Os demais produtos ignoram o campo, então trazê-lo não muda nada pra eles.
   order_id: string | null
+  // As duas colunas novas do pacote. Declarar aqui nao e formalidade: sem elas
+  // no tipo, apagar a coluna do `select` nao da erro nenhum de compilacao - o
+  // campo chega `undefined` e a regra que depende dele apenas para de valer,
+  // em silencio. Foi assim que a regra de venda filha ja passou verde 12 vezes
+  // numa medicao por mutacao.
+  pacote_pai_id: string | null
+  oferta_nome: string | null
 }
 
 type SessaoRow = {
@@ -269,6 +276,29 @@ export async function GET(req: NextRequest) {
       temSessao: v => (sessoesPorVenda[v.id]?.length ?? 0) > 0,
       aposCorte: saleAposCorte,
     })
+
+    // As vendas filhas são buscadas FORA do filtro de data e do corte por
+    // terapeuta. Elas saem da varredura normal por acidente de calendário: as
+    // duas compras de um mesmo pacote costumam cair em dias diferentes (a
+    // janela da regra é de 24h, então o par quase sempre atravessa a
+    // meia-noite). Com o preset "Hoje" selecionado, a irmã sumia da lista, a
+    // soma do pacote voltava a valer metade e o comercial agendava 4 sessões
+    // num pacote de 8 - sem nada na tela dizendo que uma venda foi filtrada.
+    // Caso real: Amanda, compras em 24/08 21:28 e 25/08 12:43.
+    let filhasCompletas = vendasFilhas
+    const idsQueSaoPai = [...vendasPendentes, ...vendasAtivos].map(v => v.id)
+    if (idsQueSaoPai.length > 0) {
+      const achadas: SaleRow[] = []
+      for (let i = 0; i < idsQueSaoPai.length; i += 200) {
+        const { data } = await supabase
+          .from('sales').select(COLUNAS_DA_TELA_DE_VENDAS)
+          .in('pacote_pai_id', idsQueSaoPai.slice(i, i + 200))
+        achadas.push(...((data ?? []) as SaleRow[]))
+      }
+      const porId = new Map(filhasCompletas.map(v => [v.id, v]))
+      for (const v of achadas) porId.set(v.id, v)
+      filhasCompletas = [...porId.values()]
+    }
     const formatos = [...new Set(vendasAll.map(v => v.produto))].sort()
 
     return NextResponse.json({
@@ -279,7 +309,7 @@ export async function GET(req: NextRequest) {
         reembolsos: vendasReembolsos.length,
       },
       vendas_pendentes: vendasPendentes,
-      vendas_filhas: vendasFilhas,
+      vendas_filhas: filhasCompletas,
       vendas_ativos: vendasAtivos,
       vendas_reembolsos: vendasReembolsos,
       sessoes_por_venda: sessoesPorVenda,

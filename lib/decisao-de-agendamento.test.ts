@@ -126,3 +126,28 @@ test('lançamento manual não recebe proposta de juntar compras', () => {
   assert.equal(d.candidata, null)
   assert.equal(d.tipoAResponder, null)
 })
+
+// Os dois testes abaixo usam os mesmos PAI/IRMA de cima, variando so em qual
+// lista a irma chega - que e exatamente a diferenca entre a primeira e a
+// segunda tentativa de agendamento.
+test('SEGUNDA TENTATIVA: a irma ligada nao conta duas vezes', () => {
+  // Quando o agendamento falha DEPOIS de a resposta ter sido gravada, a tela
+  // recarrega e a candidata passa a chegar tambem por `filhas`. Sem guarda, a
+  // conta somava 4 + 4 + 4 e pedia 12 sessoes num pacote de 8.
+  const d = decidirAgendamento(base({
+    filhas: [{ ...IRMA, pacote_pai_id: 'pai' }],
+    resposta: { saleId: 'pai', valor: 'mesmo_pacote' },
+  }))
+  assert.equal(d.numeroDeSessoes, 8)
+  // E a resposta nao e regravada: a ligacao ja esta no banco.
+  assert.equal(d.tipoAResponder, null)
+})
+
+test('PRIMEIRA tentativa: a candidata ainda nao ligada conta, e a resposta e gravada', () => {
+  const d = decidirAgendamento(base({
+    pendentes: [IRMA],
+    resposta: { saleId: 'pai', valor: 'mesmo_pacote' },
+  }))
+  assert.equal(d.numeroDeSessoes, 8)
+  assert.equal(d.tipoAResponder, 'mesmo_pacote')
+})
