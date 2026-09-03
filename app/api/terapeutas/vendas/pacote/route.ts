@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
+import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, type VendaParaLigar, type Veredicto } from '@/lib/ligacao-de-pacote'
 
 // Resposta do comercial sobre pacote pago em mais de uma compra.
 //
@@ -59,62 +60,34 @@ export async function POST(req: NextRequest) {
       .from('sales').select('id, nome, produto, email, pacote_pai_id').eq('id', sale_id).single()
     if (vErr || !venda) return NextResponse.json({ error: 'Venda não encontrada' }, { status: 404 })
 
+    let veredictoDoLink: Veredicto = { acao: 'so_registrar' }
+    // A rota NÃO confia na tela. Ligar duas vendas erradas dá ao paciente menos
+    // sessões do que ele pagou e some com a segunda compra de Pendentes, então
+    // cada condição é conferida aqui também. O I/O fica aqui; a DECISÃO fica em
+    // lib/ligacao-de-pacote.ts, onde os testes a alcançam.
     if (tipo === 'mesmo_pacote') {
-      // A rota NÃO confia na tela. Ligar duas vendas erradas dá ao paciente
-      // menos sessões do que ele pagou e some com a segunda compra de
-      // Pendentes, então cada condição é conferida aqui também.
-      if (sale_irma_id === sale_id) {
-        return NextResponse.json({ error: 'Uma venda não pode ser parte dela mesma.' }, { status: 400 })
-      }
-      // Esta venda já é filha de outra: ligá-la como pai criaria corrente (ou
-      // ciclo, com A->B e B->A) que nenhuma tela sabe mostrar.
-      if ((venda as { pacote_pai_id?: string | null }).pacote_pai_id) {
-        return NextResponse.json({ error: 'Esta venda já faz parte de outro pacote.' }, { status: 409 })
-      }
-      const { data: irma, error: iErr } = await client
+      const { data: irma } = await client
         .from('sales').select('id, pacote_pai_id, email, produto, status').eq('id', sale_irma_id as string).single()
-      if (iErr || !irma) return NextResponse.json({ error: 'A outra venda não foi encontrada' }, { status: 404 })
-      const i = irma as { pacote_pai_id?: string | null; email?: string | null; produto: string; status?: string | null }
-      // Idempotente de proposito: se a irma JA aponta para esta venda, a
-      // resposta ja foi gravada numa tentativa anterior. Recusar aqui prendia o
-      // comercial - qualquer falha do agendamento (conflito de agenda, 500,
-      // timeout) fazia a proxima tentativa bater em 409 e nunca mais agendar,
-      // sem nada na tela dizendo o motivo.
-      const jaLigadaAqui = i.pacote_pai_id === sale_id
-      if (i.pacote_pai_id && !jaLigadaAqui) {
-        return NextResponse.json({ error: 'Essa outra venda já faz parte de outro pacote.' }, { status: 409 })
+      const i = (irma ?? null) as VendaParaLigar | null
+      let irmaTemFilhas = false, irmaTemSessoes = false
+      if (i) {
+        const { data: filhas, error: fErr } = await client
+          .from('sales').select('id').eq('pacote_pai_id', sale_irma_id as string).limit(1)
+        if (fErr) return NextResponse.json({ error: fErr.message }, { status: 500 })
+        irmaTemFilhas = (filhas ?? []).length > 0
+        const { data: sessoesIrma, error: sErr } = await client
+          .from('sessoes').select('id').eq('sale_id', sale_irma_id as string).limit(1)
+        if (sErr) return NextResponse.json({ error: sErr.message }, { status: 500 })
+        irmaTemSessoes = (sessoesIrma ?? []).length > 0
       }
-      // Corrente de 3: A->B ligado, agendamento falha, depois B->C deixaria
-      // B->A->C e uma compra fora da soma. Nenhuma tela sabe mostrar isso.
-      const { data: filhas, error: fErr } = await client
-        .from('sales').select('id').eq('pacote_pai_id', sale_irma_id as string).limit(1)
-      if (fErr) return NextResponse.json({ error: fErr.message }, { status: 500 })
-      if ((filhas ?? []).length > 0) {
-        return NextResponse.json({ error: 'Essa outra venda já é o pacote principal de outra compra.' }, { status: 409 })
+      veredictoDoLink = avaliarLigacao({
+        tipo, irmaId: sale_irma_id ?? null,
+        venda: venda as VendaParaLigar, irma: i, irmaTemFilhas, irmaTemSessoes,
+      })
+      if (veredictoDoLink.acao === 'recusar') {
+        return NextResponse.json({ error: veredictoDoLink.erro }, { status: veredictoDoLink.status })
       }
-      // Mesmo paciente, por E-MAIL. Cruzar por nome já produziu falso positivo
-      // neste projeto.
-      const emailA = ((venda as { email?: string | null }).email ?? '').trim().toLowerCase()
-      const emailB = (i.email ?? '').trim().toLowerCase()
-      if (!emailA || !emailB || emailA !== emailB) {
-        return NextResponse.json({ error: 'As duas vendas precisam ser do mesmo paciente.' }, { status: 400 })
-      }
-      if (i.produto !== (venda as { produto: string }).produto) {
-        return NextResponse.json({ error: 'As duas vendas precisam ser do mesmo produto.' }, { status: 400 })
-      }
-      if (i.status !== 'aprovada') {
-        return NextResponse.json({ error: 'A outra venda não está aprovada.' }, { status: 400 })
-      }
-      // Irmã COM sessões já é um pacote agendado por conta própria. Ligá-la
-      // aqui esconderia as sessões dela de todas as telas, que passam a olhar
-      // só a venda-pai.
-      const { data: sessoesIrma, error: sErr } = await client
-        .from('sessoes').select('id').eq('sale_id', sale_irma_id as string).limit(1)
-      if (sErr) return NextResponse.json({ error: sErr.message }, { status: 500 })
-      if ((sessoesIrma ?? []).length > 0) {
-        return NextResponse.json({ error: 'A outra venda já tem sessões agendadas: ela é um pacote próprio.' }, { status: 409 })
-      }
-      if (!jaLigadaAqui) {
+      if (veredictoDoLink.acao === 'ligar') {
         const { error: upErr } = await client
           .from('sales').update({ pacote_pai_id: sale_id }).eq('id', sale_irma_id as string)
         if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
@@ -137,9 +110,12 @@ export async function POST(req: NextRequest) {
     })
     if (ocErr) {
       // Sem auditoria o link nao pode ficar de pe: o CEO nao teria como saber
-      // que duas compras foram juntadas, e nao ha tela que desfaca.
-      if (tipo === 'mesmo_pacote' && sale_irma_id) {
-        await client.from('sales').update({ pacote_pai_id: null }).eq('id', sale_irma_id)
+      // que duas compras foram juntadas, e nao ha tela que desfaca. Mas so o
+      // link criado NESTA tentativa e desfeito - ver
+      // desfazerLinkSeAuditoriaFalhar em lib/ligacao-de-pacote.ts.
+      if (desfazerLinkSeAuditoriaFalhar(veredictoDoLink) && sale_irma_id) {
+        const { error: rbErr } = await client.from('sales').update({ pacote_pai_id: null }).eq('id', sale_irma_id)
+        if (rbErr) console.error('[vendas/pacote] rollback do link falhou', sale_irma_id, rbErr.message)
       }
       return NextResponse.json({ error: ocErr.message }, { status: 500 })
     }

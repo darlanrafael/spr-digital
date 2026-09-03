@@ -132,10 +132,23 @@ export async function POST(req: NextRequest) {
   // quem aplica isso é montarPacote. Rodar calcularComissao aqui produzia um
   // número que não é pago a ninguém e que ia parar no log de auditoria como se
   // fosse o valor real do pacote.
+  //
+  // O valor liquido e o do PACOTE INTEIRO, somando as vendas ligadas a esta.
+  // Quando o paciente paga o mesmo pacote em duas compras, as sessoes ficam
+  // todas na venda-pai e a filha fica com zero - se a comissao saisse so do
+  // liquido do pai, o dinheiro da segunda compra nao geraria comissao em lugar
+  // nenhum. Medido no caso real do Fabio Nery: a Denise receberia R$ 176,24 no
+  // lugar de R$ 354,10 pelas mesmas 4 sessoes, metade do devido.
+  const { data: filhasDaVenda, error: filhasErr } = await client
+    .from('sales').select('valor_liquido').eq('pacote_pai_id', sale_id)
+  if (filhasErr) return NextResponse.json({ error: filhasErr.message }, { status: 500 })
+  const liquidoDoPacote = ((sale.valor_liquido as number) ?? 0)
+    + (filhasDaVenda ?? []).reduce((a, f) => a + ((f as { valor_liquido: number | null }).valor_liquido ?? 0), 0)
+
   const comissao_por_sessao = diagnostico
     ? 0
     : calcularComissao({
-        valor_liquido: sale.valor_liquido as number,
+        valor_liquido: liquidoDoPacote,
         percentual: terapeuta.percentual_comissao as number,
         numero_sessoes: numSessoes,
       }).comissao_por_sessao

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
+import { classificarVendas, COLUNAS_DA_TELA_DE_VENDAS } from '@/lib/vendas-por-situacao'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SaleRow = {
@@ -164,9 +165,7 @@ export async function GET(req: NextRequest) {
     while (true) {
       let query = supabase
         .from('sales')
-        // `oferta_nome` e a fonte da QUANTIDADE de sessoes do pacote, e
-        // `pacote_pai_id` diz que esta venda ja foi agendada junto de outra.
-        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status,order_id,oferta_nome,pacote_pai_id')
+        .select(COLUNAS_DA_TELA_DE_VENDAS)
       // Mantém o comportamento antigo de "sem terapeuta ativo, sem filtro":
       // nesse caso a varredura já traz tudo, Diagnóstico incluído.
       if (nomesTerapeutas.length > 0) {
@@ -258,35 +257,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Classificar vendas
-    const vendasAprovadas = vendasAll.filter(v => !v.status || v.status === 'aprovada')
-    const vendasReembolsos = vendasAll.filter(v =>
-      ['reembolsada', 'chargeback', 'cancelada', 'em_protesto'].includes(v.status ?? '')
-    )
-    // Mentoria em Grupo não é agendamento individual — não deve cair em
-    // Pendentes de Agendamento junto com a Mentoria Particular.
-    const vendasPendentes = vendasAprovadas.filter(v =>
-      (!sessoesPorVenda[v.id] || sessoesPorVenda[v.id].length === 0) && saleAposCorte(v)
-      && !v.produto.toLowerCase().includes('grupo')
-      // Venda ligada a outro pacote ja foi agendada junto dele. Sem isto, a
-      // segunda compra de um pacote pago em duas vezes fica presa em Pendentes
-      // para sempre - as sessoes estao na venda irma, e a regra de pendente e
-      // "venda sem nenhuma sessao". Caso real: Amanda da Silva Rios, 24 e
-      // 25/08/2026, duas ofertas de "Formato - 4 Sessão" somando o pacote de 8.
-      && !(v as { pacote_pai_id?: string | null }).pacote_pai_id
-    )
-    const vendasAtivos = vendasAprovadas.filter(v =>
-      sessoesPorVenda[v.id] && sessoesPorVenda[v.id].length > 0
-    )
-    // Vendas que fazem parte de outro pacote. Saem de Pendentes (ja foram
-    // agendadas junto) mas PRECISAM chegar na tela: e delas que sai a soma de
-    // sessoes e de valor do pacote. Sem esta lista, a tela procurava as irmas
-    // dentro de Pendentes - de onde acabaram de ser removidas - e a soma virava
-    // codigo morto: o comercial respondia "e o mesmo pacote" e o sistema
-    // agendava 4 sessoes em vez de 8.
-    const vendasFilhas = vendasAprovadas.filter(v =>
-      !!(v as { pacote_pai_id?: string | null }).pacote_pai_id
-    )
+    // Classificar vendas. A regra vive em lib/vendas-por-situacao.ts porque as
+    // MESMAS perguntas são feitas no dashboard e na tela do terapeuta, e
+    // discordar entre os três é invisível.
+    const {
+      aprovadas: vendasAprovadas, pendentes: vendasPendentes,
+      ativos: vendasAtivos, filhas: vendasFilhas, reembolsos: vendasReembolsos,
+    } = classificarVendas({
+      vendas: vendasAll,
+      aprovada: v => !v.status || v.status === 'aprovada',
+      temSessao: v => (sessoesPorVenda[v.id]?.length ?? 0) > 0,
+      aposCorte: saleAposCorte,
+    })
     const formatos = [...new Set(vendasAll.map(v => v.produto))].sort()
 
     return NextResponse.json({

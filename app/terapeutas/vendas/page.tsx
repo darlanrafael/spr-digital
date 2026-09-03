@@ -8,8 +8,7 @@ import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda, avisosDasDatas } from '@/lib/diagnostico-guiado'
-import { conferirQuantidade } from '@/lib/sessoes-da-oferta'
-import { candidataAoMesmoPacote } from '@/lib/pacote-de-vendas'
+import { decidirAgendamento, type RespostaDoComercial } from '@/lib/decisao-de-agendamento'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 import { resumirReagendamentoTotal } from '@/lib/reagendamento-total'
 
@@ -383,7 +382,10 @@ export default function TerapeutasVendas() {
   // agendamento, quando o sistema acha outra compra do mesmo paciente e produto
   // dentro de 24h sem sessão entregue, ou quando o valor não fecha com o pacote.
   // O sistema propõe; quem decide é quem vendeu.
-  const [pacoteResposta, setPacoteResposta] = useState<'mesmo_pacote' | 'compra_separada' | null>(null)
+  // A resposta carrega o sale_id a que pertence - mesmo padrão de
+  // `agendarSessoesLidas`. Sem o carimbo, ela vazava para a próxima venda
+  // agendada na mesma sessão de página.
+  const [pacoteResposta, setPacoteResposta] = useState<RespostaDoComercial | null>(null)
   const [pacotePagaDiferenca, setPacotePagaDiferenca] = useState<boolean | null>(null)
   const [pacoteOutraCompra, setPacoteOutraCompra] = useState<boolean | null>(null)
   const [pacoteJustificativa, setPacoteJustificativa] = useState('')
@@ -634,64 +636,26 @@ export default function TerapeutasVendas() {
     setPacoteErro('')
   }, [agendarVendaId])
 
-  // Outra compra do mesmo paciente e produto que pode ser o MESMO pacote.
-  // O sistema propoe; quem confirma e o comercial.
-  const agendarCandidataPacote = useMemo(() => {
-    if (!agendarVenda || agendarDiagnostico) return null
-    const todas = [...pageData.vendas_pendentes, ...pageData.vendas_ativos]
-    const paraCandidata = (v: typeof agendarVenda) => ({
-      id: v.id, email: v.email, produto: v.produto, data_hora: v.data_hora,
-      ofertaNome: v.oferta_nome, precoBase: v.preco_base,
-      entregues: (pageData.sessoes_por_venda[v.id] ?? []).filter(s => s.status === 'entregue').length,
-      pacotePaiId: v.pacote_pai_id,
-    })
-    return candidataAoMesmoPacote({
-      venda: paraCandidata(agendarVenda),
-      outras: todas.map(paraCandidata),
-    })
-  }, [agendarVenda, agendarDiagnostico, pageData])
+  // Toda a decisão do modal (candidata, conferência, quantidade e trava) vive em
+  // lib/decisao-de-agendamento.ts. Três defeitos desta feature moraram
+  // exatamente nesta fiação, com as funções puras que ela chama corretas e
+  // cobertas por teste o tempo todo.
+  const decisaoPacote = useMemo(() => decidirAgendamento({
+    venda: agendarVenda ?? null,
+    totalDoDiagnostico: agendarDiagnostico?.totalSessoes ?? null,
+    pendentes: pageData.vendas_pendentes,
+    ativos: pageData.vendas_ativos,
+    filhas: pageData.vendas_filhas,
+    entreguesPorVenda: Object.fromEntries(
+      Object.entries(pageData.sessoes_por_venda).map(([id, ss]) => [id, ss.filter(x => x.status === 'entregue').length]),
+    ),
+    resposta: pacoteResposta,
+  }), [agendarVenda, agendarDiagnostico, pageData, pacoteResposta])
 
-  const agendarConfere = useMemo(() => {
-    if (!agendarVenda || agendarDiagnostico) return null
-    // Lançamento manual não vem de plataforma: não tem oferta e o `preco_base`
-    // costuma ser 0. Aplicar a regra da oferta ali deixaria essas vendas
-    // impossíveis de agendar por caminho nenhum - e são 34 nos últimos 90 dias.
-    // A quantidade delas continua vindo de quem lançou, como sempre veio.
-    if (agendarVenda.id.startsWith('manual_')) return null
-    // `vendas_filhas` e a unica lista que contem venda ligada a outro pacote:
-    // ela sai de Pendentes por definicao e nao entra em Ativos (nao tem sessao).
-    // Procurar as irmas nas outras duas devolvia sempre vazio, e a soma do
-    // pacote - o coracao da feature - nunca acontecia em producao.
-    const irmas = pageData.vendas_filhas.filter(v => v.pacote_pai_id === agendarVenda.id)
-    // A candidata que o comercial ACABOU de confirmar entra na conta agora, sem
-    // esperar recarregar. Sem isto, o link e o agendamento acontecem no mesmo
-    // clique e a quantidade enviada e a de ANTES do link: o sistema juntava as
-    // vendas e agendava 4 sessoes de um pacote de 8, com o modal dizendo
-    // "4 sessoes agendadas". A correcao anterior arrumou de ONDE vem a lista, e
-    // o defeito era QUANDO ela existe.
-    const confirmada = pacoteResposta === 'mesmo_pacote' && agendarCandidataPacote
-      ? [{ ofertaNome: agendarCandidataPacote.ofertaNome, precoBase: agendarCandidataPacote.precoBase }]
-      : []
-    const tabela: 'pedro' | 'denise' = agendarVenda.produto.toLowerCase().includes('denise') ? 'denise' : 'pedro'
-    return conferirQuantidade({
-      vendas: [
-        ...[agendarVenda, ...irmas].map(v => ({ ofertaNome: v.oferta_nome, precoBase: v.preco_base })),
-        ...confirmada,
-      ],
-      tabela,
-    })
-  }, [agendarVenda, agendarDiagnostico, pageData.vendas_filhas, pacoteResposta, agendarCandidataPacote])
-
-  const agendarNumSessoes = agendarDiagnostico
-    ? agendarDiagnostico.totalSessoes
-    : agendarConfere && agendarConfere.situacao !== 'indeterminado'
-    ? agendarConfere.sessoes
-    // `indeterminado` NAO pode virar 1: cair no palpite antigo daria ao paciente
-    // uma sessao onde ele comprou quatro ou oito, e a tela ja diz em vermelho
-    // que nao foi possivel determinar. 0 aqui e sinal, e o botao fica travado.
-    : agendarConfere?.situacao === 'indeterminado'
-    ? 0
-    : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
+  const agendarCandidataPacote = decisaoPacote.candidata
+  const agendarConfere = decisaoPacote.confere
+  const agendarNumSessoes = decisaoPacote.numeroDeSessoes
+    ?? (parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1))
   // Enquanto a releitura não volta, usa o que veio do load: é melhor avisar com
   // dado velho do que não avisar nada. O botão fica travado nesse intervalo.
   const agendarLeituraDaVenda = agendarSessoesLidas?.saleId === agendarVendaId ? agendarSessoesLidas : null
@@ -758,7 +722,16 @@ export default function TerapeutasVendas() {
         terapeuta_nome: terapeutaNomeProntuario,
         sessoes_total: totalProntuario,
         sessoes_feitas: entreguesProntuario,
-        valor_pago: prontuarioSale.valor_pago_cliente,
+        // O valor pago do PACOTE INTEIRO, somando as vendas ligadas a esta.
+        // `sessoes_total` ja conta o pacote todo (as sessoes vivem na
+        // venda-pai), entao usar o valor de uma venda so devolvia ao paciente
+        // menos do que ele pagou. Caso real da Amanda, JA nesse estado hoje:
+        // a tela oferecia R$ 1.380 onde ela pagou R$ 5.280 em duas compras e
+        // tem direito a R$ 3.980 - faltavam R$ 2.600.
+        valor_pago: prontuarioSale.valor_pago_cliente
+          + pageData.vendas_filhas
+              .filter(v => v.pacote_pai_id === prontuarioSale.id)
+              .reduce((a, v) => a + (v.valor_pago_cliente ?? 0), 0),
       })
     : null
   const valorReembolso = reembolsoCalc?.valor_reembolso ?? 0
@@ -824,11 +797,11 @@ export default function TerapeutasVendas() {
     // `ignorarCompromissos` e retry do MESMO agendamento: a resposta ja foi
     // gravada na primeira tentativa. Regravar batia em 409 e travava o fluxo
     // para sempre, ou duplicava ocorrencia e nota de prontuario.
-    if (pacoteResposta && !ignorarCompromissos) {
-      const erro = await responderPacote(pacoteResposta, senha)
-      if (erro) { setAgendarLoading(false); setAgendarErro(erro); return }
-    } else if (agendarConfere?.situacao === 'valor_divergente' && !ignorarCompromissos) {
-      const erro = await responderPacote('valor_divergente', senha)
+    // `tipoAResponder` já sabe que retry de compromisso não regrava a resposta:
+    // regravar batia em 409 e travava o fluxo para sempre.
+    const tipoAResponder = ignorarCompromissos ? null : decisaoPacote.tipoAResponder
+    if (tipoAResponder) {
+      const erro = await responderPacote(tipoAResponder, senha)
       if (erro) { setAgendarLoading(false); setAgendarErro(erro); return }
     }
     if (!ignorarCompromissos) setAgendarConflitoCompromisso(null)
@@ -1563,27 +1536,27 @@ export default function TerapeutasVendas() {
                     {fmtDt(agendarCandidataPacote.data_hora)} · {agendarCandidataPacote.ofertaNome ?? 'sem oferta registrada'} · {fmtBRL(agendarCandidataPacote.precoBase ?? 0)}
                   </p>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setPacoteResposta('mesmo_pacote')}
+                    <button type="button" onClick={() => agendarVendaId && setPacoteResposta({ saleId: agendarVendaId, valor: 'mesmo_pacote' })}
                       className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
-                        pacoteResposta === 'mesmo_pacote'
+                        decisaoPacote.respostaEfetiva === 'mesmo_pacote'
                           ? 'bg-sky-600 border-sky-500 text-white'
                           : 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700'}`}>
                       É o mesmo pacote
                     </button>
-                    <button type="button" onClick={() => setPacoteResposta('compra_separada')}
+                    <button type="button" onClick={() => agendarVendaId && setPacoteResposta({ saleId: agendarVendaId, valor: 'compra_separada' })}
                       className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
-                        pacoteResposta === 'compra_separada'
+                        decisaoPacote.respostaEfetiva === 'compra_separada'
                           ? 'bg-sky-600 border-sky-500 text-white'
                           : 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700'}`}>
                       É compra separada
                     </button>
                   </div>
-                  {pacoteResposta === 'mesmo_pacote' && (
+                  {decisaoPacote.respostaEfetiva === 'mesmo_pacote' && (
                     <p className="text-[11px] text-sky-400">
                       As duas compras viram um pacote só. A outra sai de Pendentes de Agendamento.
                     </p>
                   )}
-                  {pacoteResposta === 'compra_separada' && (
+                  {decisaoPacote.respostaEfetiva === 'compra_separada' && (
                     <p className="text-[11px] text-gray-500">
                       Agendo só esta. A outra continua esperando agendamento.
                     </p>
@@ -1595,7 +1568,7 @@ export default function TerapeutasVendas() {
                   responde e agenda. As respostas viram registro para o CEO
                   conferir depois - pedido do usuário, "assim como já acontece
                   com os reembolsos". */}
-              {agendarConfere?.situacao === 'valor_divergente' && pacoteResposta !== 'mesmo_pacote' && (
+              {agendarConfere?.situacao === 'valor_divergente' && decisaoPacote.respostaEfetiva !== 'mesmo_pacote' && (
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
                   <p className="text-xs text-amber-300 font-medium">
                     O valor recebido não fecha com o pacote
@@ -1667,7 +1640,7 @@ export default function TerapeutasVendas() {
               {/* Travado enquanto a releitura das sessões não volta: confirmar
                   antes disso é decidir com o dado do carregamento da página,
                   que é exatamente o que essa releitura existe pra evitar. */}
-              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0 || agendarConfere?.situacao === 'indeterminado'} onClick={() => {
+              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0 || decisaoPacote.travado} onClick={() => {
                 if (agendarDiagnostico && !pedroTerapeuta) {
                   setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
                   return
@@ -1707,7 +1680,7 @@ export default function TerapeutasVendas() {
               }} className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
                 agendarResumo.bloqueado || agendarSessoesCarregando
                   || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0
-                  || agendarConfere?.situacao === 'indeterminado'
+                  || decisaoPacote.travado
                   ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   : agendarEhSubstituicao ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'}`}>
                 {agendarSessoesCarregando

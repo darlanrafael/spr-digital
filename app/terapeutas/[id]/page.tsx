@@ -22,6 +22,7 @@ import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { ehPendenteDeAgendamento } from '@/lib/vendas-por-situacao'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -74,6 +75,8 @@ type SaleInfo = {
   // etiqueta simplesmente nunca aparece, sem erro nenhum. Tipo igual ao de
   // Sale ('@/types'): opcional sem null, pra formatoDaVenda() aceitar direto.
   order_id?: string
+  /** Venda que carrega as sessões deste pacote, quando pago em mais de uma compra. */
+  pacote_pai_id?: string | null
 }
 
 type Ocorrencia = {
@@ -696,8 +699,18 @@ export default function PainelTerapeuta() {
       // sem ele, formatoDaVenda() (usado no prontuário e na aba Vendas) nunca
       // reconhece o pacote e a etiqueta nunca aparece, sem erro nenhum.
       const { data: vendasData } = await client
-        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id').in('id', saleIds)
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id').in('id', saleIds)
       for (const v of (vendasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
+
+      // Vendas LIGADAS a estas: o paciente pagou o mesmo pacote em mais de uma
+      // compra, e as sessoes ficaram todas na venda-pai. Sem carrega-las aqui,
+      // o bruto e o liquido do paciente perdem a segunda compra - o card
+      // mostraria R$ 700 onde ele pagou R$ 1.400 - e o reembolso, que sai desse
+      // mesmo numero, devolveria metade do devido.
+      const { data: filhasData } = await client
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id')
+        .in('pacote_pai_id', saleIds)
+      for (const v of (filhasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
     }
     setVendas(vendasMap)
 
@@ -781,9 +794,10 @@ export default function PainelTerapeuta() {
       const { data: candidatas } = await candidatasQuery
       // Venda ligada a outro pacote sai daqui tambem: ela ja foi agendada com
       // a venda-pai, e o botao "Agendar" mandaria para /terapeutas/vendas, onde
-      // ela foi filtrada - devolvendo erro sem explicacao nenhuma.
+      // ela foi filtrada - devolvendo erro sem explicacao nenhuma. Mesma regra
+      // das outras duas telas, em lib/vendas-por-situacao.ts.
       let pendentes = ((candidatas ?? []) as SaleInfo[])
-        .filter(v => !saleIds.includes(v.id) && !(v as { pacote_pai_id?: string | null }).pacote_pai_id)
+        .filter(v => ehPendenteDeAgendamento(v, { temSessao: x => saleIds.includes(x.id) }))
       // Terapeuta em modo "começar do zero" só reconhece produto exclusivo
       // dele — nunca um produto conjunto (ex: "Mentoria Particular - Pedro |
       // Denise") que bate com o nome de outro terapeuta ativo também. Esse

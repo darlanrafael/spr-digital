@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { ehPendenteDeAgendamento, COLUNAS_DO_DASHBOARD } from '@/lib/vendas-por-situacao'
 
 type SaleRow = {
   id: string
@@ -192,7 +193,7 @@ export async function GET(req: NextRequest) {
     while (true) {
       let q = supabase
         .from('sales')
-        .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros,pacote_pai_id')
+        .select(COLUNAS_DO_DASHBOARD)
       if (nomesTerapeutas.length > 0) {
         q = q.or(nomesTerapeutas.map(n => `produto.ilike.%${n}%`).join(','))
       }
@@ -280,12 +281,11 @@ export async function GET(req: NextRequest) {
       // na prática de outro terapeuta; deixá-lo aparecer aqui é exatamente o
       // tipo de reconciliação manual que o corte existe pra evitar.
       const pendentes = vendasRaw.filter(v => {
-        // Mentoria em Grupo não é agendamento individual — não deve entrar
-        // na contagem de sessões/comissão pendente de agendamento.
-        // Venda ligada a outro pacote ja foi agendada junto dele: contar como
-        // pendente somaria sessoes e comissao projetada que nunca serao pagas.
-        if ((v as { pacote_pai_id?: string | null }).pacote_pai_id) return false
-        if (v.status !== 'aprovada' || saleIdsComSessao.has(v.id) || !v.produto.toLowerCase().includes(primeiroNome) || !saleAposCorte(v) || v.produto.toLowerCase().includes('grupo')) return false
+        // Mentoria em Grupo, venda já agendada e venda ligada a outro pacote
+        // saem aqui - a mesma regra da tela do comercial e da tela do terapeuta,
+        // em lib/vendas-por-situacao.ts.
+        if (!ehPendenteDeAgendamento(v, { temSessao: x => saleIdsComSessao.has(x.id), aposCorte: saleAposCorte })) return false
+        if (v.status !== 'aprovada' || !v.produto.toLowerCase().includes(primeiroNome)) return false
         if (t.vendas_a_partir_de) {
           const outrosQueTambemBatem = todosNomesTerapeutas.filter(n => n !== primeiroNome && v.produto.toLowerCase().includes(n))
           if (outrosQueTambemBatem.length > 0) return false

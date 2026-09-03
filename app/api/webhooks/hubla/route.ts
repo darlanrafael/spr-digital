@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { logWebhookEvent } from '@/lib/webhook-log'
 import { resolveRefundTargets, type SaleRow } from '@/lib/refund-target'
 import { hublaRefundDate } from '@/lib/refund-date'
+import { ofertaDoEventoHubla, correcaoAutoritativaDoOffer } from '@/lib/oferta-do-webhook'
 
 const PROJECT_ID = 'proj_1'
 
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
       // Nome da oferta: e ele que diz a QUANTIDADE de sessoes do pacote
       // ("Formato - 4 Sessão"), sem depender de arredondamento de preco nem de
       // promocao. Ate 02/09/2026 chegava aqui e era descartado.
-      const ofertaNome = ((offers[0]?.name as string) ?? '').trim() || null
+      const ofertaNome = ofertaDoEventoHubla(event)
       const productId = offerItemId ?? (product?.id as string) ?? null
 
       // Hubla dispara dois webhooks por produto em pedidos multi-produto (bundle):
@@ -128,16 +129,10 @@ export async function POST(req: NextRequest) {
             // Offer é sempre autoritativo — atualizar para o valor individual correto.
             const { error: updateError } = await client
               .from('sales')
-              .update({
-                preco_base:         sale.preco_base,
-                valor_pago_cliente: sale.valor_pago_cliente,
-                valor_liquido:      sale.valor_liquido,
-                // O offer e autoritativo tambem no nome da oferta, e agora esse
-                // campo decide a QUANTIDADE DE SESSOES do pacote. Deixar de
-                // fora faria a correcao de valor apagar a informacao que manda
-                // no agendamento.
-                oferta_nome:        sale.oferta_nome,
-              })
+              // O offer e autoritativo tambem no nome da oferta, e esse campo
+              // decide a QUANTIDADE DE SESSOES do pacote: ver
+              // correcaoAutoritativaDoOffer em lib/oferta-do-webhook.ts.
+              .update(correcaoAutoritativaDoOffer(sale))
               .eq('order_id', orderId)
             if (updateError) {
               console.error('[Hubla Webhook] erro ao corrigir valor (offer priority):', updateError)
