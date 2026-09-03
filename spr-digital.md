@@ -2723,3 +2723,172 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **Ficou junto, no mesmo lugar:** `ehDoTerapeuta()` decide de quem e a venda em Pendentes e ja tratava o Diagnostico como do Pedro, mas so no calculo - a varredura anterior a ele nem trazia a linha. Sao dois filtros diferentes sobre a mesma pergunta e agora os dois moram no mesmo arquivo.
 
     **Item da auditoria fechado sem acao:** o Francisco Geraldo, que estava sem sessao nenhuma e cuja vaga de 05/09 11:20 tinha sido ocupada pelo Bruno Cavallini, foi agendado pelo Guilherme em 03/09 as 08:10 BRT - 9 sessoes semanais a partir de 03/09 17:30. Nada a fazer.
+
+46. **03/09/2026 - PUBLICADO EM PRODUCAO: `555e638..a28ddfc`.** A branch `feat/oferta-nome`, 10 commits, subiu para `main` por merge `--no-ff` (commit de merge `a28ddfc`). Este item existe para que ninguem precise ler os 45 anteriores para saber o que mudou no dia em que mudou. **Maxima redundancia por pedido do usuario: o que segue repete de proposito o que ja esta nos itens 40 a 45, porque a informacao espalhada por seis entradas nao e consultavel na hora do incidente.**
+
+    ---
+
+    ## 46.1. Estado antes e depois, em uma linha cada
+
+    | | Antes (`555e638`) | Depois (`a28ddfc`) |
+    |---|---|---|
+    | Nome da oferta gravado na venda | nao existia a coluna | `sales.oferta_nome`, 2.311 vendas historicas + toda venda nova |
+    | Quantidade de sessoes de um pacote | chute pelo `preco_base`, com fallback 1 | lida do NOME DA OFERTA; preco vira so conferencia |
+    | Pacote pago em duas compras | invisivel; a segunda ficava presa em Pendentes para sempre | o sistema propoe, o comercial confirma, o CEO confere |
+    | Comissao de pacote em duas compras | so o liquido da venda-pai (metade) | o liquido do PACOTE, sem filha estornada |
+    | Reembolso de pacote em duas compras | duas telas discordavam em R$ 2.600 | as duas somam o pacote, pelo mesmo modulo |
+    | Sessoes do Diagnostico Guiado no Overview | **0** apareciam | 11 sessoes de 7 pacientes |
+    | Testes | 269 | **316** |
+
+    ---
+
+    ## 46.2. As dez mudancas, por commit
+
+    1. **`35146fb`** - `sales.oferta_nome` passa a ser gravado pelos dois webhooks (Hubla le `event.products[].offers[].name`, Kiwify le `Product.product_offer_name`), e `lib/sessoes-da-oferta.ts` le a quantidade do nome ("Formato - 4 Sessao" = 4, "Sessao Unica" = 1). O numero do FORMATO nunca e confundido com quantidade.
+    2. **`cbea8b1`** - `lib/pacote-de-vendas.ts`: a regra de quando duas compras sao o mesmo pacote. Janela de **24h**, escolhida sobre o dado real (os pares colados estao em 0h, 0h, 0,1h, 0,1h, 9,8h e 15,3h; o proximo esta em 24,5h - o vale e do dado, nao arbitrario). Cruza por **e-mail**, nunca por nome. Exige que a outra compra tenha **zero sessoes entregues**.
+    3. **`6b0a9c7`** - `POST/GET/DELETE /api/terapeutas/vendas/pacote` e a coluna `sales.pacote_pai_id`.
+    4. **`6ae17c2`** - a pergunta no modal de agendamento: "identificamos que ha outra compra deste paciente; e o mesmo pacote?".
+    5. **`22dcf4b`** - os quatro criticos da primeira revisao.
+    6. **`d1602c8`** - o C1 de verdade (a soma acontecia ANTES do link) e as armadilhas que prendiam o comercial.
+    7. **`6732b1d`** - a decisao sai da fiacao para `lib/` testavel.
+    8. **`516b71f`** - a conferencia do CEO em Aprovacoes, o botao "Separar", e o caso da Amanda resolvido por dado.
+    9. **`e2168be`** - os cinco criticos das revisoes A, B e C, e `lib/fiacao-do-pacote.test.ts`.
+    10. **`3079c4d`** - as sessoes do Diagnostico Guiado voltam ao Overview.
+
+    ---
+
+    ## 46.3. As cinco revisoes independentes, e o veredito de cada uma
+
+    | Revisao | Escopo | Veredito | Criticos |
+    |---|---|---|---|
+    | A | o dinheiro (comissao, reembolso, DRE, fechamento) | **BLOQUEADO** | 3 |
+    | B | regressao nas telas existentes | **BLOQUEADO** | 2 |
+    | C | adversarial nas telas novas | **BLOQUEADO** | 3 |
+    | D | cobertura, por medicao de mutacao | (medicao) | 2 defeitos vivos achados |
+    | E | o dado em producao (banco, Calendar, n8n) | **BANCO INTEGRO** | 0 |
+
+    **Todos os criticos foram corrigidos antes do merge.** Nenhum foi adiado.
+
+    ---
+
+    ## 46.4. O que cada critico era, e o que custava
+
+    **C-1. O reembolso da tela do terapeuta oferecia R$ 1.380 onde o direito e R$ 3.980.** A correcao anterior carregava as vendas filhas no mapa e **nunca as somava**: `p.saleIds` nasce das SESSOES, e a venda-filha, por definicao, nao tem nenhuma - e a venda-pai que carrega o pacote. As duas telas (`/terapeutas/vendas` e `/terapeutas/[id]`) gravam na **mesma** fila de `solicitacoes_reembolso`, e o CEO aprova o numero que vier. Com o rateio 35/65, a diferenca de R$ 2.600 saia do bolso do cliente e ficava com a SPR (R$ 910) e com o Pedro (R$ 1.690). *Corrigido com `saleIdsComAsFilhas`.*
+
+    **C-2. As vendas filhas eram filtradas pelo periodo da tela.** `vendas_filhas` saia de `vendasAll`, que passa por `.gte('data_hora', from)`. A janela da regra e de 24h, entao o par **quase sempre atravessa a meia-noite** (caso real: Amanda, 24/08 21:28 e 25/08 12:43). Com o preset "Hoje" em 25/08 o pai entrava, a filha nao, e o comercial agendava **4 sessoes num pacote de 8** - exatamente o defeito que a feature existe para impedir, reintroduzido por um filtro de data. *Corrigido buscando por `.in('pacote_pai_id', ...)` FORA do filtro de data e do corte, em lotes de 200.*
+
+    **C-3. O faturamento do terapeuta perdia R$ 2.600.** Depois de ligada, a filha saia de Pendentes (certo: as sessoes dela estao no pai) e **nao entrava em lugar nenhum**, porque `fat_bruto_t` so olhava `saleIdsTerapeuta`, que vem das sessoes. A linha do Pedro mostrava R$ 2.680 e o card global da MESMA pagina mostrava R$ 5.280. *Corrigido com `saleIdsComAsFilhas` tambem no dashboard.*
+
+    **C-4. Trocar a resposta nao desfazia a ligacao.** Sequencia inteira por botao: o comercial junta as compras, o agendamento falha (conflito de horario, 500, timeout), ele reconsidera e clica em "E compra separada". `avaliarLigacao` devolvia `so_registrar` na primeira linha: **a ligacao continuava de pe**. Gravava-se so uma segunda ocorrencia dizendo o contrario da primeira, e como a tela nao recarregava, a soma voltava a 4 sessoes. *Corrigido com a acao `desligar`, com rollback simetrico (`refazerLinkSeAuditoriaFalhar`) se a auditoria falhar.*
+
+    **C-5. "Separar" um pacote ja agendado deixava a comissao dobrada.** O `DELETE` nunca olhava se a venda-pai tem sessoes. Com o pacote montado, o pai ficava com 8 sessoes sustentadas por uma compra que vale 4, e a filha voltava a Pendentes com o botao "Agendar" ativo: paciente com **8 + 4 = 12 sessoes tendo pago 8**. No par real do Fabio Nery (Denise a 30%): R$ 531,15 de comissao no lugar de R$ 354,10, **50% a mais**. *Corrigido: a rota recusa com 409 quando o pai tem sessoes, dizendo quantas e o que fazer antes.*
+
+    **E o botao so funcionava onde nao era alcancavel.** Com a guarda acima ele vale so quando o pai nao tem sessoes - e era justo nesse estado que ele nao existia, porque o chip e o botao moravam no prontuario e o prontuario so abre na sub-aba Ativos. **Pendentes ganhou o aviso "+ R$ X juntados" e o proprio botao.**
+
+    ---
+
+    ## 46.5. As correcoes que nao eram criticas, mas mudam numero
+
+    - **A janela de 24h passou a valer no SERVIDOR.** `avaliarLigacao` conferia e-mail, produto, status, ciclo e corrente, mas nao a distancia entre as compras - a regra central do negocio, que vivia so no cliente. A rota aceitava juntar compras separadas por meses, que e exatamente o caso que a regra existe para NAO juntar (pacote consumido e recomprado depois). Sem as duas datas ela **recusa**: assumir que passa juntaria compras distantes sem ninguem ver.
+    - **A rota de agendar recusa venda que ja e filha.** Duas abas em paralelo agendavam pai e filha: 12 sessoes num pacote de 8, com o liquido da filha contado duas vezes.
+    - **A comissao parou de somar filha estornada.** A consulta nao filtrava status: com a Denise, R$ 332,87 por sessao no lugar de R$ 168,96 - comissao sobre dinheiro devolvido ao cliente.
+    - **A filha estornada parou de sumir do pacote.** `filhas` saia de `aprovadas`; agora sai de `vendas`. Chargeback de uma das duas parcelas e justamente o motivo pelo qual alguem paga em duas compras, e o pai perdia o aviso, o botao e o valor sem nada dizer. Quem decide se ela vale DINHEIRO e `filhasDoPacote`, nao a lista.
+    - **A projecao do dashboard parou de dividir pelo numero de irmas.** Somava R$ 5.280, achava 8 sessoes na tabela e dividia por 2 irmas, projetando **4**. Agora o nome da oferta vem antes de qualquer chute por valor.
+    - **A segunda tentativa parou de contar a irma duas vezes** (efeito colateral do recarregamento: a candidata passava a chegar TAMBEM por `filhas`, somando 4 + 4 + 4 = 12) **e parou de regravar a resposta** (acabaram a segunda `ocorrencias_pacote`, a segunda nota de prontuario e a segunda linha de log dizendo a mesma coisa).
+    - **Tela de Aprovacoes:** o fetch da conferencia estava dentro do `try` que controla o `loading`, sem timeout - um fetch pendurado deixava a tela dos reembolsos **eternamente no spinner**, com os dados ja carregados e invisiveis. Agora roda depois do `setLoading(false)`, com `AbortController` de 15s, e a falha aparece em tela com botao de tentar de novo.
+    - **O CEO passou a distinguir "compras separadas" de "ligacao desfeita".** A coluna de tipo so aceita tres valores (check da migracao), entao o desfazer reusa `compra_separada`; a distincao vem da marca `MARCA_DESFAZER` na justificativa. Sem isso, e como a lista vem em ordem decrescente, **o desfazer aparecia ACIMA da juncao que ele anula**, reforcando a leitura errada.
+    - **`GET /api/terapeutas/vendas/pacote` ganhou porteiro.** Devolvia nome do paciente, produto e a `justificativa` de texto livre - o campo mais sensivel do modulo - sem nenhuma checagem, so a URL. **A checagem e por usuario ATIVO, nao por senha nem token, e isso e escolha consciente e limitada:** a tela de Aprovacoes guarda so `{nome, email, tipo}` em `localStorage`, e o caminho por token so passa para quem tem `dispensa_senha_nas_acoes`. **Protege varredura anonima; NAO protege quem saiba um e-mail cadastrado.**
+
+    ---
+
+    ## 46.6. O bug do Overview do Diagnostico Guiado (o ultimo, achado pelo usuario)
+
+    **Sintoma relatado:** "os pacientes do Diagnostico guiado nao aparecem em overview".
+
+    **Causa:** `GET /api/terapeutas/dashboard` varre `sales` filtrando por "o produto contem o nome de algum terapeuta". O produto e "Diagnostico Guiado: Programa de acompanhamento Individual" e **nao contem nem "pedro" nem "denise"**, entao as 8 vendas nunca entravam em `vendasRaw`. Como `consultas_hoje` e `proximas_consultas` sao filtradas por `.in('sale_id', saleIds)` e o `saleIds` sai dessa varredura, **as sessoes sumiam do Overview inteiro**. A tela do comercial ja abria excecao com um termo fixo; o dashboard nao. **Duas varreduras, a mesma pergunta, respostas diferentes.**
+
+    **Medido contra o banco de producao:**
+
+    | | Antes | Depois |
+    |---|---|---|
+    | Consultas hoje | 5 | **7** |
+    | Proximas consultas | 77 | **86** |
+    | Sessoes do Diagnostico | **0** | **11** |
+
+    Voltaram: Paula Caroline, Bruno Cavallini, Gisela Palos, Jeane Gomes Pereira, Rafaela Pires, Valdir Sabino e Francisco Geraldo.
+
+    **Correcao:** o termo virou `TERMO_SQL_DIAGNOSTICO` e a montagem virou `termosDeProduto(nomesTerapeutas)`, em `lib/vendas-por-situacao.ts`, usada pelas **duas** varreduras, com teste proprio e uma linha em `lib/fiacao-do-pacote.test.ts` por rota.
+
+    ---
+
+    ## 46.7. A medicao por mutacao, e por que ela mudou a estrategia de teste
+
+    A revisao D reintroduziu **12 defeitos** desta feature, um a um, em `app/`. **Os 12 passaram verdes**, com `tsc` limpo nos 12. Os controles em `lib/` morreram como deviam (3, 1 e 1 falhas), provando que o metodo era valido.
+
+    **O achado que decidiu a resposta:** depois de extrair a decisao para modulo puro, **mutar o call-site ja refatorado continuou verde**. Extrair para `lib/` mata mutacao DENTRO da decisao; **nao mata "alguem apagou a chamada"**, porque `npm test` roda so `tsx --test lib/*.test.ts` e rota e componente nunca sao executados.
+
+    Dai `lib/fiacao-do-pacote.test.ts`: **19 asseroes que so verificam que a chamada continua no arquivo**, cada uma com o porque em uma linha. Ele **NAO** prova que o numero esta certo - quem prova e `dinheiro-do-pacote.test.ts` -, **dispara em refatoracao legitima** (e por isso a lista e curta e so cobre linhas cujo sumico custa dinheiro ou esconde uma venda de todas as telas), e e o unico teste que pega apagamento enquanto nao houver runner de rota e de componente. **Quando uma linha falhar por refatoracao legitima, ATUALIZE o trecho; nao apague a checagem.**
+
+    Os dois `SaleRow` ganharam `pacote_pai_id` e `oferta_nome`: sem a coluna no tipo, apagar o campo do `select` **nao da erro de compilacao nenhum** - o valor chega `undefined` e a regra apenas para de valer, em silencio.
+
+    ---
+
+    ## 46.8. Os modulos novos em `lib/`, e por que cada um existe
+
+    | Arquivo | Existe porque |
+    |---|---|
+    | `sessoes-da-oferta.ts` | a quantidade e regra da empresa, escrita na oferta vendida, nao um chute pelo valor |
+    | `pacote-de-vendas.ts` | quando duas compras sao o mesmo pacote (janela de 24h, e-mail, zero entregues) |
+    | `ligacao-de-pacote.ts` | as travas da rota, fora da rota: a rota faz I/O, a decisao e funcao de dados |
+    | `decisao-de-agendamento.ts` | a decisao inteira do modal, para os testes a alcancarem |
+    | `vendas-por-situacao.ts` | em que lista cada venda cai - **tres** telas dependem disso e discordar entre elas e invisivel |
+    | `oferta-do-webhook.ts` | ler o nome da oferta dos dois formatos de payload |
+    | `dinheiro-do-pacote.ts` | **a mesma soma estava escrita a mao em tres lugares e os tres discordavam** |
+    | `conferencia-de-pacote.ts` | o rotulo e o sinal da diferenca: "Faltaram/Entraram" invertido no meio do JSX ninguem revisa |
+    | `fiacao-do-pacote.test.ts` | 12 defeitos passaram verdes; este pega o apagamento da chamada |
+
+    Duas guardas dentro de `dinheiro-do-pacote.ts` que parecem redundantes e **nao sao**: `f.id !== pai.id`, porque trocar `.eq('pacote_pai_id', x)` por `.eq('id', x)` devolve a propria venda-pai dentro da lista de filhas e paga a comissao **em dobro** sem erro em tela nenhuma; e o filtro de status, porque uma filha reembolsada sumia da tela e continuava somando na comissao.
+
+    ---
+
+    ## 46.9. A auditoria de producao (revisao E): o que foi conferido e deu limpo
+
+    | Conferencia | Resultado |
+    |---|---|
+    | Vendas no banco | 10.038 |
+    | `oferta_nome` sem respaldo no payload do proprio `order_id` | **0** |
+    | `order_id` duplicados em `sales` | **0** |
+    | Colunas de dinheiro alteradas pelo backfill | **0** (2.312 de 2.313 identicas ao payload; a unica divergencia e a venda em dolar de 07/08, ja documentada no item 28) |
+    | Eventos confirmados orfaos no Google Calendar | **0** de 817 |
+    | Sessoes apontando para evento inexistente | **0** |
+    | Sessoes ativas cujo evento esta cancelado | **0** |
+    | Residuo sintetico das intervencoes do dia | **0** |
+    | Fluxos do n8n ativos | 2, com alteracao **aditiva**: das 129 sessoes futuras, 44 ganham etiqueta e 85 recebem a mensagem byte a byte igual a de antes |
+
+    Os 17 eventos orfaos apagados eram 17 exatos, **nenhum futuro**. A ligacao da Amanda esta gravada na direcao certa (a filha e a que NAO tem sessoes) e as 8 sessoes estao integras na venda-pai.
+
+    ---
+
+    ## 46.10. Decisoes de negocio confirmadas pelo usuario nesta rodada
+
+    - **"A regra vale daqui pra frente."** As 13 vendas antigas (maio a julho, anteriores ao log de webhook e portanto sem oferta) cujo valor nao bate com nenhum pacote **nao sao pendencia**. Elas caem no caminho de excecao que ja existe e o comercial responde uma vez cada. Nao voltar a apresenta-las como decisao pendente.
+    - **A quantidade de sessoes nao e escolha do comercial.** Palavras dele: *"o que o comercial nao pode fazer e ele determinar a quantidade de sessao de uma venda que nos colocamos em pendente de agendamento"*. O comercial tem autonomia sobre **quando** (podendo furar o intervalo de 7 dias), nunca sobre **quantas**.
+    - **Filtrar sempre pela OFERTA, nunca pelo valor pago**, porque parcelamento e juros mudam o valor.
+    - **Cruzar sempre por ID**, nunca por nome.
+    - **Sessao lancada manualmente conta a SESSAO, nunca o DINHEIRO.**
+
+    ---
+
+    ## 46.11. O que continua aberto depois deste deploy
+
+    1. **Autenticacao dos `GET` do modulo.** `/api/terapeutas/vendas` e `/api/terapeutas/aprovacoes` seguem sem nenhuma checagem. O `GET` de pacote ganhou a checagem por usuario ativo, que e melhor que nada e **nao** e autenticacao de verdade. Decisao pendente: adotar token de sessao nas tres.
+    2. **Estorno nao mexe em sessao nem em comissao.** O webhook so atualiza `status` e `data_reembolso`. Com a filha estornada, o paciente fica com as 8 sessoes tendo pago 4 e a comissao segue sobre o pacote inteiro. A deducao dos socios funciona; a do terapeuta nao existe.
+    3. **A comissao ja gravada nunca e recalculada.** Hoje custa **R$ 0,00** porque o Pedro e socio a 0%, mas `percentual_comissao` e campo de banco: basta ele deixar de ser 0 e as 410 sessoes dele entram de uma vez.
+    4. **Custo de trafego do Perpetuo CCC nunca aplicado:** R$ 3.234,23 x 1,1385 = **R$ 3.682,17**, fechamento `close_1786731068074`.
+    5. **Marcar "Abater aqui" para os R$ 1.560 do Miguel** no proximo fechamento (Pedro absorve R$ 1.014, SPR R$ 546).
+    6. **Bug de fuso na tela de fechamento:** 516 de 1.892 vendas da Hubla caem no dia errado.
+    7. **`order_ref` da Kiwify nunca e gravado.**
+    8. **A varredura preventiva diaria nunca foi construida.**
+    9. **Estender o "agendar assim mesmo" para `remarcar` e `empurrar-seguintes`** (213 de 627 vagas da grade do Pedro estao bloqueadas so por compromisso).
+    10. **A exclusao de compromisso por fora do app nao deixa rastro** em `atividades_log` (o caminho da tela grava).
+    11. **Residuo antigo no banco:** usuario `FELIPE TESTE` ativo desde 19/06, 28 linhas de `atividades_log` orfas, 2 solicitacoes de reembolso apontando para sessao inexistente, 1 ocorrencia "TESTE TESTE".
