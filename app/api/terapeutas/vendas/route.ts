@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
+import { classificarVendas, COLUNAS_DA_TELA_DE_VENDAS, termosDeProduto } from '@/lib/vendas-por-situacao'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SaleRow = {
@@ -19,6 +20,13 @@ type SaleRow = {
   // Diagnóstico Guiado não ganha etiqueta nem quantidade de sessões correta.
   // Os demais produtos ignoram o campo, então trazê-lo não muda nada pra eles.
   order_id: string | null
+  // As duas colunas novas do pacote. Declarar aqui nao e formalidade: sem elas
+  // no tipo, apagar a coluna do `select` nao da erro nenhum de compilacao - o
+  // campo chega `undefined` e a regra que depende dele apenas para de valer,
+  // em silencio. Foi assim que a regra de venda filha ja passou verde 12 vezes
+  // numa medicao por mutacao.
+  pacote_pai_id: string | null
+  oferta_nome: string | null
 }
 
 type SessaoRow = {
@@ -128,8 +136,7 @@ export async function GET(req: NextRequest) {
     // acontecia, porque a venda não estava na lista. Termo fixo pelo nome do
     // produto: aqui é só pré-filtro de varredura, quem decide o formato de
     // verdade é formatoDaVenda(), pela oferta.
-    const TERMO_PRODUTO_DIAGNOSTICO = 'produto.ilike.%Diagnóstico Guiado%'
-    const termosProduto = [...nomesTerapeutas.map(n => `produto.ilike.%${n}%`), TERMO_PRODUTO_DIAGNOSTICO]
+    const termosProduto = termosDeProduto(nomesTerapeutas)
     // vendas_a_partir_de: corte de data por terapeuta — vendas anteriores ao
     // corte não aparecem mais em Pendentes/Ativos (paciente é lançado
     // manualmente em vez de reconciliar contra a venda antiga importada).
@@ -164,7 +171,7 @@ export async function GET(req: NextRequest) {
     while (true) {
       let query = supabase
         .from('sales')
-        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,preco_base,data_hora,status,order_id')
+        .select(COLUNAS_DA_TELA_DE_VENDAS)
       // Mantém o comportamento antigo de "sem terapeuta ativo, sem filtro":
       // nesse caso a varredura já traz tudo, Diagnóstico incluído.
       if (nomesTerapeutas.length > 0) {
@@ -256,20 +263,41 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Classificar vendas
-    const vendasAprovadas = vendasAll.filter(v => !v.status || v.status === 'aprovada')
-    const vendasReembolsos = vendasAll.filter(v =>
-      ['reembolsada', 'chargeback', 'cancelada', 'em_protesto'].includes(v.status ?? '')
-    )
-    // Mentoria em Grupo não é agendamento individual — não deve cair em
-    // Pendentes de Agendamento junto com a Mentoria Particular.
-    const vendasPendentes = vendasAprovadas.filter(v =>
-      (!sessoesPorVenda[v.id] || sessoesPorVenda[v.id].length === 0) && saleAposCorte(v)
-      && !v.produto.toLowerCase().includes('grupo')
-    )
-    const vendasAtivos = vendasAprovadas.filter(v =>
-      sessoesPorVenda[v.id] && sessoesPorVenda[v.id].length > 0
-    )
+    // Classificar vendas. A regra vive em lib/vendas-por-situacao.ts porque as
+    // MESMAS perguntas são feitas no dashboard e na tela do terapeuta, e
+    // discordar entre os três é invisível.
+    const {
+      aprovadas: vendasAprovadas, pendentes: vendasPendentes,
+      ativos: vendasAtivos, filhas: vendasFilhas, reembolsos: vendasReembolsos,
+    } = classificarVendas({
+      vendas: vendasAll,
+      aprovada: v => !v.status || v.status === 'aprovada',
+      temSessao: v => (sessoesPorVenda[v.id]?.length ?? 0) > 0,
+      aposCorte: saleAposCorte,
+    })
+
+    // As vendas filhas são buscadas FORA do filtro de data e do corte por
+    // terapeuta. Elas saem da varredura normal por acidente de calendário: as
+    // duas compras de um mesmo pacote costumam cair em dias diferentes (a
+    // janela da regra é de 24h, então o par quase sempre atravessa a
+    // meia-noite). Com o preset "Hoje" selecionado, a irmã sumia da lista, a
+    // soma do pacote voltava a valer metade e o comercial agendava 4 sessões
+    // num pacote de 8 - sem nada na tela dizendo que uma venda foi filtrada.
+    // Caso real: Amanda, compras em 24/08 21:28 e 25/08 12:43.
+    let filhasCompletas = vendasFilhas
+    const idsQueSaoPai = [...vendasPendentes, ...vendasAtivos].map(v => v.id)
+    if (idsQueSaoPai.length > 0) {
+      const achadas: SaleRow[] = []
+      for (let i = 0; i < idsQueSaoPai.length; i += 200) {
+        const { data } = await supabase
+          .from('sales').select(COLUNAS_DA_TELA_DE_VENDAS)
+          .in('pacote_pai_id', idsQueSaoPai.slice(i, i + 200))
+        achadas.push(...((data ?? []) as SaleRow[]))
+      }
+      const porId = new Map(filhasCompletas.map(v => [v.id, v]))
+      for (const v of achadas) porId.set(v.id, v)
+      filhasCompletas = [...porId.values()]
+    }
     const formatos = [...new Set(vendasAll.map(v => v.produto))].sort()
 
     return NextResponse.json({
@@ -280,6 +308,7 @@ export async function GET(req: NextRequest) {
         reembolsos: vendasReembolsos.length,
       },
       vendas_pendentes: vendasPendentes,
+      vendas_filhas: filhasCompletas,
       vendas_ativos: vendasAtivos,
       vendas_reembolsos: vendasReembolsos,
       sessoes_por_venda: sessoesPorVenda,

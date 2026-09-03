@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { logWebhookEvent } from '@/lib/webhook-log'
 import { resolveRefundTargets, type SaleRow } from '@/lib/refund-target'
 import { kiwifyRefundDate } from '@/lib/refund-date'
+import { ofertaDoProdutoKiwify } from '@/lib/oferta-do-webhook'
 
 const PROJECT_ID = 'proj_1'
 
@@ -70,6 +71,9 @@ export async function POST(req: NextRequest) {
         email:              (customer?.email as string) ?? '',
         telefone:           (customer?.mobile as string) ?? '',
         produto:            (product?.product_name as string) ?? '',
+        // Mesma razao do Hubla: a quantidade de sessoes vem do nome da oferta,
+        // nao do preco. Na Kiwify o campo e `Product.product_offer_name`.
+        oferta_nome:        ofertaDoProdutoKiwify(product),
         preco_base:         ((commissions?.product_base_price as number) ?? 0) / 100,
         valor_pago_cliente: ((commissions?.charge_amount as number) ?? 0) / 100,
         valor_com_juros:    ((commissions?.charge_amount as number) ?? 0) / 100,

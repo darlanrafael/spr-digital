@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
+import { rotuloDaOcorrencia, textoDaDiferenca } from '@/lib/conferencia-de-pacote'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -47,6 +48,15 @@ function fmtDt(iso: string | null) {
 export default function TerapeutasAprovacoes() {
   const [pendentes, setPendentes] = useState<Solicitacao[]>([])
   const [historico, setHistorico] = useState<Solicitacao[]>([])
+  // Respostas do comercial sobre pacote pago em mais de uma compra. Ficam numa
+  // seção própria, e não na fila de aprovações: aqui nada espera decisão sua -
+  // o comercial já respondeu e já agendou. É conferência, não autorização.
+  const [ocorrenciasPacote, setOcorrenciasPacote] = useState<{
+    id: string; paciente_nome: string; produto: string; tipo: string
+    diferenca: number | null; sessoes_do_pacote: number | null
+    paciente_paga_diferenca: boolean | null; havera_outra_compra: boolean | null
+    justificativa: string | null; respondido_por_nome: string; created_at: string
+  }[]>([])
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState('')
   const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
@@ -63,6 +73,7 @@ export default function TerapeutasAprovacoes() {
 
   // Modal aprovar
   const [aprovarId, setAprovarId] = useState<string | null>(null)
+  const [ocorrenciasErro, setOcorrenciasErro] = useState('')
   const [aprovarSenhaOpen, setAprovarSenhaOpen] = useState(false)
   const [aprovarLoading, setAprovarLoading] = useState(false)
   const [aprovarErro, setAprovarErro] = useState('')
@@ -88,7 +99,32 @@ export default function TerapeutasAprovacoes() {
     } finally {
       setLoading(false)
     }
-  }, [])
+
+    // A conferência de pacotes vem DEPOIS de `setLoading(false)`, e de
+    // propósito. Ela é seção informativa; a fila de reembolsos é a razão de a
+    // tela existir. Enquanto este `await` ficava dentro do try que controla o
+    // `loading`, um fetch pendurado - sem rejeitar, sem timeout: Vercel lenta,
+    // rede em suspensão, aba voltando do sono - deixava a tela inteira no
+    // spinner para sempre, com os reembolsos já carregados e invisíveis.
+    //
+    // O AbortController fecha a outra metade: sem ele, "pendurado" não vira
+    // erro nunca, e a seção ficaria carregando em silêncio.
+    setOcorrenciasErro('')
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 15000)
+    try {
+      const r2 = await fetch(`/api/terapeutas/vendas/pacote?usuario_email=${encodeURIComponent(adminEmail)}`, { cache: 'no-store', signal: ctrl.signal })
+      const j2 = await r2.json()
+      if (!r2.ok) throw new Error(j2.error ?? `HTTP ${r2.status}`)
+      setOcorrenciasPacote(j2.ocorrencias ?? [])
+    } catch (e) {
+      // Silêncio é a pior resposta numa tela cuja função é conferir: o CEO não
+      // distinguia "não há nada a conferir" de "a conferência falhou".
+      setOcorrenciasErro(e instanceof Error ? e.message : String(e))
+    } finally {
+      clearTimeout(t)
+    }
+  }, [adminEmail])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -291,6 +327,49 @@ export default function TerapeutasAprovacoes() {
               ))}
             </div>
 
+            {/* Pacotes pagos em mais de uma compra. Não é fila de decisão: o
+                comercial já respondeu e já agendou. Fica aqui para o CEO
+                conferir, do jeito que ele pediu - "assim como já acontece com
+                os reembolsos". */}
+            {ocorrenciasErro && (
+              <div className="mb-8 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+                <p className="text-sm text-amber-300">Não foi possível carregar os pacotes conferidos pelo comercial.</p>
+                <p className="text-[11px] text-amber-400/80 mt-1">{ocorrenciasErro}</p>
+                <button onClick={loadData} className="mt-2 text-[11px] underline text-amber-300">Tentar de novo</button>
+              </div>
+            )}
+            {ocorrenciasPacote.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Pacotes e valores conferidos pelo comercial</h2>
+                <p className="text-[11px] text-gray-600 mb-3">Nada aqui espera decisão sua. É registro do que o comercial respondeu ao agendar.</p>
+                <div className="bg-gray-900 border border-white/10 rounded-xl divide-y divide-white/5">
+                  {ocorrenciasPacote.map(o => (
+                    <div key={o.id} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-gray-200">{o.paciente_nome}</p>
+                          <p className="text-[11px] text-gray-500">{o.produto}</p>
+                        </div>
+<OcorrenciaBadge o={o} />
+                      </div>
+                      <div className="mt-2 space-y-0.5 text-[11px] text-gray-400">
+                        {o.sessoes_do_pacote != null && <p>Pacote de {o.sessoes_do_pacote} {o.sessoes_do_pacote === 1 ? 'sessão' : 'sessões'}</p>}
+                        {textoDaDiferenca(o.diferenca) && (
+                          <p className={(o.diferenca ?? 0) > 0 ? 'text-amber-400' : 'text-gray-400'}>
+                            {textoDaDiferenca(o.diferenca)}
+                          </p>
+                        )}
+                        {o.paciente_paga_diferenca != null && <p>Paciente vai pagar a diferença: <span className="text-gray-300">{o.paciente_paga_diferenca ? 'sim' : 'não'}</span></p>}
+                        {o.havera_outra_compra != null && <p>Vai haver outra compra: <span className="text-gray-300">{o.havera_outra_compra ? 'sim' : 'não'}</span></p>}
+                        {o.justificativa && <p className="text-gray-300 mt-1">&ldquo;{o.justificativa}&rdquo;</p>}
+                        <p className="text-gray-600 pt-1">{o.respondido_por_nome} · {fmtDt(o.created_at)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Histórico */}
             {historico.length > 0 && (
               <div>
@@ -388,5 +467,23 @@ export default function TerapeutasAprovacoes() {
 
       <MobileNav />
     </div>
+  )
+}
+
+// As quatro aparências do rótulo. O TEXTO vem de lib/conferencia-de-pacote.ts,
+// onde os testes o alcançam; aqui fica só a cor.
+const CORES_DO_ROTULO: Record<string, string> = {
+  juntadas: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+  divergente: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+  desfeita: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+  separadas: 'bg-gray-700/40 text-gray-300 border-white/10',
+}
+
+function OcorrenciaBadge({ o }: { o: { tipo: string; justificativa?: string | null } }) {
+  const r = rotuloDaOcorrencia(o)
+  return (
+    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border shrink-0 ${CORES_DO_ROTULO[r.cor]}`}>
+      {r.texto}
+    </span>
   )
 }

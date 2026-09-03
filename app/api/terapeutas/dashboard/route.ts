@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { saleIdsComAsFilhas } from '@/lib/dinheiro-do-pacote'
+import { ehDoTerapeuta, termosDeProduto } from '@/lib/vendas-por-situacao'
+import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { ehPendenteDeAgendamento, COLUNAS_DO_DASHBOARD } from '@/lib/vendas-por-situacao'
 
 type SaleRow = {
   id: string
@@ -14,6 +18,13 @@ type SaleRow = {
   status: string | null
   plataforma: string | null
   valor_com_juros: number | null
+  // As duas colunas novas do pacote. Declarar aqui nao e formalidade: sem elas
+  // no tipo, apagar a coluna do `select` nao da erro nenhum de compilacao - o
+  // campo chega `undefined` e a regra que depende dele apenas para de valer,
+  // em silencio. Foi assim que a regra de venda filha ja passou verde 12 vezes
+  // numa medicao por mutacao.
+  pacote_pai_id: string | null
+  oferta_nome: string | null
 }
 
 type SessaoRow = {
@@ -192,9 +203,14 @@ export async function GET(req: NextRequest) {
     while (true) {
       let q = supabase
         .from('sales')
-        .select('id,email,valor_pago_cliente,valor_liquido,preco_base,produto,data_hora,status,plataforma,valor_com_juros')
+        .select(COLUNAS_DO_DASHBOARD)
+      // O Diagnostico Guiado entra por termo proprio: o produto dele nao tem
+      // nome de terapeuta dentro, entao ele ficava de fora desta varredura -
+      // e como `consultas_hoje` e `proximas_consultas` sao filtradas por
+      // `.in('sale_id', saleIds)`, as sessoes do Diagnostico sumiam do
+      // Overview inteiro. A tela do comercial ja abria essa excecao; esta nao.
       if (nomesTerapeutas.length > 0) {
-        q = q.or(nomesTerapeutas.map(n => `produto.ilike.%${n}%`).join(','))
+        q = q.or(termosDeProduto(nomesTerapeutas).join(','))
       }
       if (from) q = q.gte('data_hora', from)
       if (to) q = q.lte('data_hora', to)
@@ -262,6 +278,13 @@ export async function GET(req: NextRequest) {
       denise: { 550: 1, 790: 2, 1400: 4, 2640: 8 },
     }
     function inferirSessoesPorValor(sale: SaleRow, todasVendas: SaleRow[]): number {
+      // O NOME DA OFERTA manda. A quantidade e regra da empresa, esta escrita
+      // na oferta que o comercial vendeu, e o chute por valor erra justamente
+      // no caso que interessa: duas compras do mesmo pacote somam R$ 5.280,
+      // acham as 8 sessoes na tabela e dividem por 2 irmas - projetando 4 onde
+      // o pacote tem 8.
+      const daOferta = sessoesDoNomeDaOferta(sale.oferta_nome)
+      if (daOferta) return daOferta
       const tabela = sale.produto.toLowerCase().includes('denise') ? TABELA_SESSOES.denise : TABELA_SESSOES.pedro
       if (tabela[sale.preco_base]) return tabela[sale.preco_base]
       const irmas = todasVendas.filter(v => v.email === sale.email && v.produto === sale.produto)
@@ -280,9 +303,15 @@ export async function GET(req: NextRequest) {
       // na prática de outro terapeuta; deixá-lo aparecer aqui é exatamente o
       // tipo de reconciliação manual que o corte existe pra evitar.
       const pendentes = vendasRaw.filter(v => {
-        // Mentoria em Grupo não é agendamento individual — não deve entrar
-        // na contagem de sessões/comissão pendente de agendamento.
-        if (v.status !== 'aprovada' || saleIdsComSessao.has(v.id) || !v.produto.toLowerCase().includes(primeiroNome) || !saleAposCorte(v) || v.produto.toLowerCase().includes('grupo')) return false
+        // Mentoria em Grupo, venda já agendada e venda ligada a outro pacote
+        // saem aqui - a mesma regra da tela do comercial e da tela do terapeuta,
+        // em lib/vendas-por-situacao.ts.
+        if (!ehPendenteDeAgendamento(v, { temSessao: x => saleIdsComSessao.has(x.id), aposCorte: saleAposCorte })) return false
+        // `ehDoTerapeuta` e nao `includes(primeiroNome)`: o Diagnostico Guiado
+        // nao traz nome de terapeuta no produto, entao ele sumia daqui e da
+        // tela do terapeuta enquanto aparecia para o comercial. Ver
+        // lib/vendas-por-situacao.ts.
+        if (v.status !== 'aprovada' || !ehDoTerapeuta(v.produto, primeiroNome)) return false
         if (t.vendas_a_partir_de) {
           const outrosQueTambemBatem = todosNomesTerapeutas.filter(n => n !== primeiroNome && v.produto.toLowerCase().includes(n))
           if (outrosQueTambemBatem.length > 0) return false
@@ -368,7 +397,12 @@ export async function GET(req: NextRequest) {
     const por_terapeuta = terapeutas.map(t => {
       const ts = sessoesFiltradas.filter(s => s.terapeuta_id === t.id)
       const pendentesT = pendentesPorTerapeuta.get(t.id) ?? { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] }
-      const saleIdsTerapeuta = [...new Set(ts.map(s => s.sale_id))]
+      // As vendas FILHAS entram junto. A lista nasce das SESSOES, e a filha nao
+      // tem nenhuma: depois de ligada ela saia de Pendentes (certo, as sessoes
+      // dela estao no pai) e nao entrava em lugar nenhum - a linha do terapeuta
+      // perdia R$ 2.600 no caso da Amanda, enquanto o card global da mesma tela
+      // continuava com o valor cheio. Duas caixas na mesma pagina, uma so venda.
+      const saleIdsTerapeuta = saleIdsComAsFilhas([...new Set(ts.map(s => s.sale_id))], vendasRaw)
       const fat_bruto_t = vendasFaturamento
         .filter(v => saleIdsTerapeuta.includes(v.id))
         .reduce((a, v) => a + (v.valor_pago_cliente || 0), 0) + pendentesT.bruto

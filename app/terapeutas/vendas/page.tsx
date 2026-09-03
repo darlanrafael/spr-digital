@@ -1,13 +1,16 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Calendar, CheckCircle, RefreshCw, X, AlertTriangle, Copy, Check } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
+import { brutoDoPacote } from '@/lib/dinheiro-do-pacote'
+import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda, avisosDasDatas } from '@/lib/diagnostico-guiado'
+import { decidirAgendamento, type RespostaDoComercial } from '@/lib/decisao-de-agendamento'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 import { resumirReagendamentoTotal } from '@/lib/reagendamento-total'
 
@@ -44,6 +47,13 @@ type Sale = {
   // reconhece um pacote do Diagnóstico Guiado e a tela trata os três formatos
   // como um produto qualquer de 1 sessão, sem erro nenhum.
   order_id?: string
+  /**
+   * Nome da oferta ("Formato - 4 Sessão"). Fonte da QUANTIDADE de sessões do
+   * pacote - regra do negócio, não escolha de quem agenda.
+   */
+  oferta_nome?: string | null
+  /** Venda que carrega as sessões deste pacote, quando pago em mais de uma compra. */
+  pacote_pai_id?: string | null
 }
 
 type Sessao = {
@@ -102,6 +112,8 @@ type Terapeuta = { id: string; nome: string }
 type PageData = {
   counts: { aprovadas: number; pendentes: number; ativos: number; reembolsos: number }
   vendas_pendentes: Sale[]
+  /** Vendas ligadas a outro pacote. Fora de Pendentes, mas necessárias para somar o pacote. */
+  vendas_filhas: Sale[]
   vendas_ativos: Sale[]
   vendas_reembolsos: Sale[]
   sessoes_por_venda: Record<string, Sessao[]>
@@ -188,6 +200,13 @@ function inferirNumeroSessoesPorValor(sale: Sale, todasVendas: Sale[]): number {
   // valor_pago_cliente varia com parcelamento e o preco_base quebra com cupom.
   const diagnostico = formatoDaVenda(sale)
   if (diagnostico) return diagnostico.totalSessoes
+  // O NOME DA OFERTA vem antes de qualquer chute por valor. A quantidade é
+  // regra da empresa e está escrita na oferta vendida; o chute erra justo no
+  // caso que importa - uma venda cuja irmã já foi LIGADA sai da lista de
+  // candidatas, a soma não fecha mais o preço do pacote, e a linha mostrava
+  // "Qtd. Sessões: 1" para um pacote de 8 enquanto o modal calculava 8.
+  const daOferta = sessoesDoNomeDaOferta(sale.oferta_nome)
+  if (daOferta) return daOferta
   const tabela = sale.produto.toLowerCase().includes('denise') ? TABELA_SESSOES_POR_VALOR.denise : TABELA_SESSOES_POR_VALOR.pedro
   if (tabela[sale.preco_base]) return tabela[sale.preco_base]
   const irmas = todasVendas.filter(v => v.email === sale.email && v.produto === sale.produto)
@@ -283,7 +302,7 @@ function calcularReembolsoLocal(params: {
 
 const EMPTY_DATA: PageData = {
   counts: { aprovadas: 0, pendentes: 0, ativos: 0, reembolsos: 0 },
-  vendas_pendentes: [], vendas_ativos: [], vendas_reembolsos: [],
+  vendas_pendentes: [], vendas_filhas: [], vendas_ativos: [], vendas_reembolsos: [],
   sessoes_por_venda: {}, ocorrencias_por_venda: {}, remarcacoes_por_sessao: {},
   terapeutas: [], formatos: [],
 }
@@ -368,6 +387,22 @@ export default function TerapeutasVendas() {
   // reserva feita a mão para este mesmo paciente). Guarda a senha já digitada
   // para o "agendar assim mesmo" ser um clique só.
   const [agendarConflitoCompromisso, setAgendarConflitoCompromisso] = useState<{ mensagem: string; senha: string } | null>(null)
+  // Pergunta sobre pacote pago em mais de uma compra. Aparece ANTES do
+  // agendamento, quando o sistema acha outra compra do mesmo paciente e produto
+  // dentro de 24h sem sessão entregue, ou quando o valor não fecha com o pacote.
+  // O sistema propõe; quem decide é quem vendeu.
+  // A resposta carrega o sale_id a que pertence - mesmo padrão de
+  // `agendarSessoesLidas`. Sem o carimbo, ela vazava para a próxima venda
+  // agendada na mesma sessão de página.
+  const [pacoteResposta, setPacoteResposta] = useState<RespostaDoComercial | null>(null)
+  const [pacotePagaDiferenca, setPacotePagaDiferenca] = useState<boolean | null>(null)
+  const [pacoteOutraCompra, setPacoteOutraCompra] = useState<boolean | null>(null)
+  const [pacoteJustificativa, setPacoteJustificativa] = useState('')
+  const [pacoteLoading, setPacoteLoading] = useState(false)
+  const [pacoteErro, setPacoteErro] = useState('')
+  const [desfazerPacoteId, setDesfazerPacoteId] = useState<string | null>(null)
+  const [desfazerErro, setDesfazerErro] = useState('')
+  const [desfazerLoading, setDesfazerLoading] = useState(false)
   // Sessões relidas do banco ao abrir o modal. O aviso de destruição saía de
   // pageData.sessoes_por_venda, buscado no load da página: sessão criada por
   // outra pessoa depois disso não aparecia e o modal chegava a mostrar botão
@@ -597,9 +632,46 @@ export default function TerapeutasVendas() {
   // `new Date('').toISOString()` lança RangeError. Isto roda a cada render do
   // modal, então a exceção derrubava a página inteira e apagava os ajustes que
   // ele já tinha feito nas outras sessões.
-  const agendarNumSessoes = agendarDiagnostico
-    ? agendarDiagnostico.totalSessoes
-    : parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1)
+  // A QUANTIDADE de sessoes e regra do negocio, nao escolha de quem agenda
+  // (usuario, 03/09/2026). Vem do nome da oferta, com o preco conferindo; o
+  // comercial decide só QUANDO cada sessao acontece.
+  // `pacoteResposta` e resposta SOBRE UMA VENDA. Sem limpar ao trocar de venda,
+  // ela vazava: depois de responder "e o mesmo pacote" uma vez, toda venda
+  // agendada na mesma sessao de pagina mandava a mesma resposta - travando o
+  // agendamento (400 sem candidata) ou juntando duas compras que ninguem
+  // confirmou.
+  useEffect(() => {
+    setPacoteResposta(null)
+    setPacotePagaDiferenca(null)
+    setPacoteOutraCompra(null)
+    setPacoteJustificativa('')
+    setPacoteErro('')
+  }, [agendarVendaId])
+
+  // Toda a decisão do modal (candidata, conferência, quantidade e trava) vive em
+  // lib/decisao-de-agendamento.ts. Três defeitos desta feature moraram
+  // exatamente nesta fiação, com as funções puras que ela chama corretas e
+  // cobertas por teste o tempo todo.
+  const decisaoPacote = useMemo(() => decidirAgendamento({
+    venda: agendarVenda ?? null,
+    totalDoDiagnostico: agendarDiagnostico?.totalSessoes ?? null,
+    pendentes: pageData.vendas_pendentes,
+    ativos: pageData.vendas_ativos,
+    filhas: pageData.vendas_filhas,
+    entreguesPorVenda: Object.fromEntries(
+      Object.entries(pageData.sessoes_por_venda).map(([id, ss]) => [id, ss.filter(x => x.status === 'entregue').length]),
+    ),
+    resposta: pacoteResposta,
+    // O campo existia e nunca era preenchido: quem decidia "retry nao regrava a
+    // resposta" era um ternario no `handleAgendar`, duplicando a decisao fora
+    // do alcance dos testes. Agora ela vive num lugar so.
+    ehRetryDeCompromisso: !!agendarConflitoCompromisso,
+  }), [agendarVenda, agendarDiagnostico, pageData, pacoteResposta, agendarConflitoCompromisso])
+
+  const agendarCandidataPacote = decisaoPacote.candidata
+  const agendarConfere = decisaoPacote.confere
+  const agendarNumSessoes = decisaoPacote.numeroDeSessoes
+    ?? (parseInt(agendarNumSessoesInput, 10) || (agendarVenda ? inferirNumeroSessoesPorValor(agendarVenda, [...pageData.vendas_pendentes, ...pageData.vendas_ativos]) : 1))
   // Enquanto a releitura não volta, usa o que veio do load: é melhor avisar com
   // dado velho do que não avisar nada. O botão fica travado nesse intervalo.
   const agendarLeituraDaVenda = agendarSessoesLidas?.saleId === agendarVendaId ? agendarSessoesLidas : null
@@ -666,10 +738,22 @@ export default function TerapeutasVendas() {
         terapeuta_nome: terapeutaNomeProntuario,
         sessoes_total: totalProntuario,
         sessoes_feitas: entreguesProntuario,
-        valor_pago: prontuarioSale.valor_pago_cliente,
+        // O valor pago do PACOTE INTEIRO, somando as vendas ligadas a esta.
+        // `sessoes_total` ja conta o pacote todo (as sessoes vivem na
+        // venda-pai), entao usar o valor de uma venda so devolvia ao paciente
+        // menos do que ele pagou. Caso real da Amanda, JA nesse estado hoje:
+        // a tela oferecia R$ 1.380 onde ela pagou R$ 5.280 em duas compras e
+        // tem direito a R$ 3.980 - faltavam R$ 2.600.
+        valor_pago: brutoDoPacote(prontuarioSale, pageData.vendas_filhas),
       })
     : null
   const valorReembolso = reembolsoCalc?.valor_reembolso ?? 0
+
+  // As compras ligadas a esta venda. Uma função só, usada em Pendentes e no
+  // prontuário: eram duas listas escritas à mão que já divergiram uma vez.
+  function filhasDaVenda(saleId: string) {
+    return pageData.vendas_filhas.filter(v => v.pacote_pai_id === saleId)
+  }
 
   function getVendedor(saleId: string): string {
     const sessoes = pageData.sessoes_por_venda[saleId] ?? []
@@ -683,9 +767,93 @@ export default function TerapeutasVendas() {
   const notaValida = notaTitulo.trim().length > 0 && notaDesc.trim().length >= 10
 
   // ── Handlers ──
+  // Grava a resposta do comercial sobre o pacote. Não bloqueia o agendamento:
+  // ele responde, o registro é gravado e o modal sai do caminho.
+  //
+  // Roda ANTES do agendamento e com a MESMA senha: se a resposta é "mesmo
+  // pacote", as duas vendas precisam estar ligadas antes de o pacote ser
+  // montado. A QUANTIDADE enviada já leva a candidata em conta desde o momento
+  // em que o comercial responde - ver o cálculo de agendarConfere -, senão o
+  // link acontecia e o agendamento ia com o número de antes dele. E pedir senha
+  // duas vezes na mesma ação seria atrito sem ganho nenhum.
+  // Desfaz a ligação entre duas compras. A rota existia desde o começo e nada a
+  // chamava: um clique errado em "É o mesmo pacote" escondia a venda de três
+  // telas sem nenhuma delas mostrar que ela virou filha, e a única saída era
+  // mexer no banco.
+  async function desfazerPacote(senha: string) {
+    if (!desfazerPacoteId) return
+    setDesfazerLoading(true); setDesfazerErro('')
+    // O try/catch não é zelo: sem ele um fetch que rejeita - rede caída, corpo
+    // não-JSON - deixava `desfazerLoading` em `true` para sempre e o botão
+    // preso em "Verificando...", sem mensagem nenhuma.
+    try {
+      const res = await fetch('/api/terapeutas/vendas/pacote', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sale_id: desfazerPacoteId, usuario_email: adminEmail, senha }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setDesfazerErro(json.error ?? `Erro ${res.status}`); return }
+      setDesfazerPacoteId(null)
+      loadData()
+    } catch (e) {
+      setDesfazerErro(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDesfazerLoading(false)
+    }
+  }
+
+  async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente', senha: string): Promise<string | null> {
+    if (!agendarVenda) return null
+    setPacoteLoading(true); setPacoteErro('')
+    const res = await fetch('/api/terapeutas/vendas/pacote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sale_id: agendarVenda.id,
+        // A irmã vai junto TAMBÉM em "compra separada": se ela já tiver sido
+        // ligada numa tentativa anterior, essa resposta é uma retratação e a
+        // rota precisa saber qual ligação desfazer. Sem isso o comercial podia
+        // juntar, ver o agendamento falhar, trocar para "é compra separada" e
+        // seguir com o `pacote_pai_id` ainda gravado - pacote de 8 agendado
+        // com 4 sessões, e a outra compra escondida de todas as telas.
+        sale_irma_id: agendarCandidataPacote?.id ?? null,
+        tipo,
+        diferenca: agendarConfere?.situacao === 'valor_divergente' ? agendarConfere.diferenca : null,
+        sessoes_do_pacote: agendarConfere && agendarConfere.situacao !== 'indeterminado' ? agendarConfere.sessoes : null,
+        paciente_paga_diferenca: pacotePagaDiferenca,
+        havera_outra_compra: pacoteOutraCompra,
+        justificativa: pacoteJustificativa.trim() || null,
+        usuario_email: adminEmail,
+        senha,
+      }),
+    })
+    const json = await res.json()
+    setPacoteLoading(false)
+    // Devolve a mensagem para quem chamou: ler `pacoteErro` no mesmo tick em
+    // que ele foi setado pega o valor ANTIGO, e a caixa que o mostraria fica
+    // escondida quando a resposta e "mesmo pacote". O comercial via sempre a
+    // frase generica, nunca o motivo real.
+    if (!res.ok) { const m = json.error ?? 'Erro'; setPacoteErro(m); return m }
+    setPacotePagaDiferenca(null); setPacoteOutraCompra(null); setPacoteJustificativa('')
+    return null
+  }
+
   async function handleAgendar(senha: string, ignorarCompromissos = false) {
     if (!agendarVendaId || !agendarTerapeutaEfetivo || !agendarDataPrimeira) return
     setAgendarLoading(true); setAgendarErro('')
+    // A resposta sobre o pacote vai PRIMEIRO: se é o mesmo pacote, as vendas
+    // precisam estar ligadas antes de montar as sessões, senão o agendamento
+    // cria 4 em vez de 8. Se falhar, para aqui - agendar com o pacote errado é
+    // pior que não agendar.
+    // `tipoAResponder` ja sabe que retry de compromisso nao regrava a resposta,
+    // e que uma ligacao ja gravada no banco nao precisa de segunda ocorrencia -
+    // ver lib/decisao-de-agendamento.ts. A decisao mora la, nao aqui.
+    const tipoAResponder = decisaoPacote.tipoAResponder
+    if (tipoAResponder) {
+      const erro = await responderPacote(tipoAResponder, senha)
+      if (erro) { setAgendarLoading(false); setAgendarErro(erro); return }
+    }
     if (!ignorarCompromissos) setAgendarConflitoCompromisso(null)
     const res = await fetch('/api/terapeutas/sessoes/agendar', {
       method: 'POST',
@@ -719,6 +887,12 @@ export default function TerapeutasVendas() {
       // recusado pela própria reserva. Guarda a senha para o "agendar assim
       // mesmo" não obrigar a digitar de novo.
       if (json.soCompromissos) setAgendarConflitoCompromisso({ mensagem: json.error ?? '', senha })
+      // Recarrega mesmo tendo falhado: a resposta sobre o pacote foi gravada
+      // ANTES do agendamento, então a ligação já existe no banco e a tela
+      // ainda não sabe. Sem isto, a segunda tentativa recalculava a soma sem a
+      // irmã - `vendas_filhas` vazia, `confirmada` vazia - e mandava agendar 4
+      // sessões num pacote de 8.
+      if (tipoAResponder === 'mesmo_pacote') loadData()
       return
     }
     setAgendarSenhaOpen(false)
@@ -1044,7 +1218,28 @@ export default function TerapeutasVendas() {
                               </td>
                               <td className="px-4 py-3 text-white whitespace-nowrap">{fmtBRL(sale.valor_pago_cliente)}</td>
                               <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(sale.valor_liquido)}</td>
-                              <td className="px-4 py-3 text-gray-500 text-xs">—</td>
+                              <td className="px-4 py-3 text-gray-500 text-xs">
+                                {/* O aviso de pacote e o "Separar" moravam SÓ no
+                                    prontuário, e o prontuário só abre na aba de
+                                    Ativos. No estado em que o Separar existe
+                                    para servir - ligação criada, agendamento
+                                    falhou, o pai ainda em Pendentes - não havia
+                                    como desfazer pela tela: voltava a ser
+                                    cirurgia no banco, que é exatamente o que o
+                                    botão veio eliminar. */}
+                                {filhasDaVenda(sale.id).map(f => (
+                                  <div key={f.id} className="flex items-center gap-1.5 whitespace-nowrap">
+                                    <span className="text-sky-300" title={`Também entrou ${fmtBRL(f.valor_pago_cliente)} em ${fmtDt(f.data_hora)}${f.oferta_nome ? ` (${f.oferta_nome})` : ''}`}>
+                                      + {fmtBRL(f.valor_pago_cliente)} juntados
+                                    </span>
+                                    <button onClick={() => { setDesfazerPacoteId(f.id); setDesfazerErro('') }}
+                                      className="text-[10px] px-1.5 py-0.5 rounded border border-white/15 text-gray-300 hover:bg-gray-800">
+                                      Separar
+                                    </button>
+                                  </div>
+                                ))}
+                                {filhasDaVenda(sale.id).length === 0 && '—'}
+                              </td>
                               <td className="px-4 py-3">
                                 {ofertaDiagnosticoNaoMapeada(sale) ? (
                                   <span title="Oferta não mapeada: o formato do pacote é desconhecido."
@@ -1285,14 +1480,36 @@ export default function TerapeutasVendas() {
                 <input type="datetime-local" value={agendarDataPrimeira} onChange={e => setAgendarDataPrimeira(e.target.value)}
                   className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
               </div>
+              {/* A quantidade de sessões é REGRA DO NEGÓCIO, não escolha de quem
+                  agenda (usuário, 03/09/2026). Vem do nome da oferta, com o preço
+                  conferindo. Antes era um campo editável com um aviso mandando o
+                  comercial conferir numa planilha - ou seja, o sistema empurrava
+                  para ele uma responsabilidade que é da regra. O que ele decide,
+                  com autonomia total, é QUANDO cada sessão acontece. */}
               {!agendarDiagnostico && (
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões <span className="text-red-400">*</span></label>
-                  <input type="number" min={1} value={agendarNumSessoesInput} onChange={e => setAgendarNumSessoesInput(e.target.value)}
-                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
-                  <p className="text-[10px] text-gray-600 mt-1">
-                    Sugerido a partir do nome do produto - confira o pacote real (ex: planilha de acompanhamento) antes de confirmar.
-                  </p>
+                  <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões</label>
+                  {agendarConfere?.situacao === 'indeterminado' ? (
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                      <p className="text-xs text-red-300 font-medium">Não foi possível determinar a quantidade</p>
+                      <p className="text-[11px] text-red-400/80 mt-1">
+                        O nome da oferta não diz quantas sessões são{agendarVenda?.oferta_nome ? ` ("${agendarVenda.oferta_nome}")` : ' (a venda não tem oferta registrada)'} e o valor
+                        de R$ {(agendarVenda?.preco_base ?? 0).toLocaleString('pt-BR')} não bate com nenhum pacote de tabela.
+                        Ajuste a oferta na plataforma ou fale com o financeiro antes de agendar.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-full bg-gray-800/60 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200">
+                        {agendarNumSessoes} {agendarNumSessoes === 1 ? 'sessão' : 'sessões'}
+                      </div>
+                      <p className="text-[10px] text-gray-600 mt-1">
+                        {agendarVenda?.oferta_nome
+                          ? `Definido pela oferta "${agendarVenda.oferta_nome}".`
+                          : 'Definido pelo valor do pacote.'} Não é editável: a quantidade vem da venda.
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
               {agendarDatasEditadas.length > 0 && (
@@ -1382,6 +1599,91 @@ export default function TerapeutasVendas() {
                   </div>
                 )
               )}
+              {/* Outra compra do mesmo paciente e produto em até 24h, sem sessão
+                  entregue no outro pacote. O sistema PROPÕE; quem sabe se é o
+                  mesmo pacote ou compra separada é quem vendeu. Regra combinada
+                  com o usuário em 03/09/2026, com a janela escolhida a partir
+                  dos 56 pares reais do banco. */}
+              {agendarCandidataPacote && (
+                <div className="bg-sky-500/10 border border-sky-500/30 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-sky-300 font-medium">
+                    Encontramos outra compra deste paciente
+                  </p>
+                  <p className="text-[11px] text-gray-300">
+                    {fmtDt(agendarCandidataPacote.data_hora)} · {agendarCandidataPacote.ofertaNome ?? 'sem oferta registrada'} · {fmtBRL(agendarCandidataPacote.precoBase ?? 0)}
+                  </p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => agendarVendaId && setPacoteResposta({ saleId: agendarVendaId, valor: 'mesmo_pacote' })}
+                      className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
+                        decisaoPacote.respostaEfetiva === 'mesmo_pacote'
+                          ? 'bg-sky-600 border-sky-500 text-white'
+                          : 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700'}`}>
+                      É o mesmo pacote
+                    </button>
+                    <button type="button" onClick={() => agendarVendaId && setPacoteResposta({ saleId: agendarVendaId, valor: 'compra_separada' })}
+                      className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
+                        decisaoPacote.respostaEfetiva === 'compra_separada'
+                          ? 'bg-sky-600 border-sky-500 text-white'
+                          : 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700'}`}>
+                      É compra separada
+                    </button>
+                  </div>
+                  {decisaoPacote.respostaEfetiva === 'mesmo_pacote' && (
+                    <p className="text-[11px] text-sky-400">
+                      As duas compras viram um pacote só. A outra sai de Pendentes de Agendamento.
+                    </p>
+                  )}
+                  {decisaoPacote.respostaEfetiva === 'compra_separada' && (
+                    <p className="text-[11px] text-gray-500">
+                      Agendo só esta. A outra continua esperando agendamento.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Valor recebido não fecha com o pacote. Não trava: o comercial
+                  responde e agenda. As respostas viram registro para o CEO
+                  conferir depois - pedido do usuário, "assim como já acontece
+                  com os reembolsos". */}
+              {agendarConfere?.situacao === 'valor_divergente' && decisaoPacote.respostaEfetiva !== 'mesmo_pacote' && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-amber-300 font-medium">
+                    O valor recebido não fecha com o pacote
+                  </p>
+                  <p className="text-[11px] text-gray-300">
+                    A oferta é de {agendarConfere.sessoes} {agendarConfere.sessoes === 1 ? 'sessão' : 'sessões'}, que custa {fmtBRL(agendarConfere.esperado)}.
+                    Recebemos {fmtBRL(agendarConfere.recebido)} -{' '}
+                    {agendarConfere.diferenca > 0
+                      ? `faltam ${fmtBRL(agendarConfere.diferenca)}`
+                      : `entraram ${fmtBRL(-agendarConfere.diferenca)} a mais`}.
+                  </p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400 flex-1">O paciente vai pagar a diferença?</span>
+                      {[['Sim', true], ['Não', false]].map(([rot, val]) => (
+                        <button key={String(val)} type="button" onClick={() => setPacotePagaDiferenca(val as boolean)}
+                          className={`px-2.5 py-1 text-[11px] rounded border ${pacotePagaDiferenca === val ? 'bg-amber-600 border-amber-500 text-white' : 'bg-gray-800 border-white/10 text-gray-300'}`}>
+                          {rot as string}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400 flex-1">Vai haver outra compra deste paciente?</span>
+                      {[['Sim', true], ['Não', false]].map(([rot, val]) => (
+                        <button key={String(val)} type="button" onClick={() => setPacoteOutraCompra(val as boolean)}
+                          className={`px-2.5 py-1 text-[11px] rounded border ${pacoteOutraCompra === val ? 'bg-amber-600 border-amber-500 text-white' : 'bg-gray-800 border-white/10 text-gray-300'}`}>
+                          {rot as string}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <textarea value={pacoteJustificativa} onChange={e => setPacoteJustificativa(e.target.value)}
+                    rows={2} placeholder="Explique o que aconteceu (aparece na conferência do CEO)"
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-amber-500/50" />
+                  {pacoteErro && <p className="text-[11px] text-red-400">{pacoteErro}</p>}
+                </div>
+              )}
+
               {/* whitespace-pre-line: o conflito de agenda pode listar uma
                   data por linha quando várias sessões do pacote batem. */}
               {/* Só aparece no caminho destrutivo: no agendamento normal (venda
@@ -1415,7 +1717,7 @@ export default function TerapeutasVendas() {
               {/* Travado enquanto a releitura das sessões não volta: confirmar
                   antes disso é decidir com o dado do carregamento da página,
                   que é exatamente o que essa releitura existe pra evitar. */}
-              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0} onClick={() => {
+              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0 || decisaoPacote.travado} onClick={() => {
                 if (agendarDiagnostico && !pedroTerapeuta) {
                   setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
                   return
@@ -1455,6 +1757,7 @@ export default function TerapeutasVendas() {
               }} className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
                 agendarResumo.bloqueado || agendarSessoesCarregando
                   || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0
+                  || decisaoPacote.travado
                   ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   : agendarEhSubstituicao ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'}`}>
                 {agendarSessoesCarregando
@@ -1483,6 +1786,21 @@ export default function TerapeutasVendas() {
                     {rotuloDiagnosticoDaVenda(prontuarioSale, prontuarioSessoes)}
                   </span>
                 )}
+                {/* Compras juntadas neste pacote. Sem isto, uma venda ligada
+                    sumia de Pendentes, do dashboard e da tela do terapeuta, e
+                    nenhuma tela dizia por quê. */}
+                {filhasDaVenda(prontuarioSale.id).map(f => (
+                  <div key={f.id} className="mt-2 flex items-center gap-2 text-[11px] bg-sky-500/10 border border-sky-500/30 rounded-lg px-2.5 py-1.5">
+                    <span className="text-sky-300">
+                      Pacote pago em mais de uma compra: também entrou {fmtBRL(f.valor_pago_cliente)} em {fmtDt(f.data_hora)}
+                      {f.oferta_nome ? ` (${f.oferta_nome})` : ''}
+                    </span>
+                    <button onClick={() => { setDesfazerPacoteId(f.id); setDesfazerErro('') }}
+                      className="ml-auto text-[10px] px-2 py-0.5 rounded border border-white/15 text-gray-300 hover:bg-gray-800 shrink-0">
+                      Separar
+                    </button>
+                  </div>
+                ))}
               </div>
               <button onClick={() => setProntuarioVendaId(null)} className="text-gray-500 hover:text-white mt-0.5">
                 <X className="w-4 h-4" />
@@ -1802,8 +2120,14 @@ export default function TerapeutasVendas() {
                       ) : (
                         <div className="space-y-1.5">
                           {sessoesPendentesProntuario.map(s => {
+                            // O valor por sessao sai do PACOTE INTEIRO. O
+                            // `totalProntuario` ja conta as sessoes das duas
+                            // compras (elas vivem todas na venda-pai), entao
+                            // dividir so o valor de uma delas mostrava R$ 335
+                            // por sessao onde a Amanda pagou R$ 660 - a mesma
+                            // metade que o reembolso oferecia.
                             const valorSessao = prontuarioSale
-                              ? prontuarioSale.valor_pago_cliente / (totalProntuario || 1)
+                              ? brutoDoPacote(prontuarioSale, pageData.vendas_filhas) / (totalProntuario || 1)
                               : 0
                             return (
                               <label key={s.id} className="flex items-center gap-2.5 cursor-pointer p-2 bg-gray-700/50 rounded-lg hover:bg-gray-700">
@@ -1905,6 +2229,18 @@ export default function TerapeutasVendas() {
       )}
 
       {/* ── SenhaModals ── */}
+      {/* Separar as compras exige senha, como toda ação que muda dado.
+          A mensagem antiga dizia "As sessões já criadas não são alteradas",
+          que é tranquilizador e era o oposto do que interessa: se o pacote já
+          foi montado, deixar as sessões como estão é justamente o problema - o
+          pai fica com 8 sessões sustentadas por uma compra que vale 4. A rota
+          agora RECUSA nesse estado, e a mensagem diz isso antes do clique. */}
+      <SenhaModal isOpen={!!desfazerPacoteId}
+        onClose={() => { setDesfazerPacoteId(null); setDesfazerErro('') }}
+        onConfirm={desfazerPacote} titulo="Separar as compras"
+        descricao="A compra volta para Pendentes de Agendamento e deixa de somar neste pacote. Só é possível enquanto o pacote não tiver sessões agendadas - depois disso, anule ou reagende as sessões da venda principal antes."
+        loading={desfazerLoading} erro={desfazerErro} />
+
       <SenhaModal isOpen={agendarSenhaOpen && !agendarConflitoCompromisso}
         onClose={() => { setAgendarSenhaOpen(false); setAgendarErro('') }}
         onConfirm={handleAgendar} titulo="Confirmar agendamento"

@@ -18,10 +18,12 @@ import AgendaDiaTerapeuta, {
   JANELA_INICIO_MIN, JANELA_FIM_MIN,
 } from '@/components/terapeutas/AgendaDiaTerapeuta'
 import { fimEfetivoSessao } from '@/lib/agenda-horarios'
+import { saleIdsComAsFilhas } from '@/lib/dinheiro-do-pacote'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { ehPendenteDeAgendamento, ehVendaFilha } from '@/lib/vendas-por-situacao'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -74,6 +76,8 @@ type SaleInfo = {
   // etiqueta simplesmente nunca aparece, sem erro nenhum. Tipo igual ao de
   // Sale ('@/types'): opcional sem null, pra formatoDaVenda() aceitar direto.
   order_id?: string
+  /** Venda que carrega as sessões deste pacote, quando pago em mais de uma compra. */
+  pacote_pai_id?: string | null
 }
 
 type Ocorrencia = {
@@ -696,8 +700,18 @@ export default function PainelTerapeuta() {
       // sem ele, formatoDaVenda() (usado no prontuário e na aba Vendas) nunca
       // reconhece o pacote e a etiqueta nunca aparece, sem erro nenhum.
       const { data: vendasData } = await client
-        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id').in('id', saleIds)
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id').in('id', saleIds)
       for (const v of (vendasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
+
+      // Vendas LIGADAS a estas: o paciente pagou o mesmo pacote em mais de uma
+      // compra, e as sessoes ficaram todas na venda-pai. Sem carrega-las aqui,
+      // o bruto e o liquido do paciente perdem a segunda compra - o card
+      // mostraria R$ 700 onde ele pagou R$ 1.400 - e o reembolso, que sai desse
+      // mesmo numero, devolveria metade do devido.
+      const { data: filhasData } = await client
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id')
+        .in('pacote_pai_id', saleIds)
+      for (const v of (filhasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
     }
     setVendas(vendasMap)
 
@@ -766,7 +780,7 @@ export default function PainelTerapeuta() {
       const primeiroNome = nomeTerapeuta.split(' ')[0]
       let candidatasQuery = client
         .from('sales')
-        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status')
+        .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,pacote_pai_id')
         .ilike('produto', `%${primeiroNome}%`)
         // Mentoria em Grupo não é agendamento individual — não deve cair em
         // Pendentes de Agendamento junto com a Mentoria Particular.
@@ -779,7 +793,12 @@ export default function PainelTerapeuta() {
         candidatasQuery = candidatasQuery.gte('data_hora', terapeutaResp.vendas_a_partir_de)
       }
       const { data: candidatas } = await candidatasQuery
-      let pendentes = ((candidatas ?? []) as SaleInfo[]).filter(v => !saleIds.includes(v.id))
+      // Venda ligada a outro pacote sai daqui tambem: ela ja foi agendada com
+      // a venda-pai, e o botao "Agendar" mandaria para /terapeutas/vendas, onde
+      // ela foi filtrada - devolvendo erro sem explicacao nenhuma. Mesma regra
+      // das outras duas telas, em lib/vendas-por-situacao.ts.
+      let pendentes = ((candidatas ?? []) as SaleInfo[])
+        .filter(v => ehPendenteDeAgendamento(v, { temSessao: x => saleIds.includes(x.id) }))
       // Terapeuta em modo "começar do zero" só reconhece produto exclusivo
       // dele — nunca um produto conjunto (ex: "Mentoria Particular - Pedro |
       // Denise") que bate com o nome de outro terapeuta ativo também. Esse
@@ -804,7 +823,7 @@ export default function PainelTerapeuta() {
         // nome identico.
         let diagQuery = client
           .from('sales')
-          .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id')
+          .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id,oferta_nome')
           .ilike('produto', '%Diagnóstico Guiado%')
           .eq('status', 'aprovada')
           .not('id', 'like', 'manual_%')
@@ -824,6 +843,11 @@ export default function PainelTerapeuta() {
           // tabela de Pendentes, via ofertaDiagnosticoNaoMapeada().
           if (saleIds.includes(v.id)) continue
           if (pendentes.some(p => p.id === v.id)) continue
+          // Venda ligada a outro pacote nao e pendente: as sessoes dela estao
+          // na venda-pai. Esta consulta reimplementava a regra a mao e nao
+          // conhecia o `pacote_pai_id`, entao uma compra do Diagnostico ja
+          // juntada voltaria a aparecer aqui pedindo agendamento.
+          if (ehVendaFilha(v)) continue
           pendentes.push(v)
         }
       }
@@ -1017,7 +1041,15 @@ export default function PainelTerapeuta() {
       if (p.vendedor === '—' && (s.vendedor_nome || s.agendado_por)) p.vendedor = s.vendedor_nome ?? s.agendado_por ?? '—'
     }
     for (const p of Object.values(map)) {
-      const vendasDoPaciente = p.saleIds.map(sid => vendas[sid]).filter((v): v is SaleInfo => !!v)
+      // As vendas FILHAS entram aqui. `p.saleIds` sai das SESSÕES, e a filha,
+      // por definição, não tem nenhuma - é a venda-pai que carrega o pacote.
+      // Carregá-las no mapa não bastava: sem somá-las, o bruto e o líquido do
+      // paciente ficavam pela metade, e o reembolso, que sai desse mesmo
+      // número, oferecia metade do devido. Caso real da Amanda: esta tela
+      // calculava R$ 1.380 enquanto a tela do comercial calculava R$ 3.980
+      // para o mesmo paciente, e as DUAS geram pedido de reembolso.
+      const vendasDoPaciente = saleIdsComAsFilhas(p.saleIds, Object.values(vendas))
+        .map(sid => vendas[sid]).filter((v): v is SaleInfo => !!v)
       // O manual conta a SESSÃO, nunca o DINHEIRO — mesma regra do item 26 do
       // spr-digital.md, aplicada em 10/08 no /api/terapeutas/dashboard e que
       // tinha ficado de fora desta tela. Lançamento manual do módulo de

@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { logWebhookEvent } from '@/lib/webhook-log'
 import { resolveRefundTargets, type SaleRow } from '@/lib/refund-target'
 import { hublaRefundDate } from '@/lib/refund-date'
+import { ofertaDoEventoHubla, correcaoAutoritativaDoOffer } from '@/lib/oferta-do-webhook'
 
 const PROJECT_ID = 'proj_1'
 
@@ -73,6 +74,10 @@ export async function POST(req: NextRequest) {
       const productsArr = (event.products as Record<string, unknown>[]) ?? []
       const offers = (productsArr[0]?.offers as Record<string, unknown>[]) ?? []
       const offerItemId = (offers[0]?.id as string) ?? null
+      // Nome da oferta: e ele que diz a QUANTIDADE de sessoes do pacote
+      // ("Formato - 4 Sessão"), sem depender de arredondamento de preco nem de
+      // promocao. Ate 02/09/2026 chegava aqui e era descartado.
+      const ofertaNome = ofertaDoEventoHubla(event)
       const productId = offerItemId ?? (product?.id as string) ?? null
 
       // Hubla dispara dois webhooks por produto em pedidos multi-produto (bundle):
@@ -98,6 +103,7 @@ export async function POST(req: NextRequest) {
         email:              (payer?.email as string) ?? '',
         telefone:           (payer?.phone as string) ?? '',
         produto:            ((product?.name as string) ?? '').trim(),
+        oferta_nome:        ofertaNome,
         preco_base:         ((amount?.subtotalCents as number) ?? 0) / 100,
         valor_pago_cliente: ((amount?.subtotalCents as number) ?? 0) / 100,
         valor_com_juros:    ((amount?.totalCents as number) ?? 0) / 100,
@@ -123,11 +129,10 @@ export async function POST(req: NextRequest) {
             // Offer é sempre autoritativo — atualizar para o valor individual correto.
             const { error: updateError } = await client
               .from('sales')
-              .update({
-                preco_base:         sale.preco_base,
-                valor_pago_cliente: sale.valor_pago_cliente,
-                valor_liquido:      sale.valor_liquido,
-              })
+              // O offer e autoritativo tambem no nome da oferta, e esse campo
+              // decide a QUANTIDADE DE SESSOES do pacote: ver
+              // correcaoAutoritativaDoOffer em lib/oferta-do-webhook.ts.
+              .update(correcaoAutoritativaDoOffer(sale))
               .eq('order_id', orderId)
             if (updateError) {
               console.error('[Hubla Webhook] erro ao corrigir valor (offer priority):', updateError)

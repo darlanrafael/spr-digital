@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { liquidoDoPacote, type VendaComValor } from '@/lib/dinheiro-do-pacote'
 import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 import { buscarConflitosAgenda, buscarConflitosMultiTerapeuta, mensagemConflito, soCompromissos } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
@@ -54,8 +55,19 @@ export async function POST(req: NextRequest) {
   // demais produtos nunca leem esse campo, entao acrescenta-lo aqui nao muda
   // nada do caminho antigo.
   const { data: sale, error: saleErr } = await client
-    .from('sales').select('id,nome,email,telefone,produto,valor_liquido,order_id').eq('id', sale_id).single()
+    .from('sales').select('id,nome,email,telefone,produto,valor_liquido,order_id,pacote_pai_id,status').eq('id', sale_id).single()
   if (saleErr || !sale) return NextResponse.json({ error: 'Venda não encontrada' }, { status: 404 })
+
+  // Uma venda que JA foi ligada a outro pacote nao pode ser agendada por conta
+  // propria: as sessoes dela ja estao (ou estarao) na venda-pai. Sem esta
+  // guarda, duas abas abertas em paralelo agendam o pai e a filha e o paciente
+  // sai com 12 sessoes num pacote de 8, com o liquido da filha contado duas
+  // vezes na comissao. A tela ja esconde o botao; a rota precisa recusar.
+  if (sale.pacote_pai_id) {
+    return NextResponse.json({
+      error: 'Esta compra ja foi juntada a outro pacote. Agende pela venda principal - as sessoes das duas compras saem de la.',
+    }, { status: 409 })
+  }
 
   const { data: terapeuta, error: terapErr } = await client
     .from('terapeutas').select('id,percentual_comissao,grupo_whatsapp_id').eq('id', terapeuta_id).single()
@@ -132,10 +144,27 @@ export async function POST(req: NextRequest) {
   // quem aplica isso é montarPacote. Rodar calcularComissao aqui produzia um
   // número que não é pago a ninguém e que ia parar no log de auditoria como se
   // fosse o valor real do pacote.
+  //
+  // O valor liquido e o do PACOTE INTEIRO, somando as vendas ligadas a esta.
+  // Quando o paciente paga o mesmo pacote em duas compras, as sessoes ficam
+  // todas na venda-pai e a filha fica com zero - se a comissao saisse so do
+  // liquido do pai, o dinheiro da segunda compra nao geraria comissao em lugar
+  // nenhum. Medido no caso real do Fabio Nery: a Denise receberia R$ 176,24 no
+  // lugar de R$ 354,10 pelas mesmas 4 sessoes, metade do devido.
+  //
+  // So entra na soma a filha cujo dinheiro EFETIVAMENTE entrou no caixa. Uma
+  // filha reembolsada ou com chargeback some da tela (a classificacao exige
+  // aprovada) mas seguia somando aqui, inflando a comissao sobre dinheiro
+  // devolvido: com a Denise, R$ 332,87 por sessao no lugar de R$ 168,96.
+  const { data: filhasDaVenda, error: filhasErr } = await client
+    .from('sales').select('id,valor_liquido,status,pacote_pai_id').eq('pacote_pai_id', sale_id)
+  if (filhasErr) return NextResponse.json({ error: filhasErr.message }, { status: 500 })
+  const liquido = liquidoDoPacote(sale as VendaComValor, (filhasDaVenda ?? []) as VendaComValor[])
+
   const comissao_por_sessao = diagnostico
     ? 0
     : calcularComissao({
-        valor_liquido: sale.valor_liquido as number,
+        valor_liquido: liquido,
         percentual: terapeuta.percentual_comissao as number,
         numero_sessoes: numSessoes,
       }).comissao_por_sessao
