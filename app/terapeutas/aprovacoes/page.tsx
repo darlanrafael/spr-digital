@@ -47,6 +47,15 @@ function fmtDt(iso: string | null) {
 export default function TerapeutasAprovacoes() {
   const [pendentes, setPendentes] = useState<Solicitacao[]>([])
   const [historico, setHistorico] = useState<Solicitacao[]>([])
+  // Respostas do comercial sobre pacote pago em mais de uma compra. Ficam numa
+  // seção própria, e não na fila de aprovações: aqui nada espera decisão sua -
+  // o comercial já respondeu e já agendou. É conferência, não autorização.
+  const [ocorrenciasPacote, setOcorrenciasPacote] = useState<{
+    id: string; paciente_nome: string; produto: string; tipo: string
+    diferenca: number | null; sessoes_do_pacote: number | null
+    paciente_paga_diferenca: boolean | null; havera_outra_compra: boolean | null
+    justificativa: string | null; respondido_por_nome: string; created_at: string
+  }[]>([])
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState('')
   const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
@@ -83,6 +92,12 @@ export default function TerapeutasAprovacoes() {
       const json = await res.json()
       setPendentes(json.pendentes ?? [])
       setHistorico(json.historico ?? [])
+      // Falha aqui não pode derrubar a tela de aprovações: é seção informativa.
+      try {
+        const r2 = await fetch('/api/terapeutas/vendas/pacote', { cache: 'no-store' })
+        const j2 = await r2.json()
+        if (r2.ok) setOcorrenciasPacote(j2.ocorrencias ?? [])
+      } catch { /* seção fica vazia */ }
     } catch (e) {
       setErro(String(e))
     } finally {
@@ -290,6 +305,47 @@ export default function TerapeutasAprovacoes() {
                 </div>
               ))}
             </div>
+
+            {/* Pacotes pagos em mais de uma compra. Não é fila de decisão: o
+                comercial já respondeu e já agendou. Fica aqui para o CEO
+                conferir, do jeito que ele pediu - "assim como já acontece com
+                os reembolsos". */}
+            {ocorrenciasPacote.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Pacotes e valores conferidos pelo comercial</h2>
+                <p className="text-[11px] text-gray-600 mb-3">Nada aqui espera decisão sua. É registro do que o comercial respondeu ao agendar.</p>
+                <div className="bg-gray-900 border border-white/10 rounded-xl divide-y divide-white/5">
+                  {ocorrenciasPacote.map(o => (
+                    <div key={o.id} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-gray-200">{o.paciente_nome}</p>
+                          <p className="text-[11px] text-gray-500">{o.produto}</p>
+                        </div>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border shrink-0 ${
+                          o.tipo === 'mesmo_pacote' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                          : o.tipo === 'valor_divergente' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'bg-gray-700/40 text-gray-300 border-white/10'}`}>
+                          {o.tipo === 'mesmo_pacote' ? 'Compras juntadas' : o.tipo === 'valor_divergente' ? 'Valor divergente' : 'Compras separadas'}
+                        </span>
+                      </div>
+                      <div className="mt-2 space-y-0.5 text-[11px] text-gray-400">
+                        {o.sessoes_do_pacote != null && <p>Pacote de {o.sessoes_do_pacote} {o.sessoes_do_pacote === 1 ? 'sessão' : 'sessões'}</p>}
+                        {o.diferenca != null && o.diferenca !== 0 && (
+                          <p className={o.diferenca > 0 ? 'text-amber-400' : 'text-gray-400'}>
+                            {o.diferenca > 0 ? `Faltaram ${fmtBRL(o.diferenca)}` : `Entraram ${fmtBRL(-o.diferenca)} a mais`}
+                          </p>
+                        )}
+                        {o.paciente_paga_diferenca != null && <p>Paciente vai pagar a diferença: <span className="text-gray-300">{o.paciente_paga_diferenca ? 'sim' : 'não'}</span></p>}
+                        {o.havera_outra_compra != null && <p>Vai haver outra compra: <span className="text-gray-300">{o.havera_outra_compra ? 'sim' : 'não'}</span></p>}
+                        {o.justificativa && <p className="text-gray-300 mt-1">&ldquo;{o.justificativa}&rdquo;</p>}
+                        <p className="text-gray-600 pt-1">{o.respondido_por_nome} · {fmtDt(o.created_at)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Histórico */}
             {historico.length > 0 && (

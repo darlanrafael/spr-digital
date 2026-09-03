@@ -391,6 +391,9 @@ export default function TerapeutasVendas() {
   const [pacoteJustificativa, setPacoteJustificativa] = useState('')
   const [pacoteLoading, setPacoteLoading] = useState(false)
   const [pacoteErro, setPacoteErro] = useState('')
+  const [desfazerPacoteId, setDesfazerPacoteId] = useState<string | null>(null)
+  const [desfazerErro, setDesfazerErro] = useState('')
+  const [desfazerLoading, setDesfazerLoading] = useState(false)
   // Sessões relidas do banco ao abrir o modal. O aviso de destruição saía de
   // pageData.sessoes_por_venda, buscado no load da página: sessão criada por
   // outra pessoa depois disso não aparecia e o modal chegava a mostrar botão
@@ -757,6 +760,25 @@ export default function TerapeutasVendas() {
   // em que o comercial responde - ver o cálculo de agendarConfere -, senão o
   // link acontecia e o agendamento ia com o número de antes dele. E pedir senha
   // duas vezes na mesma ação seria atrito sem ganho nenhum.
+  // Desfaz a ligação entre duas compras. A rota existia desde o começo e nada a
+  // chamava: um clique errado em "É o mesmo pacote" escondia a venda de três
+  // telas sem nenhuma delas mostrar que ela virou filha, e a única saída era
+  // mexer no banco.
+  async function desfazerPacote(senha: string) {
+    if (!desfazerPacoteId) return
+    setDesfazerLoading(true); setDesfazerErro('')
+    const res = await fetch('/api/terapeutas/vendas/pacote', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sale_id: desfazerPacoteId, usuario_email: adminEmail, senha }),
+    })
+    const json = await res.json()
+    setDesfazerLoading(false)
+    if (!res.ok) { setDesfazerErro(json.error ?? 'Erro'); return }
+    setDesfazerPacoteId(null)
+    loadData()
+  }
+
   async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente', senha: string): Promise<string | null> {
     if (!agendarVenda) return null
     setPacoteLoading(true); setPacoteErro('')
@@ -1709,6 +1731,21 @@ export default function TerapeutasVendas() {
                     {rotuloDiagnosticoDaVenda(prontuarioSale, prontuarioSessoes)}
                   </span>
                 )}
+                {/* Compras juntadas neste pacote. Sem isto, uma venda ligada
+                    sumia de Pendentes, do dashboard e da tela do terapeuta, e
+                    nenhuma tela dizia por quê. */}
+                {pageData.vendas_filhas.filter(v => v.pacote_pai_id === prontuarioSale.id).map(f => (
+                  <div key={f.id} className="mt-2 flex items-center gap-2 text-[11px] bg-sky-500/10 border border-sky-500/30 rounded-lg px-2.5 py-1.5">
+                    <span className="text-sky-300">
+                      Pacote pago em mais de uma compra: também entrou {fmtBRL(f.valor_pago_cliente)} em {fmtDt(f.data_hora)}
+                      {f.oferta_nome ? ` (${f.oferta_nome})` : ''}
+                    </span>
+                    <button onClick={() => { setDesfazerPacoteId(f.id); setDesfazerErro('') }}
+                      className="ml-auto text-[10px] px-2 py-0.5 rounded border border-white/15 text-gray-300 hover:bg-gray-800 shrink-0">
+                      Separar
+                    </button>
+                  </div>
+                ))}
               </div>
               <button onClick={() => setProntuarioVendaId(null)} className="text-gray-500 hover:text-white mt-0.5">
                 <X className="w-4 h-4" />
@@ -2131,6 +2168,16 @@ export default function TerapeutasVendas() {
       )}
 
       {/* ── SenhaModals ── */}
+      {/* Separar as compras exige senha, como toda ação que muda dado. Desfazer
+          devolve a venda para Pendentes de Agendamento, e se o pacote já foi
+          montado o paciente fica com sessões a mais do que a venda-pai sozinha
+          justifica - por isso a mensagem diz o que vai acontecer. */}
+      <SenhaModal isOpen={!!desfazerPacoteId}
+        onClose={() => { setDesfazerPacoteId(null); setDesfazerErro('') }}
+        onConfirm={desfazerPacote} titulo="Separar as compras"
+        descricao="A compra volta para Pendentes de Agendamento e deixa de somar neste pacote. As sessões já criadas não são alteradas."
+        loading={desfazerLoading} erro={desfazerErro} />
+
       <SenhaModal isOpen={agendarSenhaOpen && !agendarConflitoCompromisso}
         onClose={() => { setAgendarSenhaOpen(false); setAgendarErro('') }}
         onConfirm={handleAgendar} titulo="Confirmar agendamento"

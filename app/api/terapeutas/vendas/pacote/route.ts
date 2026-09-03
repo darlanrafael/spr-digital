@@ -14,6 +14,28 @@ import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, type VendaParaLigar, typ
 //
 // Não bloqueia nada: o comercial responde e segue agendando. A pergunta existe
 // para o sistema não decidir sozinho o que só quem vendeu sabe.
+// Lista as respostas do comercial, para o CEO conferir.
+//
+// O pedido do usuário era "registrar uma ocorrência e notificar pra mim em
+// solicitações, assim como já acontece com os reembolsos". Sem esta rota a
+// tabela era write-only: gravava e ninguém lia, então a metade da feature que
+// existe para o CEO enxergar não existia de fato.
+export async function GET() {
+  try {
+    const client = getSupabaseAdmin()
+    const { data, error } = await client
+      .from('ocorrencias_pacote')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ocorrencias: data ?? [] })
+  } catch (err) {
+    console.error('[vendas/pacote GET]', err)
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+  }
+}
+
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
