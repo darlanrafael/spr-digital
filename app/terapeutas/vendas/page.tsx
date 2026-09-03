@@ -377,6 +377,16 @@ export default function TerapeutasVendas() {
   // reserva feita a mão para este mesmo paciente). Guarda a senha já digitada
   // para o "agendar assim mesmo" ser um clique só.
   const [agendarConflitoCompromisso, setAgendarConflitoCompromisso] = useState<{ mensagem: string; senha: string } | null>(null)
+  // Pergunta sobre pacote pago em mais de uma compra. Aparece ANTES do
+  // agendamento, quando o sistema acha outra compra do mesmo paciente e produto
+  // dentro de 24h sem sessão entregue, ou quando o valor não fecha com o pacote.
+  // O sistema propõe; quem decide é quem vendeu.
+  const [pacoteResposta, setPacoteResposta] = useState<'mesmo_pacote' | 'compra_separada' | null>(null)
+  const [pacotePagaDiferenca, setPacotePagaDiferenca] = useState<boolean | null>(null)
+  const [pacoteOutraCompra, setPacoteOutraCompra] = useState<boolean | null>(null)
+  const [pacoteJustificativa, setPacoteJustificativa] = useState('')
+  const [pacoteLoading, setPacoteLoading] = useState(false)
+  const [pacoteErro, setPacoteErro] = useState('')
   // Sessões relidas do banco ao abrir o modal. O aviso de destruição saía de
   // pageData.sessoes_por_venda, buscado no load da página: sessão criada por
   // outra pessoa depois disso não aparecia e o modal chegava a mostrar botão
@@ -725,9 +735,53 @@ export default function TerapeutasVendas() {
   const notaValida = notaTitulo.trim().length > 0 && notaDesc.trim().length >= 10
 
   // ── Handlers ──
+  // Grava a resposta do comercial sobre o pacote. Não bloqueia o agendamento:
+  // ele responde, o registro é gravado e o modal sai do caminho.
+  //
+  // Roda ANTES do agendamento e com a MESMA senha: se a resposta é "mesmo
+  // pacote", as duas vendas precisam estar ligadas antes de o pacote ser
+  // montado, senão o agendamento cria 4 sessões em vez de 8. E pedir senha duas
+  // vezes na mesma ação seria atrito sem ganho nenhum.
+  async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente', senha: string): Promise<boolean> {
+    if (!agendarVenda) return true
+    setPacoteLoading(true); setPacoteErro('')
+    const res = await fetch('/api/terapeutas/vendas/pacote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sale_id: agendarVenda.id,
+        sale_irma_id: tipo === 'mesmo_pacote' ? agendarCandidataPacote?.id : null,
+        tipo,
+        diferenca: agendarConfere?.situacao === 'valor_divergente' ? agendarConfere.diferenca : null,
+        sessoes_do_pacote: agendarConfere && agendarConfere.situacao !== 'indeterminado' ? agendarConfere.sessoes : null,
+        paciente_paga_diferenca: pacotePagaDiferenca,
+        havera_outra_compra: pacoteOutraCompra,
+        justificativa: pacoteJustificativa.trim() || null,
+        usuario_email: adminEmail,
+        senha,
+      }),
+    })
+    const json = await res.json()
+    setPacoteLoading(false)
+    if (!res.ok) { setPacoteErro(json.error ?? 'Erro'); return false }
+    setPacotePagaDiferenca(null); setPacoteOutraCompra(null); setPacoteJustificativa('')
+    return true
+  }
+
   async function handleAgendar(senha: string, ignorarCompromissos = false) {
     if (!agendarVendaId || !agendarTerapeutaEfetivo || !agendarDataPrimeira) return
     setAgendarLoading(true); setAgendarErro('')
+    // A resposta sobre o pacote vai PRIMEIRO: se é o mesmo pacote, as vendas
+    // precisam estar ligadas antes de montar as sessões, senão o agendamento
+    // cria 4 em vez de 8. Se falhar, para aqui - agendar com o pacote errado é
+    // pior que não agendar.
+    if (pacoteResposta) {
+      const ok = await responderPacote(pacoteResposta, senha)
+      if (!ok) { setAgendarLoading(false); setAgendarErro(pacoteErro || 'Não foi possível registrar a resposta sobre o pacote.'); return }
+    } else if (agendarConfere?.situacao === 'valor_divergente') {
+      const ok = await responderPacote('valor_divergente', senha)
+      if (!ok) { setAgendarLoading(false); setAgendarErro(pacoteErro || 'Não foi possível registrar a resposta sobre o valor.'); return }
+    }
     if (!ignorarCompromissos) setAgendarConflitoCompromisso(null)
     const res = await fetch('/api/terapeutas/sessoes/agendar', {
       method: 'POST',
@@ -1446,6 +1500,91 @@ export default function TerapeutasVendas() {
                   </div>
                 )
               )}
+              {/* Outra compra do mesmo paciente e produto em até 24h, sem sessão
+                  entregue no outro pacote. O sistema PROPÕE; quem sabe se é o
+                  mesmo pacote ou compra separada é quem vendeu. Regra combinada
+                  com o usuário em 03/09/2026, com a janela escolhida a partir
+                  dos 56 pares reais do banco. */}
+              {agendarCandidataPacote && (
+                <div className="bg-sky-500/10 border border-sky-500/30 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-sky-300 font-medium">
+                    Encontramos outra compra deste paciente
+                  </p>
+                  <p className="text-[11px] text-gray-300">
+                    {fmtDt(agendarCandidataPacote.data_hora)} · {agendarCandidataPacote.ofertaNome ?? 'sem oferta registrada'} · {fmtBRL(agendarCandidataPacote.precoBase ?? 0)}
+                  </p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setPacoteResposta('mesmo_pacote')}
+                      className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
+                        pacoteResposta === 'mesmo_pacote'
+                          ? 'bg-sky-600 border-sky-500 text-white'
+                          : 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700'}`}>
+                      É o mesmo pacote
+                    </button>
+                    <button type="button" onClick={() => setPacoteResposta('compra_separada')}
+                      className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors ${
+                        pacoteResposta === 'compra_separada'
+                          ? 'bg-sky-600 border-sky-500 text-white'
+                          : 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700'}`}>
+                      É compra separada
+                    </button>
+                  </div>
+                  {pacoteResposta === 'mesmo_pacote' && (
+                    <p className="text-[11px] text-sky-400">
+                      As duas compras viram um pacote só. A outra sai de Pendentes de Agendamento.
+                    </p>
+                  )}
+                  {pacoteResposta === 'compra_separada' && (
+                    <p className="text-[11px] text-gray-500">
+                      Agendo só esta. A outra continua esperando agendamento.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Valor recebido não fecha com o pacote. Não trava: o comercial
+                  responde e agenda. As respostas viram registro para o CEO
+                  conferir depois - pedido do usuário, "assim como já acontece
+                  com os reembolsos". */}
+              {agendarConfere?.situacao === 'valor_divergente' && pacoteResposta !== 'mesmo_pacote' && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-amber-300 font-medium">
+                    O valor recebido não fecha com o pacote
+                  </p>
+                  <p className="text-[11px] text-gray-300">
+                    A oferta é de {agendarConfere.sessoes} {agendarConfere.sessoes === 1 ? 'sessão' : 'sessões'}, que custa {fmtBRL(agendarConfere.esperado)}.
+                    Recebemos {fmtBRL(agendarConfere.recebido)} -{' '}
+                    {agendarConfere.diferenca > 0
+                      ? `faltam ${fmtBRL(agendarConfere.diferenca)}`
+                      : `entraram ${fmtBRL(-agendarConfere.diferenca)} a mais`}.
+                  </p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400 flex-1">O paciente vai pagar a diferença?</span>
+                      {[['Sim', true], ['Não', false]].map(([rot, val]) => (
+                        <button key={String(val)} type="button" onClick={() => setPacotePagaDiferenca(val as boolean)}
+                          className={`px-2.5 py-1 text-[11px] rounded border ${pacotePagaDiferenca === val ? 'bg-amber-600 border-amber-500 text-white' : 'bg-gray-800 border-white/10 text-gray-300'}`}>
+                          {rot as string}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400 flex-1">Vai haver outra compra deste paciente?</span>
+                      {[['Sim', true], ['Não', false]].map(([rot, val]) => (
+                        <button key={String(val)} type="button" onClick={() => setPacoteOutraCompra(val as boolean)}
+                          className={`px-2.5 py-1 text-[11px] rounded border ${pacoteOutraCompra === val ? 'bg-amber-600 border-amber-500 text-white' : 'bg-gray-800 border-white/10 text-gray-300'}`}>
+                          {rot as string}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <textarea value={pacoteJustificativa} onChange={e => setPacoteJustificativa(e.target.value)}
+                    rows={2} placeholder="Explique o que aconteceu (aparece na conferência do CEO)"
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-amber-500/50" />
+                  {pacoteErro && <p className="text-[11px] text-red-400">{pacoteErro}</p>}
+                </div>
+              )}
+
               {/* whitespace-pre-line: o conflito de agenda pode listar uma
                   data por linha quando várias sessões do pacote batem. */}
               {/* Só aparece no caminho destrutivo: no agendamento normal (venda
