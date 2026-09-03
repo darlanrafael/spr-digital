@@ -90,3 +90,53 @@ export function normalizarTelefoneBR(telefone: string | null | undefined): strin
 
   return digitos
 }
+
+/**
+ * O número na forma que o WhatsApp realmente usa.
+ *
+ * `normalizarTelefoneBR` devolve o número CERTO - o que o paciente discaria.
+ * O WhatsApp não usa esse. Ele guarda a conta numa forma própria, e mandar a
+ * outra faz a Z-API responder 200 e a mensagem não chegar em ninguém.
+ *
+ * DUAS REGRAS, as duas medidas contra a própria Z-API em 03/09/2026 pelo
+ * endpoint `phone-exists`, que devolve o número canônico da conta:
+ *
+ * 1. CELULAR BRASILEIRO, o nono dígito.
+ *    Contas de DDD 11 a 28 (SP, RJ, ES) guardam o 9. Contas de DDD 31 a 99
+ *    NÃO guardam. Conferido em 53 DDDs distintos da própria base, um número
+ *    real por DDD, sem uma exceção:
+ *
+ *      mantém o 9: 11 12 13 14 15 16 17 18 19 21 22 24 27 28
+ *      tira o 9:   31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 51 53 54
+ *                  61 62 63 64 65 66 67 68 69 71 73 74 75 77 79 81 82 83
+ *                  84 85 86 87 88 89 91 92 93 94 95 96 97 98 99
+ *
+ *    Exemplo real: Márcio de Castro, DDD 84. Mandávamos 5584981114243 e o
+ *    WhatsApp usa 558481114243. Ele não recebeu o lembrete de 26/08.
+ *
+ * 2. MÉXICO, o "1" depois do código do país.
+ *    Contas mexicanas são 521 + número. Exemplo real: Natalia Rezende,
+ *    mandávamos 525579077715 e o WhatsApp usa 5215579077715.
+ *
+ * Por que aqui e não em `normalizarTelefoneBR`: o número guardado em `sales`
+ * tem de continuar sendo o número de verdade - é o que o comercial liga, é o
+ * que aparece no prontuário. Esta função é só para o CANAL, e por isso roda no
+ * caminho de envio, nunca na escrita.
+ */
+export function paraWhatsApp(numero: string | null | undefined): string | null {
+  if (!numero) return null
+  const d = numero.replace(/\D/g, '')
+  if (!d) return null
+
+  // Brasil: 55 + DDD (2) + 9 + 8 dígitos = 13.
+  if (d.length === 13 && d.startsWith('55') && d[4] === '9') {
+    const ddd = Number(d.slice(2, 4))
+    if (ddd >= 31) return d.slice(0, 4) + d.slice(5)
+    return d
+  }
+
+  // México: 52 + 10 dígitos = 12. A conta do WhatsApp é 521 + os 10.
+  if (d.length === 12 && d.startsWith('52') && d[2] !== '1') return '521' + d.slice(2)
+
+  return d
+}

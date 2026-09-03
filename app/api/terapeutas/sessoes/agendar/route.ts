@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { liquidoDoPacote, type VendaComValor } from '@/lib/dinheiro-do-pacote'
+import { paraWhatsApp } from '@/lib/telefone'
 import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 import { buscarConflitosAgenda, buscarConflitosMultiTerapeuta, mensagemConflito, soCompromissos } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
@@ -459,7 +460,9 @@ export async function POST(req: NextRequest) {
       terapeuta_id,
       grupo_whatsapp_id: terapeuta.grupo_whatsapp_id as string | null,
       paciente_nome: s.paciente_nome,
-      paciente_telefone: normalizarTelefoneBR(sale.telefone as string | null),
+      // Forma que o WhatsApp usa, nao a que o paciente disca - ver paraWhatsApp
+      // em lib/telefone.ts.
+      paciente_telefone: paraWhatsApp(normalizarTelefoneBR(sale.telefone as string | null)),
       numero_sessao: s.numero_sessao,
       total_sessoes: s.total_sessoes,
       data_agendada: s.data_agendada,

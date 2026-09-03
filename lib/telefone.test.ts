@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizarTelefoneBR } from './telefone'
+import { normalizarTelefoneBR, paraWhatsApp } from './telefone'
 
 // Todos os casos abaixo saíram da tabela `sales` em 17/08/2026, quando o
 // usuário reportou que mensagem não chegava em número de fora do Brasil.
@@ -115,4 +115,42 @@ test('COLISAO QUE NENHUMA REGRA RESOLVE: Peru e Porto Alegre', () => {
   assert.equal(normalizarTelefoneBR('+51 987 654 321'), '5551987654321')
   // Mesma sequencia, sem o "+": mesmo resultado.
   assert.equal(normalizarTelefoneBR('51987654321'), '5551987654321')
+})
+
+test('WHATSAPP: DDD de 31 pra cima perde o nono digito', () => {
+  // Medido na Z-API em 53 DDDs, um numero real por DDD, sem excecao. Caso real:
+  // Marcio de Castro, DDD 84 - mandavamos 5584981114243, o WhatsApp usa
+  // 558481114243, e ele nao recebeu o lembrete de 26/08.
+  assert.equal(paraWhatsApp('5584981114243'), '558481114243')  // DDD 84
+  assert.equal(paraWhatsApp('5547984792382'), '554784792382')  // DDD 47
+  assert.equal(paraWhatsApp('5531999999999'), '553199999999')  // DDD 31, a fronteira
+  assert.equal(paraWhatsApp('5599991227096'), '559991227096')  // DDD 99
+})
+
+test('WHATSAPP: DDD ate 28 mantem o nono digito', () => {
+  assert.equal(paraWhatsApp('5511948938242'), '5511948938242')  // DDD 11
+  assert.equal(paraWhatsApp('5521999999999'), '5521999999999')  // DDD 21
+  assert.equal(paraWhatsApp('5528999999999'), '5528999999999')  // DDD 28, a fronteira
+})
+
+test('WHATSAPP: fixo brasileiro nao perde digito nenhum', () => {
+  // 12 digitos: 55 + DDD + 8. Nao tem nono digito para tirar.
+  assert.equal(paraWhatsApp('554733334444'), '554733334444')
+  // E um celular de DDD alto que JA veio sem o 9 fica como esta.
+  assert.equal(paraWhatsApp('558481114243'), '558481114243')
+})
+
+test('WHATSAPP: Mexico ganha o 1 depois do codigo do pais', () => {
+  // Caso real: Natalia Rezende. Mandavamos 525579077715, o WhatsApp usa
+  // 5215579077715.
+  assert.equal(paraWhatsApp('525579077715'), '5215579077715')
+  // E nao ganha duas vezes.
+  assert.equal(paraWhatsApp('5215579077715'), '5215579077715')
+})
+
+test('WHATSAPP: o que nao e Brasil nem Mexico passa intacto', () => {
+  assert.equal(paraWhatsApp('17747078167'), '17747078167')     // EUA
+  assert.equal(paraWhatsApp('351925887255'), '351925887255')   // Portugal
+  assert.equal(paraWhatsApp(null), null)
+  assert.equal(paraWhatsApp(''), null)
 })

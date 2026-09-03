@@ -2965,3 +2965,44 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     ---
 
     **O QUE CONTINUA ABERTO, e e mais grave que o bug corrigido:** o fluxo do n8n **nao sabe distinguir "entregue" de "aceito e descartado"**. `sucesso: !item.json.error` marca o lembrete como enviado sempre que a Z-API responde 200, e a Z-API responde 200 para numero que nao existe no WhatsApp. Foi assim que os cinco pacientes dos EUA passaram meses sem receber lembrete com o banco dizendo que receberam, e e assim que a Ana Assis aparece como "enviado" hoje. **Duas saidas, nenhuma implementada ainda:** conferir `phone-exists` antes de gravar o paciente (uma vez, no cadastro, nao no envio) ou tratar a resposta da Z-API com mais rigor no `Avaliar Resultado`. Precisa de decisao do usuario.
+
+48. **03/09/2026 - O COMERCIAL ESTAVA CERTO: o nono digito. 25 dos 41 pacientes com sessao futura recebiam um numero que o WhatsApp nao usa.** Este e o achado que explica o relato original de "mensagem nao chega", e ele e MUITO maior do que o item 47 fazia parecer. O item 47 corrigiu numero estrangeiro; este corrige **a maioria dos pacientes brasileiros**.
+
+    **O relato, nas palavras do usuario:** *"o meu comercial esta dizendo que todas as vendas, quando vao pro prontuario, esta sendo inserido nove na frente. [...] quando tira o nove da frente, o problema resolve e as pessoas comecam a receber os disparos."*
+
+    **Procede, e a causa nao e o que o comercial imaginou.** O sistema **nao insere** 9 nenhum: nenhuma linha de codigo do projeto acrescenta esse digito (varrido). O 9 ja vem assim da Hubla e da Kiwify, e esta certo - e o numero de verdade, o que o paciente disca. **O erro e mandar esse numero para o WhatsApp**, que guarda a conta numa forma propria.
+
+    **A regra, medida contra a propria Z-API pelo endpoint `phone-exists`** (consulta de existencia, nao envia mensagem), **em 53 DDDs distintos da base, um numero real por DDD, sem uma unica excecao:**
+
+    | Faixa | O WhatsApp | DDDs conferidos |
+    |---|---|---|
+    | **DDD 11 a 28** (SP, RJ, ES) | **mantem** o nono digito | 11 12 13 14 15 16 17 18 19 21 22 24 27 28 |
+    | **DDD 31 a 99** | **TIRA** o nono digito | 31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 51 53 54 61 62 63 64 65 66 67 68 69 71 73 74 75 77 79 81 82 83 84 85 86 87 88 89 91 92 93 94 95 96 97 98 99 |
+
+    Exemplo real: **Marcio de Castro, DDD 84**. Mandavamos `5584981114243`; o WhatsApp usa `558481114243`. Ele nao recebeu o lembrete de 26/08 - e aparece no banco como "enviado".
+
+    **Segunda regra, o Mexico.** Contas mexicanas sao `521` + numero. Caso real: **Natalia Rezende** - mandavamos `525579077715`, o WhatsApp usa `5215579077715`.
+
+    **Por que ninguem viu antes.** A Z-API **aceita** o numero errado e responde 200. O no `Avaliar Resultado` do n8n faz `sucesso: !item.json.error`, entao sem campo `error` o fluxo marca `lembrete_paciente_*_enviado_em` e segue. **O banco dizia que 25 pacientes receberam, e nenhum recebeu.** E a mesma falha silenciosa registrada no item 47, agora dimensionada: ela nao afetava so estrangeiro, afetava a maior parte do Brasil.
+
+    **A correcao: `paraWhatsApp()` em `lib/telefone.ts`.** Funcao separada de proposito, e rodando **so no caminho de envio**:
+
+    - `lib/whatsapp-pendentes.ts` (lembrete de vespera e de 30 minutos)
+    - `app/api/terapeutas/sessoes/agendar/route.ts` e `remarcar/route.ts` (aviso de encaixe)
+
+    **O numero guardado em `sales` NAO muda.** Ele continua sendo o numero de verdade: e o que o comercial liga e o que aparece no prontuario. A conversao e so para o CANAL, e por isso nao roda em nenhuma escrita - `editar-paciente` segue gravando o numero real.
+
+    **A prova, contra a Z-API, antes e depois:**
+
+    | | Mandavamos o numero que o WhatsApp usa |
+    |---|---|
+    | ANTES | **16 de 41** |
+    | DEPOIS | **38 de 40** |
+
+    **Os 2 que sobram nao sao formato, sao dado errado, e precisam do comercial:**
+    - **Hadja Abdalla**: `5555928111922`. O "55" esta duplicado. Nenhuma variante existe no WhatsApp. O irmao dela (Elias) tem `559292848921`, DDD 92, que funciona - o dela provavelmente deveria ser parecido.
+    - **Jeane Gomes Pereira**: `5598989818656`, DDD 98. Nenhuma variante existe.
+
+    **9 testes novos** em `lib/telefone.test.ts`, com os numeros reais medidos e as duas fronteiras da regra (DDD 28 mantem, DDD 31 tira). Mais duas linhas em `lib/fiacao-do-pacote.test.ts`, porque apagar a chamada de `paraWhatsApp` nao daria erro nenhum - so pararia de entregar mensagem, em silencio, como estava.
+
+    **CONTINUA ABERTO, e agora com tamanho conhecido:** o `sucesso: !item.json.error` do n8n. Enquanto ele estiver assim, qualquer erro futuro de numero volta a ser invisivel e o banco volta a mentir que enviou. Precisa de decisao do usuario: conferir `phone-exists` no cadastro do paciente, ou apertar a avaliacao da resposta no proprio n8n.

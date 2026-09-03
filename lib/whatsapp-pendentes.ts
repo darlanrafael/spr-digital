@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { normalizarTelefoneBR } from './terapeutas-auth'
+import { paraWhatsApp } from './telefone'
 import { formatoDaVenda } from './diagnostico-guiado'
 import { rotuloDiagnostico } from './etiqueta-diagnostico'
 
@@ -89,7 +90,14 @@ export async function buscarPendentes(
     const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora,order_id').in('id', saleIds)
     if (salesErr) throw new Error(salesErr.message)
     for (const s of sales ?? []) {
-      telefonePorSale[s.id as string] = normalizarTelefoneBR(s.telefone as string | null)
+      // `paraWhatsApp` roda por ULTIMO, e so aqui. O numero guardado em `sales`
+      // continua sendo o de verdade - e o que o comercial liga e o que aparece
+      // no prontuario. Esta conversao e so para o CANAL: o WhatsApp guarda a
+      // conta numa forma propria (DDD 31+ sem o nono digito, Mexico com o 1
+      // depois do 52), e mandar a outra faz a Z-API responder 200 e a mensagem
+      // nao chegar em ninguem. Medido em 03/09/2026: 25 dos 41 pacientes com
+      // sessao futura recebiam um numero que o WhatsApp nao usa.
+      telefonePorSale[s.id as string] = paraWhatsApp(normalizarTelefoneBR(s.telefone as string | null))
       dataHoraPorSale[s.id as string] = s.data_hora as string
       const formato = formatoDaVenda({ id: s.id as string, order_id: (s.order_id as string | null) ?? undefined })
       if (formato) formatoPorSale[s.id as string] = formato.formato

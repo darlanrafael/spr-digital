@@ -60,6 +60,10 @@ const FIACAO: { arquivo: string; trecho: string; porque: string }[] = [
     porque: 'a rota DELETE já existiu por semanas sem NADA a chamar' },
   { arquivo: 'app/terapeutas/aprovacoes/page.tsx', trecho: 'setOcorrenciasPacote(j2.ocorrencias ?? [])',
     porque: 'a chave do JSON é o contrato com o GET; errá-la deixa a seção vazia para sempre' },
+  { arquivo: 'lib/whatsapp-pendentes.ts', trecho: 'paraWhatsApp(',
+    porque: 'sem ela o lembrete vai para a forma que o WhatsApp nao usa: 25 dos 41 pacientes com sessao futura nao recebiam' },
+  { arquivo: 'app/api/terapeutas/sessoes/agendar/route.ts', trecho: 'paraWhatsApp(',
+    porque: 'mesma coisa no aviso de encaixe' },
   { arquivo: 'app/terapeutas/aprovacoes/page.tsx', trecho: 'rotuloDaOcorrencia',
     porque: 'sem ele o CEO lê "Compras separadas" onde alguém desfez uma junção já registrada' },
 ]
