@@ -69,3 +69,50 @@ test('caso ambíguo mantém o comportamento antigo em vez de deixar de enviar', 
   // acontecia — não vale arriscar parar de enviar pra quem talvez receba.
   assert.equal(normalizarTelefoneBR('+4790072134'), '554790072134')
 })
+
+test('estrangeiro de 11 digitos com "+" nao vira brasileiro', () => {
+  // Todo pais cujo numero completo tem 11 digitos caia no chute "cola 55 na
+  // frente" e nunca chegava. Casos reais de paises onde a SPR ja vendeu ou
+  // pode vender.
+  assert.equal(normalizarTelefoneBR('+56 9 8765 4321'), '56987654321')   // Chile
+  assert.equal(normalizarTelefoneBR('+34 612 345 678'), '34612345678')   // Espanha
+  assert.equal(normalizarTelefoneBR('+33 6 12 34 56 78'), '33612345678') // Franca
+  assert.equal(normalizarTelefoneBR('+598 91 234 567'), '59891234567')   // Uruguai
+  assert.equal(normalizarTelefoneBR('+591 71234567'), '59171234567')     // Bolivia
+})
+
+test('o "+" so decide o EMPATE, nunca antes dos testes fortes', () => {
+  // A metade da base que tem "+" sem codigo de pais continua funcionando: o
+  // teste de celular brasileiro (DDD valido + 9) roda ANTES e vence.
+  assert.equal(normalizarTelefoneBR('+64999067729'), '5564999067729')  // Goias
+  assert.equal(normalizarTelefoneBR('+11948498485'), '5511948498485')  // Sao Paulo
+  assert.equal(normalizarTelefoneBR('+55986837406'), '5555986837406')  // DDD 55, RS
+  // E o +1 dos EUA continua vencendo o "+" tambem.
+  assert.equal(normalizarTelefoneBR('+17747078167'), '17747078167')
+})
+
+test('sem o "+", o comportamento antigo e mantido', () => {
+  // Nao inventar pais para quem digitou so digitos: 10.055 dos 10.059 telefones
+  // da base devolvem exatamente o mesmo valor de antes.
+  assert.equal(normalizarTelefoneBR('34642995601'), '5534642995601')
+})
+
+test('CASO REAL: numero dos EUA de 10 digitos, digitado sem o +1', () => {
+  // Medido na Z-API: nenhum dos dois existe no WhatsApp como "55..." nem cru;
+  // os dois existem como "1...". Colar 55 era garantia de nao entregar.
+  assert.equal(normalizarTelefoneBR('8044020277'), '18044020277')  // area 804, Virginia
+  assert.equal(normalizarTelefoneBR('7814993955'), '17814993955')  // area 781, Massachusetts
+  // DDD brasileiro de verdade continua ganhando o 55.
+  assert.equal(normalizarTelefoneBR('1133334444'), '551133334444') // fixo de Sao Paulo
+  assert.equal(normalizarTelefoneBR('4733334444'), '554733334444') // fixo de SC
+})
+
+test('COLISAO QUE NENHUMA REGRA RESOLVE: Peru e Porto Alegre', () => {
+  // +51 9XX XXX XXX (Peru) e DDD 51 + 9 + 8 digitos (Porto Alegre) sao a MESMA
+  // sequencia de 11 digitos. Nao ha sinal no numero que os separe. Este teste
+  // existe para registrar a escolha - vence o Brasil, que e o caso comum - e
+  // para quem mexer aqui depois nao achar que e descuido.
+  assert.equal(normalizarTelefoneBR('+51 987 654 321'), '5551987654321')
+  // Mesma sequencia, sem o "+": mesmo resultado.
+  assert.equal(normalizarTelefoneBR('51987654321'), '5551987654321')
+})

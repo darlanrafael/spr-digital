@@ -2911,3 +2911,57 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **A Kiwify tambem esta certa, por um motivo oposto:** ela grava BRT com sufixo `+00:00` (nao e UTC de verdade), e `normTs` **nao** subtrai nada quando a plataforma e Kiwify. As 350 vendas da Kiwify com hora entre 00:00 e 02:59 estao no dia certo justamente porque a subtracao nao acontece.
 
     **A licao, que vale para a lista de pendencias inteira:** um item herdado de outra rodada nao e um achado ate ser medido. Este ficou meses na lista, foi repetido em varias entregas e custou tempo do usuario para ser explicado, quando dez minutos de medicao o teriam eliminado na origem. **Antes de apresentar uma pendencia, reproduza-a com numero; se nao reproduzir, ela sai da lista.**
+47. **03/09/2026 - verificacao do relato "mensagem para paciente de fora do Brasil continua nao sendo enviada".** Relatado pelo comercial ao usuario. Verificado de ponta a ponta: banco, rota, n8n e a propria Z-API. **O relato nao se reproduz para nenhum dos pacientes estrangeiros com sessao hoje, mas a varredura achou uma classe de numero que quebra em silencio e ela foi corrigida.**
+
+    **Metodo, e o que foi tocado.** Todas as consultas foram de LEITURA. Na Z-API so foi usado `phone-exists`, que **nao envia mensagem nenhuma** - e uma consulta de existencia. `N8N_ENCAIXE_WEBHOOK_URL`, `N8N_ALERTA_WEBHOOK_URL` e `N8N_BASE_URL` foram apagadas do `process.env` em todo script que falou com o banco. No n8n so houve `GET` em `/workflows` e `/executions`.
+
+    **O caminho inteiro da mensagem, conferido elo a elo:**
+
+    1. `lib/whatsapp-pendentes.ts:92` normaliza o telefone com `normalizarTelefoneBR`.
+    2. `GET /api/whatsapp/pendentes-vespera` e `/pendentes-30min` entregam `paciente_telefone` ja normalizado (as duas exigem o header `x-whatsapp-cron-secret`).
+    3. O no `Montar Envios` do n8n usa `destino: s.paciente_telefone` **sem transformar nada**.
+    4. O no `Enviar Z-API` manda `{ phone: destino, message }` direto.
+    5. `Avaliar Resultado` faz `sucesso: !item.json.error`. **E aqui que uma falha silenciosa vira sucesso:** se a Z-API aceita a chamada e o WhatsApp nao entrega, nao ha campo `error`, o fluxo marca `lembrete_paciente_*_enviado_em` e ninguem fica sabendo.
+
+    **Os 6 pacientes com telefone estrangeiro e sessao, testados um a um na Z-API:**
+
+    | Paciente | Numero enviado | Existe no WhatsApp |
+    |---|---|---|
+    | Jessica Rosa Moura | 351925887255 (Portugal) | SIM |
+    | Camila Queiroz | 19548122342 (EUA) | SIM |
+    | Brenda paixao tome | 18623310166 (EUA) | SIM |
+    | Giselle Ildefonso | 12677613457 (EUA) | SIM |
+    | Natalia Rezende | 525579077715 (Mexico) | SIM |
+    | **Ana Assis** | 17747078167 (EUA) | **NAO** |
+
+    **E as mensagens estao saindo.** Nas execucoes reais do n8n, `525579077715` (Natalia) e `19548122342` (Camila) receberam `messageId` da Z-API em 31/08. Das 73 sessoes dos ultimos 10 dias, **9 ficaram sem lembrete de vespera e as 9 sao de numero brasileiro**. Nenhum estrangeiro ficou de fora nesse periodo.
+
+    **Conclusao sobre o relato:** para os pacientes que existem hoje, o unico que nao recebe e a **Ana Assis**, e o motivo nao e o sistema: o numero `+1 774 707-8167` nao existe no WhatsApp. Ou ela usa outro numero, ou nao tem WhatsApp nesse. **Precisa de confirmacao do comercial sobre de qual paciente ele estava falando.**
+
+    ---
+
+    **O BUG QUE A VARREDURA ACHOU, e que ninguem tinha visto.** `normalizarTelefoneBR` tinha, no fim do caminho de 11 digitos, um `return '55' + digitos` como chute. Quem cai ali: todo pais cujo numero COMPLETO, com codigo, tem 11 digitos.
+
+    | Pais | Formato | Virava | Chega? |
+    |---|---|---|---|
+    | Chile | +56 9 XXXX XXXX | 5556 9XXXXXXXX | nao |
+    | Espanha | +34 6XX XXX XXX | 5534 6XXXXXXXX | nao |
+    | Franca | +33 6 XX XX XX XX | 5533 6XXXXXXXX | nao |
+    | Uruguai | +598 9X XXX XXX | 55598 9XXXXXXX | nao |
+    | Bolivia | +591 7XXXXXXX | 55591 7XXXXXX | nao |
+
+    E colar "55" ali **ja estava errado ate para o Brasil**: um numero de 11 digitos que nao e DDD valido + 9 nao e celular brasileiro nenhum, entao o "55" produzia 13 digitos que a Z-API aceita e o WhatsApp nao entrega.
+
+    **A correcao:** o `+` passou a decidir o EMPATE. Ele continua **nao** sendo consultado antes dos dois testes fortes (celular BR = DDD valido + 9; EUA = comeca com 1), porque metade da base tem `+` sem codigo de pais - `+64999067729` e Goias, `+11948498485` e Sao Paulo, `+55986837406` e DDD 55 do RS, e os tres continuam funcionando. O `+` so entra depois que os dois testes falharam, no ponto em que antes havia um chute.
+
+    **Segunda correcao, nos 10 digitos.** A regra colava "55" em qualquer coisa com 10 digitos, sem nem conferir se o DDD existe. Na base real, 10 digitos com DDD inexistente e **numero dos EUA digitado sem o +1** - o padrao aqui e brasileiro morando fora. Medido na Z-API: `8044020277` (area 804, Virginia) e `7814993955` (area 781, Massachusetts) **nao existem** no WhatsApp nem como `55...` nem crus, e **existem** como `1...`. Agora, 10 digitos com DDD brasileiro invalido e formato NANP ganham o `1`.
+
+    **A colisao que nenhuma regra resolve, e que ficou registrada em teste:** o Peru (`+51 9XX XXX XXX`) e um celular de Porto Alegre (DDD 51 + 9 + 8 digitos) sao a MESMA sequencia de 11 digitos. Nao ha sinal dentro do numero que os separe. Vence o Brasil, que e o caso comum. So se resolve capturando o pais no cadastro.
+
+    **A regressao, contra os 10.059 telefones do banco:** **10.055 devolvem exatamente o mesmo valor de antes**. Quatro mudaram, **nenhum deles tem sessao**, e dois sao melhora comprovada na Z-API (Julie Long e Suellyn Lins Lima, que passaram de nao-entregavel para entregavel). O terceiro, Jose Oliveira (`2389168324`, area 238, que nao e codigo atribuido nos EUA), troca uma forma nao-entregavel por outra - nada que funcionava se perdeu.
+
+    **5 testes novos** em `lib/telefone.test.ts`, incluindo os numeros reais medidos e a colisao Peru/Porto Alegre.
+
+    ---
+
+    **O QUE CONTINUA ABERTO, e e mais grave que o bug corrigido:** o fluxo do n8n **nao sabe distinguir "entregue" de "aceito e descartado"**. `sucesso: !item.json.error` marca o lembrete como enviado sempre que a Z-API responde 200, e a Z-API responde 200 para numero que nao existe no WhatsApp. Foi assim que os cinco pacientes dos EUA passaram meses sem receber lembrete com o banco dizendo que receberam, e e assim que a Ana Assis aparece como "enviado" hoje. **Duas saidas, nenhuma implementada ainda:** conferir `phone-exists` antes de gravar o paciente (uma vez, no cadastro, nao no envio) ou tratar a resposta da Z-API com mais rigor no `Avaliar Resultado`. Precisa de decisao do usuario.
