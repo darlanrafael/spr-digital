@@ -73,6 +73,10 @@ export async function POST(req: NextRequest) {
       const productsArr = (event.products as Record<string, unknown>[]) ?? []
       const offers = (productsArr[0]?.offers as Record<string, unknown>[]) ?? []
       const offerItemId = (offers[0]?.id as string) ?? null
+      // Nome da oferta: e ele que diz a QUANTIDADE de sessoes do pacote
+      // ("Formato - 4 Sessão"), sem depender de arredondamento de preco nem de
+      // promocao. Ate 02/09/2026 chegava aqui e era descartado.
+      const ofertaNome = ((offers[0]?.name as string) ?? '').trim() || null
       const productId = offerItemId ?? (product?.id as string) ?? null
 
       // Hubla dispara dois webhooks por produto em pedidos multi-produto (bundle):
@@ -98,6 +102,7 @@ export async function POST(req: NextRequest) {
         email:              (payer?.email as string) ?? '',
         telefone:           (payer?.phone as string) ?? '',
         produto:            ((product?.name as string) ?? '').trim(),
+        oferta_nome:        ofertaNome,
         preco_base:         ((amount?.subtotalCents as number) ?? 0) / 100,
         valor_pago_cliente: ((amount?.subtotalCents as number) ?? 0) / 100,
         valor_com_juros:    ((amount?.totalCents as number) ?? 0) / 100,
