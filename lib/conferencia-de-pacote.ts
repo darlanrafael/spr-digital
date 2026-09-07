@@ -28,12 +28,16 @@ export type OcorrenciaDePacote = {
 export type RotuloDaOcorrencia = {
   texto: string
   /** Qual das quatro aparências a tela deve usar. */
-  cor: 'juntadas' | 'divergente' | 'separadas' | 'desfeita'
+  cor: 'juntadas' | 'divergente' | 'separadas' | 'desfeita' | 'informada'
 }
 
 export function rotuloDaOcorrencia(o: OcorrenciaDePacote): RotuloDaOcorrencia {
   if (o.tipo === 'mesmo_pacote') return { texto: 'Compras juntadas', cor: 'juntadas' }
   if (o.tipo === 'valor_divergente') return { texto: 'Valor divergente', cor: 'divergente' }
+  // Tipo próprio, e não `valor_divergente`, porque são duas coisas diferentes
+  // na conferência: uma é "o valor não fechou com o pacote", a outra é "não
+  // havia pacote nenhum a fechar, e o comercial informou a quantidade".
+  if (o.tipo === 'quantidade_informada') return { texto: 'Quantidade informada', cor: 'informada' }
   if (o.tipo === 'compra_separada') {
     return (o.justificativa ?? '').startsWith(MARCA_DESFAZER)
       ? { texto: 'Ligação desfeita', cor: 'desfeita' }

@@ -41,3 +41,11 @@ test('o sinal da diferenca aponta para o lado certo', () => {
   assert.equal(textoDaDiferenca(null), null)
   assert.equal(textoDaDiferenca(undefined), null)
 })
+
+test('quantidade informada tem rotulo proprio na conferencia', () => {
+  // Nao pode se disfarcar de "Valor divergente": uma coisa e "o valor nao
+  // fechou com o pacote", outra e "nao havia pacote nenhum a fechar".
+  const r = rotuloDaOcorrencia({ tipo: 'quantidade_informada' })
+  assert.equal(r.texto, 'Quantidade informada')
+  assert.equal(r.cor, 'informada')
+})

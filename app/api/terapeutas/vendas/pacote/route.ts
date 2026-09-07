@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
   } = body as {
     sale_id: string
     sale_irma_id?: string | null
-    tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente'
+    tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente' | 'quantidade_informada'
     diferenca?: number | null
     sessoes_do_pacote?: number | null
     paciente_paga_diferenca?: boolean | null
@@ -183,7 +183,9 @@ export async function POST(req: NextRequest) {
     }
 
     const descricao =
-      tipo === 'mesmo_pacote'
+      tipo === 'quantidade_informada'
+        ? `Quantidade de sessões informada pelo comercial: ${sessoes_do_pacote ?? '?'}. O sistema não conseguiu determinar pela oferta nem pelo valor. Respondido por ${nomeUsuario}`
+        : tipo === 'mesmo_pacote'
         ? `Compras juntadas no mesmo pacote${sessoes_do_pacote ? ` (${sessoes_do_pacote} sessões)` : ''}, respondido por ${nomeUsuario}`
         : tipo === 'compra_separada'
           ? `Compras tratadas como pacotes separados, respondido por ${nomeUsuario}${veredictoDoLink.acao === 'desligar' ? ' (a ligação anterior entre elas foi desfeita)' : ''}`
@@ -195,7 +197,10 @@ export async function POST(req: NextRequest) {
     await client.from('ocorrencias_prontuario').insert({
       sale_id,
       tipo: 'nota',
-      titulo: tipo === 'mesmo_pacote' ? 'Compras juntadas no mesmo pacote' : tipo === 'compra_separada' ? 'Compras tratadas como pacotes separados' : 'Valor do pacote divergente',
+      titulo: tipo === 'quantidade_informada' ? 'Quantidade de sessões informada pelo comercial'
+        : tipo === 'mesmo_pacote' ? 'Compras juntadas no mesmo pacote'
+        : tipo === 'compra_separada' ? 'Compras tratadas como pacotes separados'
+        : 'Valor do pacote divergente',
       descricao: justificativa ? `${descricao}. Justificativa: ${justificativa}` : descricao,
       dados_extras: { sale_irma_id: sale_irma_id ?? null, tipo, diferenca: diferenca ?? null, paciente_paga_diferenca: paciente_paga_diferenca ?? null, havera_outra_compra: havera_outra_compra ?? null },
       criado_por_nome: nomeUsuario,

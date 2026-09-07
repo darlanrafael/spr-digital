@@ -17,7 +17,7 @@ export type VendaParaLigar = {
 }
 
 export type PedidoDeLigacao = {
-  tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente'
+  tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente' | 'quantidade_informada'
   irmaId: string | null
   /** A venda que vai carregar as sessões. */
   venda: VendaParaLigar

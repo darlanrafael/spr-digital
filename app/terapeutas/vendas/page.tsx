@@ -10,7 +10,7 @@ import { getSession } from '@/lib/auth'
 import { brutoDoPacote } from '@/lib/dinheiro-do-pacote'
 import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda, avisosDasDatas } from '@/lib/diagnostico-guiado'
-import { decidirAgendamento, type RespostaDoComercial } from '@/lib/decisao-de-agendamento'
+import { MAX_SESSOES_INFORMADAS, decidirAgendamento, type RespostaDoComercial } from '@/lib/decisao-de-agendamento'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 import { resumirReagendamentoTotal } from '@/lib/reagendamento-total'
 
@@ -652,6 +652,14 @@ export default function TerapeutasVendas() {
   // lib/decisao-de-agendamento.ts. Três defeitos desta feature moraram
   // exatamente nesta fiação, com as funções puras que ela chama corretas e
   // cobertas por teste o tempo todo.
+  // A quantidade que o comercial informa quando o sistema nao sabe. Zerada ao
+  // trocar de venda: sem isso, o numero de uma venda vazava visualmente para a
+  // proxima aberta no mesmo carregamento de pagina - a decisao ja se protege
+  // pelo saleId, mas o campo preenchido induziria ao erro.
+  const [qtdInformadaInput, setQtdInformadaInput] = useState('')
+  const [qtdInformadaMotivo, setQtdInformadaMotivo] = useState('')
+  useEffect(() => { setQtdInformadaInput(''); setQtdInformadaMotivo('') }, [agendarVendaId])
+
   const decisaoPacote = useMemo(() => decidirAgendamento({
     venda: agendarVenda ?? null,
     totalDoDiagnostico: agendarDiagnostico?.totalSessoes ?? null,
@@ -666,7 +674,10 @@ export default function TerapeutasVendas() {
     // resposta" era um ternario no `handleAgendar`, duplicando a decisao fora
     // do alcance dos testes. Agora ela vive num lugar so.
     ehRetryDeCompromisso: !!agendarConflitoCompromisso,
-  }), [agendarVenda, agendarDiagnostico, pageData, pacoteResposta, agendarConflitoCompromisso])
+    quantidadeInformada: agendarVendaId
+      ? { saleId: agendarVendaId, sessoes: Number(qtdInformadaInput), justificativa: qtdInformadaMotivo }
+      : null,
+  }), [agendarVenda, agendarVendaId, agendarDiagnostico, pageData, pacoteResposta, agendarConflitoCompromisso, qtdInformadaInput, qtdInformadaMotivo])
 
   const agendarCandidataPacote = decisaoPacote.candidata
   const agendarConfere = decisaoPacote.confere
@@ -803,7 +814,7 @@ export default function TerapeutasVendas() {
     }
   }
 
-  async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente', senha: string): Promise<string | null> {
+  async function responderPacote(tipo: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente' | 'quantidade_informada', senha: string): Promise<string | null> {
     if (!agendarVenda) return null
     setPacoteLoading(true); setPacoteErro('')
     const res = await fetch('/api/terapeutas/vendas/pacote', {
@@ -820,10 +831,16 @@ export default function TerapeutasVendas() {
         sale_irma_id: agendarCandidataPacote?.id ?? null,
         tipo,
         diferenca: agendarConfere?.situacao === 'valor_divergente' ? agendarConfere.diferenca : null,
-        sessoes_do_pacote: agendarConfere && agendarConfere.situacao !== 'indeterminado' ? agendarConfere.sessoes : null,
+        // No caso `indeterminado` a quantidade vem do comercial, não da conta:
+        // é justamente o número que o CEO precisa ver na conferência.
+        sessoes_do_pacote: tipo === 'quantidade_informada'
+          ? agendarNumSessoes
+          : agendarConfere && agendarConfere.situacao !== 'indeterminado' ? agendarConfere.sessoes : null,
         paciente_paga_diferenca: pacotePagaDiferenca,
         havera_outra_compra: pacoteOutraCompra,
-        justificativa: pacoteJustificativa.trim() || null,
+        justificativa: tipo === 'quantidade_informada'
+          ? qtdInformadaMotivo.trim()
+          : pacoteJustificativa.trim() || null,
         usuario_email: adminEmail,
         senha,
       }),
@@ -1489,14 +1506,47 @@ export default function TerapeutasVendas() {
               {!agendarDiagnostico && (
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">Quantidade de sessões</label>
-                  {agendarConfere?.situacao === 'indeterminado' ? (
-                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
-                      <p className="text-xs text-red-300 font-medium">Não foi possível determinar a quantidade</p>
-                      <p className="text-[11px] text-red-400/80 mt-1">
-                        O nome da oferta não diz quantas sessões são{agendarVenda?.oferta_nome ? ` ("${agendarVenda.oferta_nome}")` : ' (a venda não tem oferta registrada)'} e o valor
-                        de R$ {(agendarVenda?.preco_base ?? 0).toLocaleString('pt-BR')} não bate com nenhum pacote de tabela.
-                        Ajuste a oferta na plataforma ou fale com o financeiro antes de agendar.
-                      </p>
+                  {decisaoPacote.precisaInformarQuantidade ? (
+                    /* O sistema não soube dizer, então quem sabe é quem vendeu.
+                       Decisão do usuário em 06/09/2026: os pacotes novos estão
+                       em teste e a tabela de preços ainda não existe para eles,
+                       então travar aqui seria travar a venda. Isso NÃO reabre a
+                       quantidade que o sistema conhece - este bloco só aparece
+                       no caso `indeterminado`. O que ele informar vira
+                       ocorrência para o CEO conferir depois, sem esperar
+                       aprovação e sem travar o agendamento. */
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2.5 space-y-2.5">
+                      <div>
+                        <p className="text-xs text-amber-300 font-medium">O sistema não sabe quantas sessões são</p>
+                        <p className="text-[11px] text-amber-400/80 mt-1">
+                          A oferta{agendarVenda?.oferta_nome ? ` "${agendarVenda.oferta_nome}"` : ' desta venda'} não diz a quantidade, e
+                          R$ {(agendarVenda?.preco_base ?? 0).toLocaleString('pt-BR')} não bate com nenhum pacote de tabela.
+                          Informe abaixo quantas sessões o paciente comprou. Fica registrado em Aprovações para conferência.
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <input type="number" min={1} max={MAX_SESSOES_INFORMADAS} step={1}
+                          value={qtdInformadaInput}
+                          onChange={e => setQtdInformadaInput(e.target.value)}
+                          placeholder="Nº de sessões"
+                          className="w-32 bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500/50" />
+                        <input type="text" value={qtdInformadaMotivo}
+                          onChange={e => setQtdInformadaMotivo(e.target.value)}
+                          placeholder="Qual pacote é este? (mín. 10 letras)"
+                          className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500/50" />
+                      </div>
+                      {!decisaoPacote.quantidadeFoiInformada && (qtdInformadaInput || qtdInformadaMotivo) && (
+                        <p className="text-[11px] text-amber-400/80">
+                          {!(Number(qtdInformadaInput) > 0 && Number.isInteger(Number(qtdInformadaInput)) && Number(qtdInformadaInput) <= MAX_SESSOES_INFORMADAS)
+                            ? `Informe um número inteiro de 1 a ${MAX_SESSOES_INFORMADAS}.`
+                            : 'Escreva de onde vem essa quantidade, com pelo menos 10 letras.'}
+                        </p>
+                      )}
+                      {decisaoPacote.quantidadeFoiInformada && (
+                        <p className="text-[11px] text-green-400">
+                          Vai agendar {agendarNumSessoes} {agendarNumSessoes === 1 ? 'sessão' : 'sessões'}.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <>

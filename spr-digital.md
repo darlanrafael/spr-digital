@@ -3006,3 +3006,30 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **9 testes novos** em `lib/telefone.test.ts`, com os numeros reais medidos e as duas fronteiras da regra (DDD 28 mantem, DDD 31 tira). Mais duas linhas em `lib/fiacao-do-pacote.test.ts`, porque apagar a chamada de `paraWhatsApp` nao daria erro nenhum - so pararia de entregar mensagem, em silencio, como estava.
 
     **CONTINUA ABERTO, e agora com tamanho conhecido:** o `sucesso: !item.json.error` do n8n. Enquanto ele estiver assim, qualquer erro futuro de numero volta a ser invisivel e o banco volta a mentir que enviou. Precisa de decisao do usuario: conferir `phone-exists` no cadastro do paciente, ou apertar a avaliacao da resposta no proprio n8n.
+
+49. **06-07/09/2026 - o comercial informa a quantidade quando o sistema nao sabe.** Mudanca de regra pedida pelo usuario, a partir de um caso real que travou o Felipe.
+
+    **O caso.** Andre Tavares Barbosa, oferta **"F3 10% (Cópia)"**, R$ 5.450, produto "Mentoria Particular - Pedro Roncada", vendida em 04/09. O botao "Agendar" ficou travado com "Nao foi possivel determinar a quantidade".
+
+    **O sistema estava certo.** Todas as outras ofertas de Mentoria dizem a quantidade no nome - `Formato - 1 Sessão` (R$ 1.300), `Formato - 2 Sessão` (R$ 1.550), `Formato - 4 Sessão` (R$ 2.860), `Formato - 8 Sessão` (R$ 5.280). A `F3 10% (Cópia)` e a UNICA que nao diz, e R$ 5.450 nao bate com pacote nenhum (fica R$ 170 acima do de 8). Chutar daria ao paciente um numero de sessoes que ninguem vendeu.
+
+    **Por que a regra mudou.** Palavras do usuario: *"pensei em deixar em situacoes assim, o proprio Felipe informar na tela do proprio agendamento, uma vez que o sistema nao consegue identificar. Estamos tentando aumentar alguns pacotes progressivamente. Entao vai acontecer novamente isso. E como nao temos uma tabela de quanto ira aumentar, pois estamos ainda testando."*
+
+    A regra de 03/09 **nao foi afrouxada**, foi delimitada:
+
+    | Situacao | Quem decide |
+    |---|---|
+    | O sistema SABE a quantidade (oferta legivel ou preco de tabela) | a regra da empresa. O comercial nao mexe, como antes |
+    | O sistema NAO SABE (`indeterminado`) | **quem vendeu**, informando na tela |
+
+    Travar no segundo caso seria travar a venda: o pacote existe, foi vendido, e a tabela de precos ainda nao existe para ele porque esta em teste.
+
+    **A rede de seguranca, aprovada pelo usuario.** O numero informado **vira ocorrencia para o CEO conferir depois**, sem esperar aprovacao e sem travar o agendamento - o mesmo desenho ja usado na pergunta de pacote pago em duas compras. O usuario tinha considerado exigir aprovacao dele caso a caso e preferiu esta forma. Tipo proprio (`quantidade_informada`, migracao `20260906000000`) e nao `valor_divergente`, porque sao duas coisas diferentes na conferencia: uma e "o valor nao fechou com o pacote", a outra e "nao havia pacote nenhum a fechar, e alguem informou". Cartao roxo na tela de Aprovacoes, cor propria para nao se confundir.
+
+    **O que foi barrado, com teste para cada um:** numero quebrado (4,5), zero, negativo, acima de **60** (`MAX_SESSOES_INFORMADAS`), justificativa com menos de 10 letras, e o numero digitado numa venda valendo para OUTRA - o mesmo carimbo de `saleId` que a resposta de pacote ja usava, porque sem ele o valor vazava para a proxima venda aberta no mesmo carregamento de pagina. O campo tambem e zerado ao trocar de venda: a decisao ja se protege pelo `saleId`, mas o campo preenchido induziria ao erro.
+
+    **Um erro que o teste pegou durante a construcao:** eu marcava `quantidadeFoiInformada` como verdadeiro sempre que o numero digitado era valido, mesmo quando ele NAO era usado (venda cuja quantidade o sistema conhece). A rota gravaria ocorrencia de algo sem efeito nenhum, e o CEO veria "quantidade informada" numa venda em que nada foi informado. Corrigido: so e verdadeiro quando o numero efetivamente valeu.
+
+    **Duas linhas novas em `lib/fiacao-do-pacote.test.ts`**, porque apagar o campo da tela nao daria erro nenhum - so voltaria a travar o comercial em silencio, que e exatamente o problema que esta mudanca resolve.
+
+    340 testes, `tsc` limpo, build OK.

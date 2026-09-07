@@ -477,6 +477,7 @@ const CORES_DO_ROTULO: Record<string, string> = {
   divergente: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
   desfeita: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
   separadas: 'bg-gray-700/40 text-gray-300 border-white/10',
+  informada: 'bg-violet-500/20 text-violet-300 border-violet-500/40',
 }
 
 function OcorrenciaBadge({ o }: { o: { tipo: string; justificativa?: string | null } }) {

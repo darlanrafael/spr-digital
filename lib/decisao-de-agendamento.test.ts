@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { decidirAgendamento, type EstadoDoModal, type VendaNaTela } from './decisao-de-agendamento'
+import { decidirAgendamento, type EstadoDoModal, type VendaNaTela, MAX_SESSOES_INFORMADAS } from './decisao-de-agendamento'
 
 // Caso real: Amanda da Silva Rios pagou o pacote de 8 em duas compras, R$ 2.600
 // em 24/08 21:28 e R$ 2.680 em 25/08 12:43, as duas com oferta "Formato - 4
@@ -150,4 +150,113 @@ test('PRIMEIRA tentativa: a candidata ainda nao ligada conta, e a resposta e gra
   }))
   assert.equal(d.numeroDeSessoes, 8)
   assert.equal(d.tipoAResponder, 'mesmo_pacote')
+})
+
+// ── A quantidade informada pelo comercial (usuario, 06/09/2026) ──────────────
+// Caso real que motivou: Andre Tavares Barbosa, oferta "F3 10% (Cópia)",
+// R$ 5.450. Nenhuma outra oferta de Mentoria e assim - todas dizem a
+// quantidade no nome - e R$ 5.450 nao bate com pacote nenhum da tabela. O
+// pacote e novo e esta em teste, entao a tabela de precos ainda nao existe
+// para ele. Travar seria travar a venda.
+const OFERTA_NOVA: VendaNaTela = {
+  id: 'nova', email: 'andre@x.com', produto: 'Mentoria Particular - Pedro Roncada',
+  data_hora: '2026-09-04T21:29:39Z', oferta_nome: 'F3 10% (Cópia)', preco_base: 5450,
+}
+
+test('sem a quantidade informada, continua travado e valendo 0', () => {
+  const d = decidirAgendamento(base({ venda: OFERTA_NOVA }))
+  assert.equal(d.confere?.situacao, 'indeterminado')
+  assert.equal(d.travado, true)
+  assert.equal(d.numeroDeSessoes, 0)
+  assert.equal(d.precisaInformarQuantidade, true)
+  assert.equal(d.quantidadeFoiInformada, false)
+})
+
+test('o comercial informa: destrava e vale o que ele informou', () => {
+  const d = decidirAgendamento(base({
+    venda: OFERTA_NOVA,
+    quantidadeInformada: { saleId: 'nova', sessoes: 8, justificativa: 'Pacote F3 novo, 8 sessoes, combinado com o Pedro.' },
+  }))
+  assert.equal(d.travado, false)
+  assert.equal(d.numeroDeSessoes, 8)
+  assert.equal(d.quantidadeFoiInformada, true)
+})
+
+test('a quantidade informada NAO reabre a que o sistema conhece', () => {
+  // Esta e a regra de 03/09 que continua valendo: o comercial nao decide a
+  // quantidade de uma venda cuja quantidade o sistema sabe. Aqui a oferta diz
+  // 4 sessoes; ele digitar 8 nao muda nada.
+  const conhecida: VendaNaTela = { ...OFERTA_NOVA, oferta_nome: 'Formato - 4 Sessão', preco_base: 2860 }
+  const d = decidirAgendamento(base({
+    venda: conhecida,
+    quantidadeInformada: { saleId: 'nova', sessoes: 8, justificativa: 'quero oito mesmo assim.' },
+  }))
+  assert.equal(d.numeroDeSessoes, 4)
+  assert.equal(d.precisaInformarQuantidade, false)
+  assert.equal(d.quantidadeFoiInformada, false)
+})
+
+test('a quantidade informada nao vaza para OUTRA venda', () => {
+  // Mesmo carimbo de saleId da resposta de pacote: sem ele, o numero digitado
+  // numa venda valia para a proxima agendada na mesma sessao de pagina.
+  const d = decidirAgendamento(base({
+    venda: OFERTA_NOVA,
+    quantidadeInformada: { saleId: 'outra-venda', sessoes: 8, justificativa: 'informado na venda anterior.' },
+  }))
+  assert.equal(d.travado, true)
+  assert.equal(d.numeroDeSessoes, 0)
+})
+
+test('numero absurdo, zero, quebrado ou sem justificativa nao destrava', () => {
+  const casos = [
+    { sessoes: 0, justificativa: 'justificativa longa o bastante.' },
+    { sessoes: -4, justificativa: 'justificativa longa o bastante.' },
+    { sessoes: 999, justificativa: 'justificativa longa o bastante.' },
+    { sessoes: 4.5, justificativa: 'justificativa longa o bastante.' },
+    { sessoes: 8, justificativa: 'oito' },
+    { sessoes: 8, justificativa: '          ' },
+  ]
+  for (const c of casos) {
+    const d = decidirAgendamento(base({ venda: OFERTA_NOVA, quantidadeInformada: { saleId: 'nova', ...c } }))
+    assert.equal(d.travado, true, JSON.stringify(c))
+    assert.equal(d.numeroDeSessoes, 0, JSON.stringify(c))
+  }
+})
+
+test('o limite de 60 e a fronteira, e ela passa', () => {
+  const d = decidirAgendamento(base({
+    venda: OFERTA_NOVA,
+    quantidadeInformada: { saleId: 'nova', sessoes: MAX_SESSOES_INFORMADAS, justificativa: 'pacote anual, um por semana.' },
+  }))
+  assert.equal(d.travado, false)
+  assert.equal(d.numeroDeSessoes, 60)
+})
+
+test('a quantidade informada vira ocorrencia para o CEO', () => {
+  // E o unico rastro de que aquele numero saiu da cabeca de alguem e nao da
+  // oferta. Sem isso, uma venda de 8 sessoes informada a mao fica
+  // indistinguivel de uma que o sistema leu sozinho.
+  const d = decidirAgendamento(base({
+    venda: OFERTA_NOVA,
+    quantidadeInformada: { saleId: 'nova', sessoes: 8, justificativa: 'Pacote F3 novo, 8 sessoes.' },
+  }))
+  assert.equal(d.tipoAResponder, 'quantidade_informada')
+})
+
+test('sem informar, nao ha ocorrencia a gravar', () => {
+  assert.equal(decidirAgendamento(base({ venda: OFERTA_NOVA })).tipoAResponder, null)
+})
+
+test('retry de compromisso nao regrava a quantidade informada', () => {
+  // Mesma protecao das outras respostas: a ocorrencia ja foi gravada na
+  // primeira tentativa, e regravar mostraria a mesma informacao duas vezes ao
+  // CEO sem ele saber se foram dois eventos.
+  const d = decidirAgendamento(base({
+    venda: OFERTA_NOVA, ehRetryDeCompromisso: true,
+    quantidadeInformada: { saleId: 'nova', sessoes: 8, justificativa: 'Pacote F3 novo, 8 sessoes.' },
+  }))
+  assert.equal(d.tipoAResponder, null)
+  // Mas o numero continua valendo: o agendamento nao pode virar 0 no retry.
+  assert.equal(d.numeroDeSessoes, 8)
+  assert.equal(d.travado, false)
 })

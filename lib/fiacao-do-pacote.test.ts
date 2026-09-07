@@ -64,6 +64,10 @@ const FIACAO: { arquivo: string; trecho: string; porque: string }[] = [
     porque: 'sem ela o lembrete vai para a forma que o WhatsApp nao usa: 25 dos 41 pacientes com sessao futura nao recebiam' },
   { arquivo: 'app/api/terapeutas/sessoes/agendar/route.ts', trecho: 'paraWhatsApp(',
     porque: 'mesma coisa no aviso de encaixe' },
+  { arquivo: 'app/terapeutas/vendas/page.tsx', trecho: 'precisaInformarQuantidade',
+    porque: 'sem o campo, o comercial volta a ficar travado em toda venda de pacote novo, que e o caso que ela existe para resolver' },
+  { arquivo: 'app/terapeutas/vendas/page.tsx', trecho: 'setQtdInformadaInput',
+    porque: 'sem zerar ao trocar de venda, o numero de uma venda aparece preenchido na proxima e induz ao erro' },
   { arquivo: 'app/terapeutas/aprovacoes/page.tsx', trecho: 'rotuloDaOcorrencia',
     porque: 'sem ele o CEO lê "Compras separadas" onde alguém desfez uma junção já registrada' },
 ]

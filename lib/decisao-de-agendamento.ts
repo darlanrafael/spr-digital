@@ -29,6 +29,18 @@ export type VendaNaTela = {
  */
 export type RespostaDoComercial = { saleId: string; valor: 'mesmo_pacote' | 'compra_separada' }
 
+/**
+ * A quantidade que o comercial informou quando o sistema não soube dizer.
+ *
+ * Carimbada com o `saleId` pelo mesmo motivo da resposta de pacote: sem o
+ * carimbo, o número digitado numa venda vazava para a próxima agendada na
+ * mesma sessão de página.
+ */
+export type QuantidadeInformada = { saleId: string; sessoes: number; justificativa: string }
+
+/** O maior pacote que faz sentido existir. Barra o dedo escorregado no teclado. */
+export const MAX_SESSOES_INFORMADAS = 60
+
 export type EstadoDoModal = {
   venda: VendaNaTela | null
   /** Diagnóstico Guiado: a quantidade vem do formato, a regra da oferta não se aplica. */
@@ -43,6 +55,8 @@ export type EstadoDoModal = {
   resposta: RespostaDoComercial | null
   /** Retry do MESMO agendamento (o comercial liberou o conflito de compromisso). */
   ehRetryDeCompromisso?: boolean
+  /** O que o comercial digitou quando a quantidade saiu `indeterminado`. */
+  quantidadeInformada?: QuantidadeInformada | null
 }
 
 export type DecisaoDoAgendamento = {
@@ -54,7 +68,11 @@ export type DecisaoDoAgendamento = {
   /** A resposta que vale para ESTA venda. */
   respostaEfetiva: 'mesmo_pacote' | 'compra_separada' | null
   /** O que precisa ir para /vendas/pacote ANTES de agendar. */
-  tipoAResponder: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente' | null
+  tipoAResponder: 'mesmo_pacote' | 'compra_separada' | 'valor_divergente' | 'quantidade_informada' | null
+  /** A tela tem de PEDIR a quantidade: o sistema não conseguiu determinar. */
+  precisaInformarQuantidade: boolean
+  /** O comercial informou, e o que ele informou é válido. */
+  quantidadeFoiInformada: boolean
 }
 
 /** Lançamento manual não vem de plataforma: não tem oferta e o preço costuma ser 0. */
@@ -65,6 +83,7 @@ export function ehLancamentoManual(id: string): boolean {
 const NADA: DecisaoDoAgendamento = {
   candidata: null, confere: null, numeroDeSessoes: null,
   travado: false, respostaEfetiva: null, tipoAResponder: null,
+  precisaInformarQuantidade: false, quantidadeFoiInformada: false,
 }
 
 export function decidirAgendamento(e: EstadoDoModal): DecisaoDoAgendamento {
@@ -94,7 +113,10 @@ export function decidirAgendamento(e: EstadoDoModal): DecisaoDoAgendamento {
   // Lançamento manual fica de fora da regra da oferta: são 34 nos últimos 90
   // dias, e aplicá-la ali deixaria essas vendas impossíveis de agendar.
   if (ehLancamentoManual(venda.id)) {
-    return { candidata, confere: null, numeroDeSessoes: null, travado: false, respostaEfetiva, tipoAResponder: null }
+    return {
+      candidata, confere: null, numeroDeSessoes: null, travado: false, respostaEfetiva,
+      tipoAResponder: null, precisaInformarQuantidade: false, quantidadeFoiInformada: false,
+    }
   }
 
   // As irmãs saem de `filhas`, a ÚNICA lista que contém venda ligada a outro
@@ -123,9 +145,26 @@ export function decidirAgendamento(e: EstadoDoModal): DecisaoDoAgendamento {
   })
 
   // `indeterminado` NÃO vira 1: o palpite antigo daria ao paciente uma sessão
-  // onde ele comprou quatro ou oito. 0 é sinal, e o botão fica travado.
-  const numeroDeSessoes = confere.situacao === 'indeterminado' ? 0 : confere.sessoes
-  const travado = confere.situacao === 'indeterminado'
+  // onde ele comprou quatro ou oito. 0 é sinal.
+  //
+  // Quando o sistema não sabe, quem sabe é quem vendeu. O comercial informa a
+  // quantidade na própria tela e segue - decisão do usuário em 06/09/2026,
+  // porque os pacotes novos estão sendo testados e a tabela de preços ainda
+  // não existe para eles. Isso NÃO reabre a quantidade que o sistema conhece:
+  // `informada` só é lida no ramo `indeterminado`. O que ele informar vira
+  // ocorrência para o CEO conferir depois, sem travar o agendamento.
+  const informada = e.quantidadeInformada && e.quantidadeInformada.saleId === venda.id
+    ? e.quantidadeInformada
+    : null
+  const informadaValida = !!informada
+    && Number.isInteger(informada.sessoes)
+    && informada.sessoes > 0
+    && informada.sessoes <= MAX_SESSOES_INFORMADAS
+    && informada.justificativa.trim().length >= 10
+  const numeroDeSessoes = confere.situacao !== 'indeterminado'
+    ? confere.sessoes
+    : informadaValida ? informada!.sessoes : 0
+  const travado = confere.situacao === 'indeterminado' && !informadaValida
 
   // "É o mesmo pacote" sem candidata não tem o que gravar: não há ligação nova
   // a criar. É o estado da SEGUNDA tentativa - a primeira gravou o link, a
@@ -138,7 +177,20 @@ export function decidirAgendamento(e: EstadoDoModal): DecisaoDoAgendamento {
   const nadaNovoALigar = respostaEfetiva === 'mesmo_pacote' && !candidata
   const tipoAResponder = e.ehRetryDeCompromisso || nadaNovoALigar
     ? null
-    : respostaEfetiva ?? (confere.situacao === 'valor_divergente' ? 'valor_divergente' as const : null)
+    : respostaEfetiva
+      ?? (confere.situacao === 'valor_divergente' ? 'valor_divergente' as const : null)
+      // A quantidade informada é registrada como ocorrência própria: é o único
+      // rastro de que aquele número saiu da cabeça de alguém e não da oferta.
+      ?? (confere.situacao === 'indeterminado' && informadaValida ? 'quantidade_informada' as const : null)
 
-  return { candidata, confere, numeroDeSessoes, travado, respostaEfetiva, tipoAResponder }
+  return {
+    candidata, confere, numeroDeSessoes, travado, respostaEfetiva, tipoAResponder,
+    // A tela precisa saber se DEVE pedir o número, e a rota precisa saber se
+    // tem de registrar a ocorrência.
+    precisaInformarQuantidade: confere.situacao === 'indeterminado',
+    // So é `true` quando o número EFETIVAMENTE valeu. Um número digitado numa
+    // venda cuja quantidade o sistema conhece é ignorado, e a rota não pode
+    // registrar ocorrência de algo que não teve efeito nenhum.
+    quantidadeFoiInformada: confere.situacao === 'indeterminado' && informadaValida,
+  }
 }
