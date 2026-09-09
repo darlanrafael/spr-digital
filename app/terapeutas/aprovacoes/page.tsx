@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
+import type { AlertaEstorno } from '@/lib/estorno-com-sessao'
 import { rotuloDaOcorrencia, textoDaDiferenca } from '@/lib/conferencia-de-pacote'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
@@ -74,6 +75,7 @@ export default function TerapeutasAprovacoes() {
   // Modal aprovar
   const [aprovarId, setAprovarId] = useState<string | null>(null)
   const [ocorrenciasErro, setOcorrenciasErro] = useState('')
+  const [estornos, setEstornos] = useState<AlertaEstorno[]>([])
   const [aprovarSenhaOpen, setAprovarSenhaOpen] = useState(false)
   const [aprovarLoading, setAprovarLoading] = useState(false)
   const [aprovarErro, setAprovarErro] = useState('')
@@ -109,6 +111,14 @@ export default function TerapeutasAprovacoes() {
     //
     // O AbortController fecha a outra metade: sem ele, "pendurado" não vira
     // erro nunca, e a seção ficaria carregando em silêncio.
+    // Estorno na plataforma com sessao futura. Mesmo tratamento da conferencia
+    // de pacotes: fora do try do loading, com timeout, e falha visivel.
+    try {
+      const r3 = await fetch(`/api/terapeutas/estornos-com-sessao?usuario_email=${encodeURIComponent(adminEmail)}`, { cache: 'no-store' })
+      const j3 = await r3.json()
+      if (r3.ok) setEstornos(j3.alertas ?? [])
+    } catch { /* secao fica vazia */ }
+
     setOcorrenciasErro('')
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), 15000)
@@ -331,6 +341,40 @@ export default function TerapeutasAprovacoes() {
                 comercial já respondeu e já agendou. Fica aqui para o CEO
                 conferir, do jeito que ele pediu - "assim como já acontece com
                 os reembolsos". */}
+            {/* Estorno que veio DE FORA (o cliente pediu reembolso na plataforma
+                ou deu chargeback) e a sessao continuou marcada. O caminho de
+                dentro - reembolso pedido pela tela e aprovado aqui - ja cancela
+                as sessoes; este e o buraco do de fora. */}
+            {estornos.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xs font-semibold text-red-300 uppercase tracking-wide mb-1">Estorno na plataforma com sessão marcada</h2>
+                <p className="text-[11px] text-gray-600 mb-3">
+                  O cliente estornou e a sessão continua na agenda. Decida se cancela ou se foi combinado.
+                </p>
+                <div className="bg-gray-900 border border-red-500/30 rounded-xl divide-y divide-white/5">
+                  {estornos.map(e => (
+                    <div key={e.saleId} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-gray-200">{e.nome}</p>
+                          <p className="text-[11px] text-gray-500">{e.produto} · {fmtBRL(e.valor)}</p>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold border shrink-0 bg-red-500/20 text-red-300 border-red-500/40">
+                          {e.status === 'chargeback' ? 'Chargeback' : e.status === 'em_protesto' ? 'Em protesto' : 'Reembolsada'}
+                        </span>
+                      </div>
+                      <div className="mt-2 space-y-0.5 text-[11px] text-gray-400">
+                        {e.dataReembolso && <p>Estornado em {fmtDt(e.dataReembolso)}</p>}
+                        <p className="text-red-300">
+                          {e.sessoes.length} {e.sessoes.length === 1 ? 'sessão ainda marcada' : 'sessões ainda marcadas'}:{' '}
+                          {e.sessoes.map(s => fmtDt(s.dataISO)).join(', ')}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {ocorrenciasErro && (
               <div className="mb-8 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
                 <p className="text-sm text-amber-300">Não foi possível carregar os pacotes conferidos pelo comercial.</p>

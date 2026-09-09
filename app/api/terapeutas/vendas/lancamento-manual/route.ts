@@ -115,6 +115,28 @@ export async function POST(req: NextRequest) {
   const sessoes: ReturnType<typeof baseSessao>[] = []
   let puladas = 0
 
+  // Sessao marcada como JA ENTREGUE nao pode cair no futuro.
+  //
+  // As entregues sao contadas de 7 em 7 dias PARA TRAS a partir da data da
+  // proxima sessao. Se essa data estiver longe o bastante, a subtracao ainda
+  // cai no futuro - e a sessao nasce "entregue" com data de entrega que ainda
+  // nao chegou. Caso real (04/09/2026): RAFAEL BUZETTI FERREIRA, lancado com
+  // proxima sessao em 17/09 e 1 entregue; a conta deu 10/09, seis dias no
+  // futuro. O estrago e triplo: ela ocupa horario na agenda (colidiu com outra
+  // paciente), conta como entregue nas metricas antes de acontecer, e gera
+  // comissao adiantada.
+  if (proximaMs !== null && entregues > 0) {
+    const maisAntigaEntregue = proximaMs - entregues * SETE_DIAS_MS
+    const maisRecenteEntregue = proximaMs - SETE_DIAS_MS
+    if (maisRecenteEntregue > Date.now()) {
+      const emBrt = (ms: number) => new Date(ms - 3 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ')
+      return NextResponse.json({
+        error: `As sessões já entregues sairiam com data no futuro (a mais recente cairia em ${emBrt(maisRecenteEntregue)}), porque são contadas de 7 em 7 dias para trás a partir da próxima sessão. Informe a data da próxima sessão mais próxima, ou reduza a quantidade de sessões já entregues.`,
+        detalhe: { primeiraEntregue: emBrt(maisAntigaEntregue), ultimaEntregue: emBrt(maisRecenteEntregue) },
+      }, { status: 400 })
+    }
+  }
+
   if (proximaMs !== null) {
     // Entregues — de 7 em 7 dias pra trás a partir da próxima sessão.
     for (let k = entregues; k >= 1; k--) {

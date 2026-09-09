@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { normalizarTelefoneBR } from './terapeutas-auth'
 import { paraWhatsApp } from './telefone'
+import { vendasComLembreteSuspenso, type VendaParaAlerta } from './estorno-com-sessao'
 import { formatoDaVenda } from './diagnostico-guiado'
 import { rotuloDiagnostico } from './etiqueta-diagnostico'
 
@@ -77,7 +78,7 @@ export async function buscarPendentes(
     paciente_nome: string
   } & Record<ColunaGrupo | ColunaPaciente, string | null>
 
-  const linhas = (sessoes ?? []) as unknown as SessaoRow[]
+  let linhas = (sessoes ?? []) as unknown as SessaoRow[]
 
   const saleIds = [...new Set(linhas.map(s => s.sale_id))]
   const telefonePorSale: Record<string, string | null> = {}
@@ -87,7 +88,9 @@ export async function buscarPendentes(
   // WhatsApp nunca mostra a etiqueta, sem erro nenhum.
   const formatoPorSale: Record<string, 1 | 2 | 3> = {}
   if (saleIds.length > 0) {
-    const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora,order_id,oferta_nome').in('id', saleIds)
+    const { data: sales, error: salesErr } = await client
+      .from('sales').select('id,nome,email,produto,status,valor_pago_cliente,data_reembolso,telefone,data_hora,order_id,oferta_nome')
+      .in('id', saleIds)
     if (salesErr) throw new Error(salesErr.message)
     for (const s of sales ?? []) {
       // `paraWhatsApp` roda por ULTIMO, e so aqui. O numero guardado em `sales`
@@ -101,6 +104,26 @@ export async function buscarPendentes(
       dataHoraPorSale[s.id as string] = s.data_hora as string
       const formato = formatoDaVenda({ id: s.id as string, order_id: (s.order_id as string | null) ?? undefined })
       if (formato) formatoPorSale[s.id as string] = formato.formato
+    }
+
+    // Lembrete NAO sai para quem estornou na plataforma e ainda tem sessao
+    // marcada. Mandar mensagem para quem pediu o dinheiro de volta e o pior
+    // dos dois erros: deixar de mandar para quem vai comparecer se resolve com
+    // uma mensagem; mandar para quem estornou e constrangimento com o cliente
+    // e com o terapeuta.
+    //
+    // A regra ignora lancamento manual e ignora paciente que tem outra venda
+    // aprovada - ver lib/estorno-com-sessao.ts, e os dois casos reais que
+    // deram origem a cada filtro.
+    const suspensas = vendasComLembreteSuspenso({
+      vendas: (sales ?? []) as unknown as VendaParaAlerta[],
+      sessoes: linhas.map(l => ({
+        id: l.id, sale_id: l.sale_id, data_agendada: l.data_agendada, status: 'agendada',
+      })),
+      agoraISO: new Date().toISOString(),
+    })
+    if (suspensas.size > 0) {
+      linhas = linhas.filter(l => !suspensas.has(l.sale_id))
     }
   }
 

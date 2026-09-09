@@ -1222,8 +1222,10 @@ export default function TerapeutasVendas() {
                                 )}
                                 {ofertaDiagnosticoNaoMapeada(sale) && (
                                   <p className="mt-1 text-[10px] text-amber-400 max-w-[260px]">
-                                    Oferta do Diagnóstico Guiado não mapeada: o pacote não pode ser montado até alguém
-                                    associar essa oferta a um formato. Avise o time técnico.
+                                    Não dá para saber quantas sessões são. Confira na plataforma se a
+                                    oferta desta venda tem o nome do formato (&ldquo;FORMATO 1&rdquo;,
+                                    &ldquo;FORMATO 2&rdquo; ou &ldquo;FORMATO 3&rdquo;). Se estiver
+                                    certo, avise o time técnico.
                                   </p>
                                 )}
                               </td>
@@ -1259,7 +1261,7 @@ export default function TerapeutasVendas() {
                               </td>
                               <td className="px-4 py-3">
                                 {ofertaDiagnosticoNaoMapeada(sale) ? (
-                                  <span title="Oferta não mapeada: o formato do pacote é desconhecido."
+                                  <span title="Não dá para saber o formato: a oferta desta venda não diz quantas sessões são."
                                     className="text-xs text-gray-600 whitespace-nowrap cursor-not-allowed">Oferta não mapeada</span>
                                 ) : (
                                 <button onClick={() => {
