@@ -76,6 +76,12 @@ export default function TerapeutasAprovacoes() {
   const [aprovarId, setAprovarId] = useState<string | null>(null)
   const [ocorrenciasErro, setOcorrenciasErro] = useState('')
   const [estornos, setEstornos] = useState<AlertaEstorno[]>([])
+  const [lancamentos, setLancamentos] = useState<Record<string, unknown>[]>([])
+  const [lancDecidindo, setLancDecidindo] = useState<string | null>(null)
+  const [lancMotivo, setLancMotivo] = useState('')
+  const [lancErro, setLancErro] = useState('')
+  const [lancSenhaOpen, setLancSenhaOpen] = useState(false)
+  const [lancPendente, setLancPendente] = useState<{ id: string; acao: 'aprovar' | 'rejeitar' } | null>(null)
   const [aprovarSenhaOpen, setAprovarSenhaOpen] = useState(false)
   const [aprovarLoading, setAprovarLoading] = useState(false)
   const [aprovarErro, setAprovarErro] = useState('')
@@ -111,6 +117,14 @@ export default function TerapeutasAprovacoes() {
     //
     // O AbortController fecha a outra metade: sem ele, "pendurado" não vira
     // erro nunca, e a seção ficaria carregando em silêncio.
+    // Lancamentos manuais esperando decisao. Fora do try do loading pelo mesmo
+    // motivo dos outros: falha aqui nao pode derrubar a fila de reembolsos.
+    try {
+      const r4 = await fetch(`/api/terapeutas/aprovacoes/lancamento-manual?usuario_email=${encodeURIComponent(adminEmail)}`, { cache: 'no-store' })
+      const j4 = await r4.json()
+      if (r4.ok) setLancamentos(j4.pendentes ?? [])
+    } catch { /* secao fica vazia */ }
+
     // Estorno na plataforma com sessao futura. Mesmo tratamento da conferencia
     // de pacotes: fora do try do loading, com timeout, e falha visivel.
     try {
@@ -137,6 +151,45 @@ export default function TerapeutasAprovacoes() {
   }, [adminEmail])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Aprovar CRIA o lancamento inteiro (venda, sessoes, Meet, comissao) e
+  // libera os horarios reservados. Recusar nao deixa residuo: nada foi criado,
+  // so os bloqueios somem. Ver app/api/terapeutas/aprovacoes/lancamento-manual.
+  // Guarda a decisao ate a senha ser digitada: toda acao que muda dado nesta
+  // tela pede senha, e criar venda + sessoes + evento no Google e a que mais
+  // muda.
+  async function decidirLancamento(id: string, acao: 'aprovar' | 'rejeitar') {
+    if (acao === 'rejeitar' && lancMotivo.trim().length < 10) {
+      setLancErro('Escreva o motivo da recusa (mínimo 10 letras).')
+      return
+    }
+    setLancPendente({ id, acao })
+    setLancSenhaOpen(true)
+  }
+
+  async function confirmarLancamento(senhaAcao: string) {
+    if (!lancPendente) return
+    const { id, acao } = lancPendente
+    setLancErro('')
+    try {
+      const res = await fetch('/api/terapeutas/aprovacoes/lancamento-manual', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          solicitacao_id: id, acao,
+          justificativa: acao === 'rejeitar' ? lancMotivo : undefined,
+          usuario_email: adminEmail, senha: senhaAcao,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setLancErro(json.error ?? `Erro ${res.status}`); return }
+      setLancSenhaOpen(false); setLancPendente(null)
+      setLancDecidindo(null); setLancMotivo('')
+      loadData()
+    } catch (e) {
+      setLancErro(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   // "Seu e-mail" ficava sempre travado em rafael@spr.com por padrão — pra
   // qualquer outro usuário logado (comercial, outro admin) as ações com
@@ -341,6 +394,82 @@ export default function TerapeutasAprovacoes() {
                 comercial já respondeu e já agendou. Fica aqui para o CEO
                 conferir, do jeito que ele pediu - "assim como já acontece com
                 os reembolsos". */}
+            {/* Lancamento manual esperando aprovacao. Decisao do usuario em
+                09/09/2026: o comercial pede, o CEO aprova, e SO ENTAO o sistema
+                cria venda, sessoes, Meet e prontuario. Agendamento de venda
+                real da plataforma nao passa por aqui. */}
+            {lancamentos.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xs font-semibold text-amber-300 uppercase tracking-wide mb-1">Lançamentos manuais aguardando você</h2>
+                <p className="text-[11px] text-gray-600 mb-3">
+                  Nada foi criado ainda. Os horários estão reservados na agenda até você decidir.
+                </p>
+                <div className="bg-gray-900 border border-amber-500/30 rounded-xl divide-y divide-white/5">
+                  {lancamentos.map(l => {
+                    const id = String(l.id)
+                    const jaTem = (l.vendas_que_ja_existem as Record<string, unknown>[] | undefined) ?? []
+                    const mesmoProduto = jaTem.filter(v => String(v.produto ?? '').trim().toLowerCase() === String(l.produto ?? '').trim().toLowerCase())
+                    return (
+                      <div key={id} className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm text-gray-200">{String(l.paciente_nome ?? '(sem nome)')}</p>
+                            <p className="text-[11px] text-gray-500">{String(l.produto ?? '-')} · {fmtBRL(Number(l.valor_pago_cliente ?? 0))} · {String(l.terapeuta_nome ?? '-')}</p>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold border shrink-0 bg-amber-500/20 text-amber-300 border-amber-500/40">
+                            Aguardando
+                          </span>
+                        </div>
+                        <div className="mt-2 space-y-0.5 text-[11px] text-gray-400">
+                          <p>
+                            {String(l.total_sessoes ?? 0)} sessões · {String(l.sessoes_entregues ?? 0)} já entregues
+                            {l.proxima_sessao_data ? ` · próxima em ${fmtDt(String(l.proxima_sessao_data))}` : ''}
+                          </p>
+                          <p className="text-gray-600">Pedido por {String(l.solicitado_por_nome ?? '-')} · {fmtDt(String(l.created_at))}</p>
+                        </div>
+
+                        {/* O que o paciente JA TEM. Era isto que faltava em 04/08. */}
+                        {mesmoProduto.length > 0 && (
+                          <div className="mt-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                            <p className="text-[11px] text-red-300 font-medium">
+                              Este paciente já tem {mesmoProduto.length} venda(s) deste MESMO produto:
+                            </p>
+                            {mesmoProduto.map(v => (
+                              <p key={String(v.id)} className="text-[11px] text-red-400/80">
+                                {fmtBRL(Number(v.valor_pago_cliente ?? 0))} de {fmtDt(String(v.data_hora))} · {String(v.sessoes ?? 0)} sessão(ões) · {String(v.status ?? '-')}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+
+                        {lancDecidindo === id ? (
+                          <div className="mt-3 space-y-2">
+                            <input type="text" value={lancMotivo} onChange={e => setLancMotivo(e.target.value)}
+                              placeholder="Motivo da recusa (mín. 10 letras)"
+                              className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
+                            {lancErro && <p className="text-[11px] text-red-400">{lancErro}</p>}
+                            <div className="flex gap-2">
+                              <button onClick={() => { setLancDecidindo(null); setLancMotivo(''); setLancErro('') }}
+                                className="flex-1 py-2 text-xs text-gray-300 bg-gray-800 border border-white/10 rounded-lg">Voltar</button>
+                              <button onClick={() => decidirLancamento(id, 'rejeitar')}
+                                className="flex-1 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg">Confirmar recusa</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-3 flex gap-2">
+                            <button onClick={() => { setLancDecidindo(id); setLancMotivo(''); setLancErro('') }}
+                              className="flex-1 py-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg hover:bg-red-500/20">Recusar</button>
+                            <button onClick={() => decidirLancamento(id, 'aprovar')}
+                              className="flex-1 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg">Aprovar e criar</button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Estorno que veio DE FORA (o cliente pediu reembolso na plataforma
                 ou deu chargeback) e a sessao continuou marcada. O caminho de
                 dentro - reembolso pedido pela tela e aprovado aqui - ja cancela
@@ -492,6 +621,15 @@ export default function TerapeutasAprovacoes() {
           </div>
         </div>
       )}
+
+      <SenhaModal isOpen={lancSenhaOpen}
+        onClose={() => { setLancSenhaOpen(false); setLancPendente(null); setLancErro('') }}
+        onConfirm={confirmarLancamento}
+        titulo={lancPendente?.acao === 'aprovar' ? 'Aprovar lançamento manual' : 'Recusar lançamento manual'}
+        descricao={lancPendente?.acao === 'aprovar'
+          ? 'Ao confirmar, o sistema cria a venda, as sessões, o link do Meet e a comissão, e libera os horários reservados.'
+          : 'Nada foi criado, então recusar só libera os horários que estavam reservados na agenda.'}
+        loading={false} erro={lancErro} />
 
       <SenhaModal isOpen={aprovarSenhaOpen} onClose={() => { setAprovarSenhaOpen(false); setAprovarErro('') }}
         onConfirm={handleAprovar} titulo="Confirmar aprovação de reembolso"

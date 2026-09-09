@@ -633,7 +633,10 @@ export default function PainelTerapeuta() {
   const [manualErro, setManualErro] = useState('')
   const [manualLoading, setManualLoading] = useState(false)
   const [manualSenhaOpen, setManualSenhaOpen] = useState(false)
-  const [manualSucesso, setManualSucesso] = useState<{ nome: string; criadas: number; puladas: number } | null>(null)
+  const [manualSucesso, setManualSucesso] = useState<{ nome: string; criadas: number; puladas: number; aguardandoAprovacao?: boolean; reservados?: number } | null>(null)
+  // O paciente ja tem venda do mesmo produto. Guarda a senha junto para o
+  // "lancar mesmo assim" nao obrigar a digitar de novo.
+  const [manualAvisoDuplicata, setManualAvisoDuplicata] = useState<{ texto: string; senha: string } | null>(null)
 
   // Pacientes e prontuário — Ocorrências (Nota / Remarcar / Reembolso), igual
   // ao módulo original em vendas/page.tsx
@@ -1472,8 +1475,15 @@ export default function PainelTerapeuta() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manualProximaSessaoData, manualFuturasNum])
 
-  async function handleLancamentoManual(senha: string) {
-    setManualLoading(true); setManualErro('')
+  // Lancamento manual agora PEDE, nao faz. Decisao do usuario em 09/09/2026:
+  // o comercial preenche, o horario fica pre-reservado, e so a aprovacao do
+  // CEO cria venda, sessoes, Meet e prontuario. Agendamento de venda real da
+  // plataforma NAO passa por aqui - continua com autonomia total.
+  //
+  // `confirmarDuplicata` vem `true` na segunda tentativa, quando o comercial
+  // ja viu que o paciente tem venda do mesmo produto e decidiu seguir.
+  async function handleLancamentoManual(senha: string, confirmarDuplicata = false) {
+    setManualLoading(true); setManualErro(''); setManualAvisoDuplicata(null)
     const res = await fetch('/api/terapeutas/vendas/lancamento-manual', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1489,13 +1499,27 @@ export default function PainelTerapeuta() {
         proxima_sessao_data: manualProximaSessaoData || undefined,
         datas_futuras: manualDatasEditadas.length === manualFuturasNum ? manualDatasEditadas : undefined,
         usuario_email: adminEmail, senha,
+        confirmou_duplicata: confirmarDuplicata || undefined,
       }),
     })
     const json = await res.json()
     setManualLoading(false)
+    // O paciente ja tem venda do mesmo produto. Nao bloqueia - comprar dois
+    // pacotes e legitimo - mas exige que quem lanca tenha VISTO antes. Foi
+    // exatamente essa informacao que faltou no caso da Joicy, em 04/08.
+    if (res.status === 409 && json.precisa_confirmar) {
+      setManualAvisoDuplicata({ texto: json.aviso, senha })
+      return
+    }
     if (!res.ok) { setManualErro(json.error ?? 'Erro'); return }
     setManualSenhaOpen(false); setManualOpen(false)
-    setManualSucesso({ nome: manualNome || 'Paciente', criadas: json.sessoes_criadas, puladas: json.sessoes_puladas })
+    setManualSucesso({
+      nome: manualNome || 'Paciente',
+      criadas: json.sessoes_previstas ?? 0,
+      puladas: 0,
+      aguardandoAprovacao: !!json.aguardando_aprovacao,
+      reservados: json.horarios_reservados ?? 0,
+    })
     setManualNome(''); setManualEmail(''); setManualTelefone(''); setManualProduto('')
     setManualValorBruto(''); setManualValorLiquido(''); setManualDataCompra('')
     setManualTotalSessoes(''); setManualEntreguesNumero(''); setManualProximaSessaoData('')
@@ -3265,6 +3289,29 @@ export default function PainelTerapeuta() {
         erro={manualErro}
       />
 
+      {/* O paciente já tem venda do mesmo produto. Não bloqueia - comprar dois
+          pacotes é legítimo - mas obriga a ver antes. Em 04/08/2026 a Joicy
+          ganhou uma venda duplicada porque essa informação estava no sistema e
+          não na frente de quem decidia. */}
+      {manualAvisoDuplicata && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setManualAvisoDuplicata(null)}>
+          <div className="bg-gray-900 border border-amber-500/40 rounded-xl p-6 w-full max-w-md mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-amber-300 mb-2">Este paciente já tem venda deste produto</h3>
+            <p className="text-sm text-gray-300 mb-5">{manualAvisoDuplicata.texto}</p>
+            <div className="flex gap-2">
+              <button onClick={() => setManualAvisoDuplicata(null)}
+                className="flex-1 py-2.5 text-sm text-gray-300 bg-gray-800 border border-white/10 rounded-lg">
+                Cancelar
+              </button>
+              <button onClick={() => { const s = manualAvisoDuplicata.senha; setManualAvisoDuplicata(null); handleLancamentoManual(s, true) }}
+                className="flex-1 py-2.5 text-sm font-medium text-white bg-amber-600 hover:bg-amber-500 rounded-lg transition-colors">
+                É outro pacote, enviar mesmo assim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirmação de lançamento manual */}
       {manualSucesso && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setManualSucesso(null)}>
@@ -3272,10 +3319,22 @@ export default function PainelTerapeuta() {
             <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-7 h-7 text-green-500" />
             </div>
-            <h3 className="text-base font-semibold text-white mb-1">Paciente lançado!</h3>
+            <h3 className="text-base font-semibold text-white mb-1">
+              {manualSucesso.aguardandoAprovacao ? 'Enviado para aprovação' : 'Paciente lançado!'}
+            </h3>
             <p className="text-sm text-gray-400 mb-5">
-              {manualSucesso.criadas} sessão(ões) de {manualSucesso.nome} registrada(s).
-              {manualSucesso.puladas > 0 && ` ${manualSucesso.puladas} sessão(ões) futura(s) ficaram de fora até você informar a data real.`}
+              {manualSucesso.aguardandoAprovacao ? (
+                <>
+                  O lançamento de {manualSucesso.nome} foi enviado para aprovação do Rafael.
+                  {(manualSucesso.reservados ?? 0) > 0 && ` ${manualSucesso.reservados} horário(s) ficaram reservados na agenda até a decisão, então ninguém marca por cima.`}
+                  {' '}Nada foi criado ainda: a venda, as sessões e o link do Meet só entram depois da aprovação.
+                </>
+              ) : (
+                <>
+                  {manualSucesso.criadas} sessão(ões) de {manualSucesso.nome} registrada(s).
+                  {manualSucesso.puladas > 0 && ` ${manualSucesso.puladas} sessão(ões) futura(s) ficaram de fora até você informar a data real.`}
+                </>
+              )}
             </p>
             <button onClick={() => setManualSucesso(null)}
               className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">

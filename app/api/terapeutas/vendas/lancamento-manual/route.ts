@@ -1,51 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarSenhaUsuario, registrarAtividade, calcularComissao, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
-import { criarEventoComMeet } from '@/lib/google-meet'
+import { verificarSenhaUsuario } from '@/lib/terapeutas-auth'
+import { datasDoLancamento, type PayloadLancamentoManual } from '@/lib/criar-lancamento-manual'
+import { avisoDeDuplicata, type VendaExistente } from '@/lib/lancamento-manual-duplicata'
+import { buscarConflitosAgenda } from '@/lib/agenda-conflitos'
 
-// Cadastro manual de paciente — cria a venda E as sessões numa tacada só,
-// pro admin lançar quem já está em atendimento fora do sistema (ex: Pedro,
-// calendário que já rodava fora daqui) sem depender de reconciliar contra
-// uma venda antiga importada. Preenche os mesmos campos que uma venda real
-// da Hubla/Kiwify teria, só que digitados à mão.
+// Lançamento manual: agora ele PEDE, não faz.
 //
-// Nenhum campo é obrigatório além de terapeuta_id/usuario_email/senha — o
-// resto (nome, valores, sessões...) pode ficar incompleto e ser preenchido
-// depois pelo prontuário. Informa-se a data da PRÓXIMA sessão: as sessões
-// entregues (se houver) são preenchidas de 7 em 7 dias pra trás a partir
-// dela, e as sessões futuras (total - entregues) de 7 em 7 dias pra frente
-// — sem a data da próxima sessão, nenhuma sessão é criada, só a venda.
+// Até 09/09/2026 esta rota criava venda, sessões, evento no Google e comissão
+// de uma vez, sem passar por ninguém. Foi por aí que dois problemas reais
+// entraram: em 04/08 um lançamento duplicou uma venda de plataforma que já
+// existia (mesma paciente, mesmo produto, mesmo valor, dia seguinte), e em
+// 04/09 outro criou sessão marcada como "já entregue" com data no futuro,
+// ocupando horário na agenda.
+//
+// Decisão do usuário: "toda vez que alguém for lançar um agendamento manual
+// precisa ir para aprovação. Eu aprovando, aí sim cria o fluxo restante do
+// Meet, prontuário etc. Não quero deixar o sistema aberto para isso mais."
+//
+// O que esta rota faz agora, nesta ordem:
+//   1. confere que as datas fazem sentido (a mesma trava do caso Buzetti);
+//   2. avisa quem está lançando se o paciente JÁ TEM venda do mesmo produto;
+//   3. PRÉ-RESERVA os horários futuros com um bloqueio na agenda, para que
+//      ninguém marque por cima enquanto o pedido espera;
+//   4. grava a solicitação com o payload inteiro.
+//
+// Nada de venda, sessão ou evento é criado aqui. Ver
+// lib/criar-lancamento-manual.ts, que roda na aprovação.
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const {
-    terapeuta_id, nome, email, telefone, produto, plataforma,
-    valor_pago_cliente, valor_liquido, preco_base, data_hora,
-    total_sessoes, sessoes_entregues, proxima_sessao_data, datas_futuras,
-    usuario_email, senha,
-  } = body as {
-    terapeuta_id: string
-    nome?: string
-    email?: string
-    telefone?: string
-    produto?: string
-    plataforma?: string
-    valor_pago_cliente?: number
-    valor_liquido?: number
-    preco_base?: number
-    data_hora?: string
-    total_sessoes?: number
-    sessoes_entregues?: number
-    proxima_sessao_data?: string
-    datas_futuras?: string[]
-    usuario_email: string
-    senha: string
+  const { usuario_email, senha, confirmou_duplicata, ...resto } = body as Record<string, unknown> & {
+    usuario_email: string; senha: string; confirmou_duplicata?: boolean
   }
+  const payload = resto as unknown as PayloadLancamentoManual
 
-  if (!terapeuta_id || !usuario_email || !senha) {
+  if (!payload.terapeuta_id || !usuario_email || !senha) {
     return NextResponse.json({ error: 'Terapeuta e senha são obrigatórios' }, { status: 400 })
   }
 
@@ -53,153 +46,106 @@ export async function POST(req: NextRequest) {
   if (!valido) return NextResponse.json({ error: 'Senha inválida' }, { status: 401 })
 
   const client = getSupabaseAdmin()
-
   const { data: terapeuta, error: terapErr } = await client
-    .from('terapeutas').select('id,percentual_comissao').eq('id', terapeuta_id).single()
+    .from('terapeutas').select('id,nome').eq('id', payload.terapeuta_id).single()
   if (terapErr || !terapeuta) return NextResponse.json({ error: 'Terapeuta não encontrado' }, { status: 404 })
 
-  const saleId = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  // 1. As datas precisam fazer sentido ANTES de virar pedido: recusar aqui
+  // custa um aviso; recusar na aprovação desperdiça a ida e volta inteira.
+  const datas = datasDoLancamento(payload)
+  if (datas.erro) return NextResponse.json({ error: datas.erro }, { status: 400 })
 
-  const { error: saleErr } = await client.from('sales').insert({
-    id: saleId,
-    project_id: 'proj_1',
-    nome: nome ?? '',
-    email: email ?? '',
-    telefone: telefone ?? '',
-    produto: produto ?? '',
-    plataforma: plataforma ?? 'manual',
-    valor_pago_cliente: valor_pago_cliente ?? 0,
-    valor_liquido: valor_liquido ?? 0,
-    preco_base: preco_base ?? valor_pago_cliente ?? 0,
-    data_hora: data_hora ? brasiliaLocalToISO(data_hora) : new Date().toISOString(),
-    status: 'aprovada',
-  })
-  if (saleErr) return NextResponse.json({ error: saleErr.message }, { status: 500 })
-
-  const totalSessoes = Math.max(total_sessoes ?? 1, 1)
-  const entregues = Math.min(Math.max(sessoes_entregues ?? 0, 0), totalSessoes)
-  const futuras = totalSessoes - entregues
-
-  const { comissao_por_sessao } = calcularComissao({
-    valor_liquido: valor_liquido ?? 0,
-    percentual: terapeuta.percentual_comissao as number,
-    numero_sessoes: totalSessoes,
-  })
-
-  const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000
-  const usuarioNome = (usuario as Record<string, unknown>)?.nome as string ?? usuario_email
-  const proximaMs = proxima_sessao_data ? new Date(brasiliaLocalToISO(proxima_sessao_data)).getTime() : null
-
-  function baseSessao(numero: number, dataIso: string, entregue: boolean) {
-    return {
-      sale_id: saleId,
-      terapeuta_id,
-      numero_sessao: numero,
-      total_sessoes: totalSessoes,
-      status: entregue ? 'entregue' : 'agendada',
-      status_consulta: entregue ? 'concluida' : 'aguardando',
-      data_agendada: dataIso,
-      data_entrega: entregue ? dataIso : null,
-      link_meet: null,
-      comissao_valor: comissao_por_sessao,
-      comissao_paga: false,
-      paciente_nome: nome ?? '',
-      paciente_email: email ?? '',
-      agendado_por: usuarioNome,
-      entregue_confirmado_por: entregue ? usuarioNome : null,
-      vendedor_nome: usuarioNome,
-      vendedor_email: usuario_email,
+  // 2. O paciente já tem venda do mesmo produto? Não bloqueia - comprar dois
+  // pacotes é legítimo - mas exige que quem lança tenha VISTO antes. O caso da
+  // Joicy aconteceu porque essa informação estava no sistema e não na frente
+  // de quem decidia.
+  const emailPaciente = (payload.email ?? '').trim().toLowerCase()
+  let aviso = null as ReturnType<typeof avisoDeDuplicata> | null
+  if (emailPaciente) {
+    const { data: vendas } = await client
+      .from('sales').select('id,produto,valor_pago_cliente,data_hora,status').eq('email', emailPaciente)
+    const existentes: VendaExistente[] = []
+    for (const v of (vendas ?? []) as unknown as VendaExistente[]) {
+      const { count } = await client.from('sessoes').select('*', { count: 'exact', head: true }).eq('sale_id', v.id)
+      existentes.push({ ...v, sessoes: count ?? 0 })
     }
-  }
-
-  const sessoes: ReturnType<typeof baseSessao>[] = []
-  let puladas = 0
-
-  // Sessao marcada como JA ENTREGUE nao pode cair no futuro.
-  //
-  // As entregues sao contadas de 7 em 7 dias PARA TRAS a partir da data da
-  // proxima sessao. Se essa data estiver longe o bastante, a subtracao ainda
-  // cai no futuro - e a sessao nasce "entregue" com data de entrega que ainda
-  // nao chegou. Caso real (04/09/2026): RAFAEL BUZETTI FERREIRA, lancado com
-  // proxima sessao em 17/09 e 1 entregue; a conta deu 10/09, seis dias no
-  // futuro. O estrago e triplo: ela ocupa horario na agenda (colidiu com outra
-  // paciente), conta como entregue nas metricas antes de acontecer, e gera
-  // comissao adiantada.
-  if (proximaMs !== null && entregues > 0) {
-    const maisAntigaEntregue = proximaMs - entregues * SETE_DIAS_MS
-    const maisRecenteEntregue = proximaMs - SETE_DIAS_MS
-    if (maisRecenteEntregue > Date.now()) {
-      const emBrt = (ms: number) => new Date(ms - 3 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ')
+    aviso = avisoDeDuplicata({ produto: payload.produto ?? '', vendasDoPaciente: existentes })
+    if (aviso.texto && aviso.mesmoProduto.length > 0 && !confirmou_duplicata) {
       return NextResponse.json({
-        error: `As sessões já entregues sairiam com data no futuro (a mais recente cairia em ${emBrt(maisRecenteEntregue)}), porque são contadas de 7 em 7 dias para trás a partir da próxima sessão. Informe a data da próxima sessão mais próxima, ou reduza a quantidade de sessões já entregues.`,
-        detalhe: { primeiraEntregue: emBrt(maisAntigaEntregue), ultimaEntregue: emBrt(maisRecenteEntregue) },
-      }, { status: 400 })
+        precisa_confirmar: true, aviso: aviso.texto, vendas_existentes: aviso.mesmoProduto,
+      }, { status: 409 })
     }
   }
 
-  if (proximaMs !== null) {
-    // Entregues — de 7 em 7 dias pra trás a partir da próxima sessão.
-    for (let k = entregues; k >= 1; k--) {
-      const numero = entregues - k + 1
-      const dataIso = new Date(proximaMs - k * SETE_DIAS_MS).toISOString()
-      sessoes.push(baseSessao(numero, dataIso, true))
-    }
-    // Futuras — de 7 em 7 dias pra frente a partir da próxima sessão,
-    // ou nas datas editadas manualmente se informadas.
-    const datasExplicitas = datas_futuras && datas_futuras.length === futuras
-      ? datas_futuras.map(d => new Date(brasiliaLocalToISO(d)).toISOString())
-      : null
-    for (let i = 0; i < futuras; i++) {
-      const numero = entregues + i + 1
-      const dataIso = datasExplicitas ? datasExplicitas[i] : new Date(proximaMs + i * SETE_DIAS_MS).toISOString()
-      sessoes.push(baseSessao(numero, dataIso, false))
-    }
-  } else {
-    // Sem data de referência não dá pra calcular nenhuma sessão — só a
-    // venda é criada; o resto entra depois pelo prontuário.
-    puladas = totalSessoes
-  }
-
-  if (sessoes.length > 0) {
-    const { error: insertErr } = await client.from('sessoes').insert(sessoes)
-    if (insertErr) {
-      // Sem sessão nenhuma criada, a venda manual fica órfã — melhor remover
-      // do que deixar um registro de faturamento sem paciente/sessão associada.
-      await client.from('sales').delete().eq('id', saleId)
-      return NextResponse.json({ error: insertErr.message }, { status: 500 })
-    }
-  }
-
-  // Link do Meet — não trava o lançamento se a API do Google falhar (ver
-  // lib/google-meet.ts: sem credenciais configuradas, isso é um no-op).
-  // Só faz sentido para sessões futuras (agendadas) — sessões já entregues
-  // não precisam de link de reunião.
-  for (const s of sessoes) {
-    if (s.status !== 'agendada') continue
-    const evento = await criarEventoComMeet({
-      titulo: `Sessão - ${s.paciente_nome}`,
-      inicioISO: s.data_agendada,
-      fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
+  // 3. Conflito de horário, antes de reservar. Reservar em cima de sessão
+  // existente criaria o problema que a reserva existe para evitar.
+  if (datas.futuras.length > 0) {
+    const conflitos = await buscarConflitosAgenda({
+      terapeuta_id: payload.terapeuta_id, datasISO: datas.futuras,
     })
-    if (evento) {
-      const { error: linkErr } = await client.from('sessoes')
-        .update({ link_meet: evento.meetLink, google_event_id: evento.eventId })
-        .eq('sale_id', saleId).eq('numero_sessao', s.numero_sessao)
-      // Evento já foi criado no Google nesse ponto — se salvar falhar, o
-      // evento fica órfão (existe no Calendar mas sem referência no banco).
-      // Loga pra dar pra achar/limpar depois; não trava o lançamento.
-      if (linkErr) console.error('[lancamento-manual] falha ao salvar link_meet:', linkErr)
+    if (conflitos.length > 0) {
+      return NextResponse.json({
+        error: `Horário ocupado: ${conflitos.map(c => c.descricao).join(' | ')}`,
+        conflitos,
+      }, { status: 409 })
     }
   }
 
-  await registrarAtividade({
-    usuario_nome: usuarioNome,
-    usuario_tipo: (usuario as Record<string, unknown>)?.tipo as string ?? 'admin',
-    tipo_acao: 'lancamento_manual',
-    sale_id: saleId,
-    descricao: `Lançamento manual: ${nome || '(sem nome)'} — ${entregues} entregues + ${futuras} futuras de ${totalSessoes} sessões${proxima_sessao_data ? ` (próxima em ${new Date(proximaMs as number).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })})` : ''}${puladas > 0 ? ` — ${puladas} sessão(ões) não lançada(s) por falta de data de referência` : ''}`,
-    dados_novos: { nome, email, produto, valor_pago_cliente, valor_liquido, total_sessoes: totalSessoes, sessoes_entregues: entregues, proxima_sessao_data },
-  })
+  const usuarioNome = (usuario as Record<string, unknown>)?.nome as string ?? usuario_email
 
-  return NextResponse.json({ success: true, sale_id: saleId, sessoes_criadas: sessoes.length, sessoes_puladas: puladas })
+  // 4. PRÉ-RESERVA. Um bloqueio por sessão futura, para ninguém marcar por
+  // cima enquanto o pedido espera decisão. Some na aprovação (vira sessão de
+  // verdade) e na rejeição (o horário volta a ficar livre).
+  const reservas: string[] = []
+  for (const dataISO of datas.futuras) {
+    const { data: comp, error: compErr } = await client.from('compromissos_terapeuta').insert({
+      terapeuta_id: payload.terapeuta_id,
+      titulo: `RESERVA - ${payload.nome || 'lançamento manual'} (aguardando aprovação)`,
+      inicio: dataISO,
+      fim: new Date(new Date(dataISO).getTime() + 60 * 60 * 1000).toISOString(),
+      categoria: 'compromisso',
+      criado_por_nome: usuarioNome,
+      criado_por_tipo: (usuario as Record<string, unknown>)?.tipo as string ?? 'comercial',
+      criado_por_email: usuario_email,
+    }).select('id').single()
+    if (compErr) {
+      // Reserva pela metade é pior que reserva nenhuma: desfaz o que já entrou
+      // e devolve o erro, para o comercial tentar de novo por inteiro.
+      if (reservas.length > 0) await client.from('compromissos_terapeuta').delete().in('id', reservas)
+      return NextResponse.json({ error: `Não foi possível reservar o horário: ${compErr.message}` }, { status: 500 })
+    }
+    reservas.push((comp as { id: string }).id)
+  }
+
+  const { data: sol, error: solErr } = await client.from('solicitacoes_lancamento_manual').insert({
+    payload,
+    paciente_nome: payload.nome ?? null,
+    paciente_email: payload.email ?? null,
+    produto: payload.produto ?? null,
+    valor_pago_cliente: payload.valor_pago_cliente ?? null,
+    total_sessoes: datas.totalSessoes,
+    sessoes_entregues: datas.entregues.length,
+    proxima_sessao_data: datas.futuras[0] ?? null,
+    terapeuta_id: payload.terapeuta_id,
+    terapeuta_nome: (terapeuta as { nome: string }).nome,
+    compromissos_reservados: reservas,
+    solicitado_por_nome: usuarioNome,
+    solicitado_por_email: usuario_email,
+  }).select('id').single()
+
+  if (solErr) {
+    // Sem solicitação gravada, a reserva vira bloqueio órfão na agenda: some
+    // com ela, senão o horário fica preso sem nada explicando por quê.
+    if (reservas.length > 0) await client.from('compromissos_terapeuta').delete().in('id', reservas)
+    return NextResponse.json({ error: solErr.message }, { status: 500 })
+  }
+
+  return NextResponse.json({
+    success: true,
+    aguardando_aprovacao: true,
+    solicitacao_id: (sol as { id: string }).id,
+    horarios_reservados: reservas.length,
+    sessoes_previstas: datas.entregues.length + datas.futuras.length,
+    aviso: aviso?.texto ?? null,
+  })
 }
