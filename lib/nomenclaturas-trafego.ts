@@ -19,16 +19,17 @@ export const NOMENCLATURAS_POR_PROJETO: Record<string, string[]> = {
     '[PF01_RC',  // Perpetuo - Reconquista
     // Combo Os Primeiros Passos da Restauracao, acrescentado em 09/09/2026.
     //
-    // Com o UNDERSCORE de proposito. As campanhas reais sao
-    // "CSP_Vendas_Frio_Advantage_TesteCriativo_VID_..." - CSP e prefixo. Como
-    // o casamento e por CONTEM, o termo solto "CSP" pegaria tambem qualquer
-    // campanha com "CSP" no meio de outra palavra, e a conta tem 246
-    // campanhas. O underscore prende no prefixo sem perder nenhuma das que
-    // existem hoje.
+    // Termo SOLTO, sem underscore, por decisao explicita do usuario: "TUDO QUE
+    // TIVER CSP E PARA PEGAR NO NOME DA CAMPANHA". As campanhas de hoje sao
+    // "CSP_Vendas_Frio_Advantage_..." mas ele quer garantir que qualquer
+    // variante de escrita entre - "CSP - Vendas", "[CSP] Combo", "Combo CSP".
     //
-    // Se aparecer campanha do produto escrita de outro jeito ("CSP - Vendas",
-    // "[CSP]"), ela NAO sera pega: e o momento de acrescentar a variante aqui.
-    'CSP_',
+    // O custo, registrado para nao virar surpresa: o casamento e por CONTEM,
+    // entao uma campanha com essas tres letras GRUDADAS dentro de outra
+    // palavra ("CSPX", "ACSP") tambem entraria e inflaria o investimento da
+    // tela inicial. Se o numero aparecer alto demais, este e o primeiro lugar
+    // a olhar - a conta tem 246 campanhas.
+    'CSP',
   ],
 }
 

@@ -9,7 +9,7 @@ const casa = (campanha: string, termos: string[]) =>
   termos.some(n => campanha.toLowerCase().includes(n.toLowerCase()))
 
 test('as tres nomenclaturas do projeto estao la', () => {
-  assert.deepEqual(nomenclaturasDoProjeto('proj_1'), ['[F01-IRM', '[PF01_RC', 'CSP_'])
+  assert.deepEqual(nomenclaturasDoProjeto('proj_1'), ['[F01-IRM', '[PF01_RC', 'CSP'])
 })
 
 test('projeto desconhecido cai no proj_1, como o codigo antigo fazia', () => {
@@ -17,13 +17,19 @@ test('projeto desconhecido cai no proj_1, como o codigo antigo fazia', () => {
   assert.deepEqual(nomenclaturasDoProjeto(null), nomenclaturasDoProjeto('proj_1'))
 })
 
-test('CSP_ pega as campanhas reais do combo, em qualquer caixa', () => {
-  // Nomes tirados do painel do Meta em 09/09/2026.
+test('CSP pega TUDO que tiver CSP no nome, em qualquer caixa', () => {
+  // Decisao explicita do usuario em 09/09/2026. Os dois primeiros sao nomes
+  // reais do painel do Meta; os demais sao variantes de escrita que ele quer
+  // garantir que entrem.
   const termos = nomenclaturasDoProjeto('proj_1')
   for (const nome of [
     'CSP_Vendas_Frio_Advantage_TesteCriativo_VID_01',
-    'CSP_Vendas_Frio_Advantage_TesteCriativo_VID_08',
     'csp_vendas_frio_advantage',
+    'CSP',
+    'CSP - Vendas Frio',
+    '[CSP] Combo',
+    'Combo CSP 02',
+    'Vendas CSP',
   ]) {
     assert.ok(casa(nome, termos), nome)
   }
@@ -35,23 +41,14 @@ test('as duas nomenclaturas antigas continuam pegando o que pegavam', () => {
   assert.ok(casa('[PF01_RC] Perpetuo Reconquista', termos))
 })
 
-test('o underscore evita pegar campanha que so TEM "csp" no meio', () => {
-  // Era o risco de usar "CSP" solto: a conta tem 246 campanhas e o casamento e
-  // por CONTEM. Com o underscore, nenhuma dessas entra.
+test('CUSTO CONHECIDO: sigla grudada dentro de outra palavra TAMBEM entra', () => {
+  // Consequencia aceita do termo solto. Nao e bug a corrigir - e o que o
+  // usuario pediu. Fica registrado para que, se o investimento da tela inicial
+  // aparecer alto demais, este seja o primeiro lugar a olhar: a conta tem 246
+  // campanhas.
   const termos = nomenclaturasDoProjeto('proj_1')
-  for (const nome of ['CSPX - outro produto', 'Campanha ACSP interna', 'RECSP teste']) {
-    assert.equal(casa(nome, termos), false, nome)
-  }
-})
-
-test('MAS o underscore tambem exclui variantes de escrita do MESMO produto', () => {
-  // Registrado para nao ser descoberto como surpresa: se o time nomear uma
-  // campanha do combo de outro jeito, ela NAO entra no investimento da tela
-  // inicial, e em silencio. O lugar de corrigir e acrescentar a variante na
-  // lista, nao afrouxar o termo.
-  const termos = nomenclaturasDoProjeto('proj_1')
-  for (const nome of ['CSP - Vendas Frio', '[CSP] Combo', 'Combo CSP 02']) {
-    assert.equal(casa(nome, termos), false, nome)
+  for (const nome of ['CSPX - outro produto', 'Campanha ACSP interna']) {
+    assert.ok(casa(nome, termos), `${nome} entra, e isso e esperado`)
   }
 })
 
