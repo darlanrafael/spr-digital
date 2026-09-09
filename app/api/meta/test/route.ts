@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { nomenclaturasDoProjeto } from '@/lib/nomenclaturas-trafego'
 
-const NOMENCLATURAS = ['[F01-IRM', '[PF01_RC']
+// Mesma lista da tela inicial, de um lugar so - antes eram duas copias.
+const NOMENCLATURAS = nomenclaturasDoProjeto('proj_1')
 
 export async function GET(req: NextRequest) {
   const token = process.env.META_ACCESS_TOKEN ?? null

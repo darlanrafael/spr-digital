@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getProjectInvestment } from '@/lib/meta'
+import { nomenclaturasDoProjeto } from '@/lib/nomenclaturas-trafego'
 
 export const revalidate = 300
-
-// Nomenclaturas por projeto — fallback enquanto não buscamos do Supabase
-const PROJECT_NOMENCLATURAS: Record<string, string[]> = {
-  'proj_1': ['[F01-IRM', '[PF01_RC'],
-}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -24,7 +20,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ total: 0, campanhas: [], erro: 'Token não configurado' })
   }
 
-  const nomenclaturas = PROJECT_NOMENCLATURAS[projectId] ?? PROJECT_NOMENCLATURAS['proj_1']
+  const nomenclaturas = nomenclaturasDoProjeto(projectId)
 
   try {
     const result = await getProjectInvestment(
