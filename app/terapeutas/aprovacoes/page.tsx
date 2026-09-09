@@ -77,6 +77,10 @@ export default function TerapeutasAprovacoes() {
   const [ocorrenciasErro, setOcorrenciasErro] = useState('')
   const [estornos, setEstornos] = useState<AlertaEstorno[]>([])
   const [lancamentos, setLancamentos] = useState<Record<string, unknown>[]>([])
+  // Sem isto, o lancamento SOME da tela depois de decidido: a API ja devolvia o
+  // historico e a tela lia so os pendentes. O usuario aprovou o primeiro e nao
+  // achou mais nada.
+  const [lancHistorico, setLancHistorico] = useState<Record<string, unknown>[]>([])
   const [lancDecidindo, setLancDecidindo] = useState<string | null>(null)
   const [lancMotivo, setLancMotivo] = useState('')
   const [lancErro, setLancErro] = useState('')
@@ -122,7 +126,10 @@ export default function TerapeutasAprovacoes() {
     try {
       const r4 = await fetch(`/api/terapeutas/aprovacoes/lancamento-manual?usuario_email=${encodeURIComponent(adminEmail)}`, { cache: 'no-store' })
       const j4 = await r4.json()
-      if (r4.ok) setLancamentos(j4.pendentes ?? [])
+      if (r4.ok) {
+        setLancamentos(j4.pendentes ?? [])
+        setLancHistorico(j4.historico ?? [])
+      }
     } catch { /* secao fica vazia */ }
 
     // Estorno na plataforma com sessao futura. Mesmo tratamento da conferencia
@@ -463,6 +470,49 @@ export default function TerapeutasAprovacoes() {
                               className="flex-1 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg">Aprovar e criar</button>
                           </div>
                         )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {lancHistorico.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Lançamentos manuais já decididos</h2>
+                <p className="text-[11px] text-gray-600 mb-3">Registro do que você aprovou ou recusou.</p>
+                <div className="bg-gray-900 border border-white/10 rounded-xl divide-y divide-white/5">
+                  {lancHistorico.map(l => {
+                    const aprovado = l.status === 'aprovado'
+                    const sessoes = Number(l.sessoes_criadas ?? 0)
+                    return (
+                      <div key={String(l.id)} className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm text-gray-200">{String(l.paciente_nome ?? '(sem nome)')}</p>
+                            <p className="text-[11px] text-gray-500">{String(l.produto ?? '-')} · {fmtBRL(Number(l.valor_pago_cliente ?? 0))} · {String(l.terapeuta_nome ?? '-')}</p>
+                          </div>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border shrink-0 ${
+                            aprovado ? 'bg-green-500/20 text-green-300 border-green-500/40'
+                            : 'bg-red-500/20 text-red-300 border-red-500/40'}`}>
+                            {aprovado ? 'Aprovado' : 'Recusado'}
+                          </span>
+                        </div>
+                        <div className="mt-2 space-y-0.5 text-[11px] text-gray-400">
+                          <p>Pedido por {String(l.solicitado_por_nome ?? '-')} · decidido por {String(l.decidido_por_nome ?? '-')} em {fmtDt(String(l.decidido_em ?? l.created_at))}</p>
+                          {aprovado && (
+                            /* Zero sessoes acontece quando o pedido veio sem a
+                               data da primeira sessao - o campo e opcional. A
+                               venda existe e as sessoes precisam ser agendadas
+                               pelo prontuario. Foi o caso do primeiro uso real. */
+                            <p className={sessoes === 0 ? 'text-amber-400' : ''}>
+                              {sessoes === 0
+                                ? 'Venda criada SEM sessão: o pedido veio sem a data da 1ª sessão. Precisa agendar pelo prontuário.'
+                                : `${sessoes} ${sessoes === 1 ? 'sessão criada' : 'sessões criadas'}`}
+                            </p>
+                          )}
+                          {l.justificativa_decisao ? <p className="text-gray-300">&ldquo;{String(l.justificativa_decisao)}&rdquo;</p> : null}
+                        </div>
                       </div>
                     )
                   })}

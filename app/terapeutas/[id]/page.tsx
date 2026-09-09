@@ -666,6 +666,10 @@ export default function PainelTerapeuta() {
 
   // Editar dados do paciente (nome/e-mail/telefone) no cabeçalho do prontuário
   const [editandoPaciente, setEditandoPaciente] = useState(false)
+  // Por que os dados estao mudando. Obrigatorio quando muda nome ou e-mail -
+  // ver a rota, e o caso de 04/08/2026 que sobrescreveu uma paciente inteira
+  // sem deixar nada visivel no prontuario.
+  const [editMotivo, setEditMotivo] = useState('')
   const [editNome, setEditNome] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editTelefone, setEditTelefone] = useState('')
@@ -1384,6 +1388,13 @@ export default function PainelTerapeuta() {
     loadData()
   }
 
+  // Muda a IDENTIDADE (nome ou e-mail), nao so um telefone ou acento. A mesma
+  // pergunta que a rota faz antes de exigir o motivo.
+  const mudouIdentidadePaciente = !!prontuarioSaleMaisRecente && (
+    editNome.trim() !== (prontuarioSaleMaisRecente.nome ?? '').trim()
+    || editEmail.trim().toLowerCase() !== (prontuarioSaleMaisRecente.email ?? '').trim().toLowerCase()
+  )
+
   async function handleEditarPaciente(senha: string) {
     if (!prontuarioSaleMaisRecente) return
     setEditLoading(true); setEditErro('')
@@ -1395,6 +1406,7 @@ export default function PainelTerapeuta() {
         nome: editNome,
         email: editEmail,
         telefone: editTelefone,
+        motivo: editMotivo,
         senha,
         token: sessionToken,
         usuario_nome: sessionNome || adminEmail.split('@')[0],
@@ -2611,6 +2623,7 @@ export default function PainelTerapeuta() {
                         setEditEmail(prontuarioSaleMaisRecente.email)
                         setEditTelefone(prontuarioSaleMaisRecente.telefone ?? '')
                         setEditErro('')
+                        setEditMotivo('')
                         setEditandoPaciente(true)
                       }} className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">
                         ✏️ Editar
@@ -2620,6 +2633,28 @@ export default function PainelTerapeuta() {
 
                   {editandoPaciente ? (
                     <div className="bg-gray-800/50 border border-white/5 rounded-xl p-4 space-y-3">
+                      {/* O motivo so aparece quando a IDENTIDADE muda: corrigir
+                          um telefone ou um acento no nome nao precisa de
+                          justificativa. Trocar quem a pessoa e, precisa - foi
+                          essa acao que sobrescreveu uma paciente pela outra em
+                          04/08/2026, sem deixar nada visivel no prontuario. */}
+                      {mudouIdentidadePaciente && (
+                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+                          <p className="text-[11px] text-amber-300 font-medium">
+                            Você está trocando quem é o paciente deste prontuário
+                          </p>
+                          <p className="text-[11px] text-amber-400/80">
+                            A compra continua sendo de <strong>{prontuarioSaleMaisRecente.nome}</strong> ({prontuarioSaleMaisRecente.email}).
+                            Escreva o que está acontecendo - isso vira uma nota no prontuário, visível para o terapeuta.
+                          </p>
+                          <input type="text" value={editMotivo} onChange={e => setEditMotivo(e.target.value)}
+                            placeholder="Ex: a esposa comprou a sessão para o marido; o atendimento é dele"
+                            className="w-full bg-gray-700 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500/50" />
+                          {editMotivo.trim().length > 0 && editMotivo.trim().length < 10 && (
+                            <p className="text-[11px] text-amber-400">Escreva um pouco mais - pelo menos 10 letras.</p>
+                          )}
+                        </div>
+                      )}
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
                           <label className="text-[10px] text-gray-500 block mb-1">Nome <span className="text-red-400">*</span></label>

@@ -18,8 +18,10 @@ export async function PUT(req: NextRequest) {
       usuario_nome: string
       usuario_tipo: string
       usuario_email: string
+      /** Por que os dados estao mudando. Obrigatoria quando muda nome ou e-mail. */
+      motivo?: string
     }
-    const { sale_id, nome, email, telefone, senha, token, usuario_nome, usuario_tipo, usuario_email } = body
+    const { sale_id, nome, email, telefone, senha, token, usuario_nome, usuario_tipo, usuario_email, motivo } = body
 
     if (!sale_id || !nome?.trim() || !email?.trim()) {
       return NextResponse.json({ error: 'Nome e e-mail são obrigatórios' }, { status: 400 })
@@ -34,7 +36,29 @@ export async function PUT(req: NextRequest) {
     const supabase = getSupabaseAdmin()
 
     const { data: anterior } = await supabase
-      .from('sales').select('nome,email,telefone').eq('id', sale_id).single()
+      .from('sales').select('nome,email,telefone,produto,plataforma,valor_pago_cliente,data_hora').eq('id', sale_id).single()
+
+    // Trocar NOME ou E-MAIL exige motivo escrito.
+    //
+    // E a acao que, em 04/08/2026, sobrescreveu uma paciente inteira pela
+    // outra - nome, e-mail e telefone de uma vez - sem deixar nada visivel no
+    // prontuario. A unica razao de ter sido possivel reconstruir o caso e que
+    // as sessoes ainda guardavam o nome antigo, por causa de OUTRO defeito
+    // (corrigido em d238ef5). Sem aquele defeito, nao haveria rastro nenhum.
+    //
+    // O caso legitimo que motivou o campo (usuario, 09/09/2026): a esposa
+    // comprou a sessao para o marido, e o comercial precisa deixar os dados
+    // DELE no prontuario mantendo registrado quem comprou, com qual e-mail e
+    // em qual plataforma. Antes disso so dava para escolher entre uma coisa e
+    // outra.
+    const a = anterior as { nome?: string; email?: string } | null
+    const mudouIdentidade = !!a && (a.nome?.trim() !== nome.trim() || a.email?.trim().toLowerCase() !== email.trim().toLowerCase())
+    if (mudouIdentidade && (motivo ?? '').trim().length < 10) {
+      return NextResponse.json({
+        error: 'Trocar o nome ou o e-mail do paciente exige uma justificativa (mínimo 10 letras). Escreva o que está acontecendo - por exemplo, quem comprou e por que o atendimento é de outra pessoa.',
+        precisa_motivo: true,
+      }, { status: 400 })
+    }
 
     const { data: sale, error: updErr } = await supabase
       .from('sales')
@@ -69,12 +93,39 @@ export async function PUT(req: NextRequest) {
       }, { status: 500 })
     }
 
+    // A nota fica no PRONTUARIO, nao so no log de atividades. O log e para
+    // auditoria; o prontuario e o que o terapeuta e o comercial leem antes de
+    // atender. Guardar quem comprou so no log significa que ninguem ve.
+    if (mudouIdentidade && a) {
+      const v = anterior as Record<string, unknown>
+      const compradoEm = v.data_hora ? new Date(new Date(v.data_hora as string).getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10).split('-').reverse().join('/') : '?'
+      await supabase.from('ocorrencias_prontuario').insert({
+        sale_id,
+        tipo: 'nota',
+        titulo: 'Dados do paciente alterados',
+        descricao:
+          `Os dados deste prontuário passaram a ser de "${nome.trim()}" (${email.trim()}). ` +
+          `A COMPRA foi feita por "${a.nome ?? '?'}" (${a.email ?? '?'}), ` +
+          `${v.produto ?? 'produto não informado'}, ${v.valor_pago_cliente ? `R$ ${Number(v.valor_pago_cliente).toLocaleString('pt-BR')}` : 'valor não informado'}, ` +
+          `plataforma ${v.plataforma ?? '?'}, em ${compradoEm}. ` +
+          `Motivo informado por ${usuario_nome}: ${(motivo ?? '').trim()}`,
+        dados_extras: {
+          antes: { nome: a.nome, email: a.email, telefone: (anterior as { telefone?: string }).telefone },
+          depois: { nome: nome.trim(), email: email.trim(), telefone },
+          motivo: (motivo ?? '').trim(),
+        },
+        criado_por_nome: usuario_nome,
+        criado_por_tipo: usuario_tipo,
+        criado_por_email: usuario_email,
+      })
+    }
+
     await registrarAtividade({
       usuario_nome,
       usuario_tipo,
       tipo_acao: 'paciente_editado',
       sale_id,
-      descricao: `Dados do paciente editados: ${anterior?.nome ?? '?'} → ${nome.trim()} (${sessoesAtualizadas ?? 0} ${sessoesAtualizadas === 1 ? 'sessão atualizada' : 'sessões atualizadas'})`,
+      descricao: `Dados do paciente editados: ${a?.nome ?? '?'} → ${nome.trim()} (${sessoesAtualizadas ?? 0} ${sessoesAtualizadas === 1 ? 'sessão atualizada' : 'sessões atualizadas'})${mudouIdentidade ? ` — motivo: ${(motivo ?? '').trim()}` : ''}`,
       dados_anteriores: anterior ?? undefined,
       dados_novos: { nome: nome.trim(), email: email.trim(), telefone },
     })
