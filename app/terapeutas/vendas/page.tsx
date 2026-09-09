@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
+import { terapeutaSugerido, avisoTerapeutaDivergente } from '@/lib/terapeuta-da-venda'
 import { brutoDoPacote } from '@/lib/dinheiro-do-pacote'
 import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda, avisosDasDatas } from '@/lib/diagnostico-guiado'
@@ -492,7 +493,9 @@ export default function TerapeutasVendas() {
       const json = await res.json() as PageData
       setPageData(json)
       if (json.terapeutas.length > 0 && !agendarTerapeutaId) {
-        setAgendarTerapeutaId(json.terapeutas[0].id)
+        // Nao assume terapeuta aqui: quem decide e o produto da venda, no
+        // momento em que o modal abre.
+        setAgendarTerapeutaId('')
       }
     } catch (e) {
       setErro(String(e))
@@ -678,6 +681,17 @@ export default function TerapeutasVendas() {
       ? { saleId: agendarVendaId, sessoes: Number(qtdInformadaInput), justificativa: qtdInformadaMotivo }
       : null,
   }), [agendarVenda, agendarVendaId, agendarDiagnostico, pageData, pacoteResposta, agendarConflitoCompromisso, qtdInformadaInput, qtdInformadaMotivo])
+
+  // Agendar num terapeuta que o produto nao nomeia continua permitido -
+  // remanejo e legitimo - mas nao em silencio: a comissao sai do percentual de
+  // quem for escolhido.
+  const avisoTerapeuta = agendarVenda
+    ? avisoTerapeutaDivergente({
+        produto: agendarVenda.produto,
+        terapeutaEscolhido: pageData.terapeutas.find(t => t.id === agendarTerapeutaEfetivo) ?? null,
+        terapeutas: pageData.terapeutas,
+      })
+    : null
 
   const agendarCandidataPacote = decisaoPacote.candidata
   const agendarConfere = decisaoPacote.confere
@@ -1266,7 +1280,15 @@ export default function TerapeutasVendas() {
                                 ) : (
                                 <button onClick={() => {
                                   setAgendarVendaId(sale.id)
-                                  setAgendarTerapeutaId(pageData.terapeutas[0]?.id ?? '')
+                                  // O padrao vem do PRODUTO da venda. Antes era
+                                  // `terapeutas[0]`, e a lista chega ordenada
+                                  // por nome - ou seja, sempre a Denise. Quem
+                                  // agendava uma venda do Pedro e nao trocava o
+                                  // campo mandava a sessao para a agenda dela,
+                                  // com os 30% de comissao dela. Aconteceu com
+                                  // a Ana Assis e a Joicy: 4 sessoes,
+                                  // R$ 781,43. Ver lib/terapeuta-da-venda.ts.
+                                  setAgendarTerapeutaId(terapeutaSugerido(sale.produto, pageData.terapeutas)?.id ?? '')
                                   setAgendarDataPrimeira(''); setAgendarErro(''); setAgendarSubstituicaoCiente(false)
                                   setAgendarNumSessoesInput(String(inferirNumeroSessoesPorValor(sale, [...pageData.vendas_pendentes, ...pageData.vendas_ativos])))
                                 }} className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap">
@@ -1490,8 +1512,17 @@ export default function TerapeutasVendas() {
                   <label className="text-xs text-gray-400 block mb-1">Terapeuta <span className="text-red-400">*</span></label>
                   <select value={agendarTerapeutaId} onChange={e => setAgendarTerapeutaId(e.target.value)}
                     className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
+                    {/* Opcao vazia de proposito: no produto conjunto e no que
+                        nao nomeia ninguem, o campo abre em branco e obriga a
+                        escolha. Chutar ali foi como o defeito comecou. */}
+                    <option value="">Selecione o terapeuta</option>
                     {pageData.terapeutas.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
                   </select>
+                  {avisoTerapeuta && (
+                    <p className="mt-1.5 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
+                      {avisoTerapeuta}
+                    </p>
+                  )}
                 </div>
               )}
               <div>
