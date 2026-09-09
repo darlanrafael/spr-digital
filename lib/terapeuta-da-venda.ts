@@ -12,7 +12,7 @@
 // O padrão do campo passa a vir do PRODUTO da venda. Continua editável -
 // remanejar terapeuta é legítimo e acontece - mas o caminho de menor
 // resistência deixa de levar para o lugar errado.
-import { ehDiagnosticoGuiado } from './vendas-por-situacao'
+import { ehDiagnosticoGuiado, ehMentoriaEmGrupo } from './vendas-por-situacao'
 
 export type TerapeutaDaLista = { id: string; nome: string }
 
@@ -42,8 +42,17 @@ export function terapeutasDoProduto(produto: string, terapeutas: TerapeutaDaList
 export function terapeutaSugerido(produto: string, terapeutas: TerapeutaDaLista[]): TerapeutaDaLista | null {
   if (!produto?.trim()) return null
 
-  // O Diagnóstico Guiado não traz nome de terapeuta no produto, e quem SEMPRE
-  // começa o pacote é o Pedro - agendar por ele cria as sessões dos dois.
+  // MENTORIA EM GRUPO não é agendamento individual e NUNCA chega aqui: ela sai
+  // de Pendentes em `ehPendenteDeAgendamento`, então o modal não abre para ela.
+  // A resposta é `null` por correção, não porque alguém vá usá-la - e para que
+  // ninguém leia esta função e conclua que grupo é agendável.
+  if (ehMentoriaEmGrupo(produto)) return null
+
+  // O DIAGNÓSTICO GUIADO envolve os DOIS terapeutas: o Pedro faz as primeiras
+  // sessões e a Denise as demais, conforme o formato. O select nem aparece no
+  // modal para esse produto (`{!agendarDiagnostico && ...}`) - quem divide o
+  // pacote é a rota de agendar. O Pedro aqui é só o `terapeuta_id` que a rota
+  // exige no corpo, e ele é sempre quem começa; não é escolha de terapeuta.
   if (ehDiagnosticoGuiado(produto)) {
     return terapeutas.find(t => primeiroNome(t.nome) === 'pedro') ?? null
   }

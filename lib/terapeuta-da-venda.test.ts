@@ -23,9 +23,16 @@ test('venda da Denise abre com a Denise', () => {
 })
 
 test('as outras variantes do nome do produto tambem sao reconhecidas', () => {
-  // Existem quatro nomes diferentes para o mesmo produto na base.
+  // Existem varias grafias do mesmo produto na base.
   assert.equal(terapeutaSugerido('Mentoria - Individual Pedro Roncada', LISTA)?.id, 'pedro')
-  assert.equal(terapeutaSugerido('Mentoria em grupo- Pedro Roncada', LISTA)?.id, 'pedro')
+})
+
+test('MENTORIA EM GRUPO nao sugere ninguem: nao e agendamento individual', () => {
+  // Ela sai de Pendentes em `ehPendenteDeAgendamento`, entao o modal nunca
+  // abre para ela. O `null` e por correcao, para ninguem ler esta funcao e
+  // concluir que grupo e agendavel.
+  assert.equal(terapeutaSugerido('Mentoria em grupo- Pedro Roncada', LISTA), null)
+  assert.equal(terapeutaSugerido('MENTORIA EM GRUPO - PEDRO RONCADA', LISTA), null)
 })
 
 test('produto CONJUNTO nao sugere ninguem: a escolha tem de ser consciente', () => {
@@ -33,9 +40,19 @@ test('produto CONJUNTO nao sugere ninguem: a escolha tem de ser consciente', () 
   assert.equal(terapeutasDoProduto('Mentoria Particular - Pedro | Denise', LISTA).length, 2)
 })
 
-test('Diagnostico Guiado abre com o Pedro: e ele quem sempre comeca o pacote', () => {
+test('Diagnostico Guiado: envolve OS DOIS, e o select nem aparece no modal', () => {
+  // O Pedro faz as primeiras sessoes e a Denise as demais, conforme o formato.
+  // Quem divide o pacote e a rota de agendar. O Pedro aqui e so o
+  // `terapeuta_id` que a rota exige no corpo, e ele e sempre quem comeca.
   const r = terapeutaSugerido('Diagnóstico Guiado: Programa de acompanhamento Individual', LISTA)
   assert.equal(r?.id, 'pedro')
+  // E por isso o produto NAO gera aviso de divergencia com nenhum dos dois.
+  for (const t of LISTA) {
+    assert.equal(avisoTerapeutaDivergente({
+      produto: 'Diagnóstico Guiado: Programa de acompanhamento Individual',
+      terapeutaEscolhido: t, terapeutas: LISTA,
+    }), null, t.nome)
+  }
 })
 
 test('produto sem nome de terapeuta nenhum nao chuta', () => {
