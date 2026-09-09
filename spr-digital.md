@@ -3302,3 +3302,133 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     4. **A Joicy tem 4 sessoes entregues e comprou 1 pacote de 2.** Duas sao da venda real (julho) e duas do lancamento manual (agosto, confirmadas pelo proprio Pedro). Nao e duplicata de registro - sao atendimentos diferentes. Falta entender a compra.
     5. **Autenticacao dos `GET`** de `/vendas` e `/aprovacoes` continua inexistente. O `GET` de pacote e o de estornos ganharam checagem por usuario ativo, que nao e autenticacao de verdade.
     6. As pendencias antigas da secao 46.11 seguem validas.
+
+51. **03-04/09/2026 - TRANSCRICAO INTEGRAL DAS SESSOES DO PEDRO: investigacao tecnica, medicao real e os achados de privacidade que mudam o desenho.** Nenhum codigo foi escrito ainda - a decisao de construir depende de escolhas do usuario que continuam abertas. Este item existe para que a investigacao nao precise ser refeita.
+
+    **O pedido do usuario:** *"inserir nas sessoes do Pedro algum mecanismo pra que consigamos gravar, ou transcrever cem por cento a reuniao de cada sessao. Nao e criar um resumo, e transcrever cem por cento a sessao do inicio ao fim."*
+
+    ---
+
+    ## 51.1. O que existe hoje na conta
+
+    A conta de servico do Google do projeto (`GOOGLE_MEET_SERVICE_ACCOUNT_EMAIL`) tem delegacao **apenas para `calendar`**. Testado: pedir o escopo `meetings.space.readonly` devolve `unauthorized_client`, e `drive.readonly` tambem. **Qualquer caminho pela API do Meet ou do Drive exige liberacao no painel do Workspace primeiro** - e configuracao do administrador, nao codigo.
+
+    ---
+
+    ## 51.2. Resumo e transcricao sao DUAS funcoes diferentes do Meet
+
+    O usuario levantou a duvida certa (*"o Google traz um resumo do que foi falado, e nao uma transcricao"*) e a resposta e: as duas existem, e a mais divulgada e a do resumo.
+
+    | Funcao | O que gera |
+    |---|---|
+    | **Anotacoes com IA** (Gemini) | resumo com secoes "Resumo, Detalhes, Proximas etapas". **Nao serve**: e interpretacao, nao registro |
+    | **Transcricoes** | Google Doc com a fala corrida, do comeco ao fim, marcando quem falou e a hora |
+
+    Confirmado nos prints do usuario: o painel de anotacoes mostrava "Idioma da reuniao: **Portugues (Alfa)**" - alfa e o estagio mais cru que o Google usa - e o documento gerado tinha uma guia "Transcricao" separada da guia "Observacoes".
+
+    ---
+
+    ## 51.3. A qualidade do Meet, medida em duas gravacoes reais
+
+    Duas transcricoes do Meet foram analisadas (reunioes de 27/07 e 11/08, a segunda com 2h22).
+
+    **O que funciona:** separacao de quem falou correta e consistente; trechos longos legiveis; jargao de negocio sobrevive (funil, upsell, webinario, CPM, CAC, criativos, VSL, brandbook).
+
+    **O que quebra:**
+
+    1. **Fala sobreposta vira picadinho.** Ele ordena por palavra, nao por turno. Duas frases inteiras picadas e embaralhadas ficam ilegiveis.
+    2. **Numeros e horas sao um desastre:** "me 10 do meio de 40 a 1330", "R$ 30 ver", "Me:40".
+    3. **Nomes proprios erram sempre:** a plataforma **Hubla** virou "rubla" e "rubula"; Reinaldo virou Renaldo e Rinaldo; **SOS Roncada** apareceu como "SOS Aroncada", "SS Voncada", "SOS FCA", "SOS com cada" e "SOS com CAD" - **cinco grafias do mesmo produto, o que sozinho inviabiliza busca por termo**.
+    4. **Ele inventa outro idioma.** Ha "Так", "Что?", "Да", "Угм" (russo) e "อ" (tailandes) no meio do texto portugues. Quando o audio fica ruim, o modelo chuta em outra lingua em vez de admitir que nao entendeu.
+    5. **O documento e editavel.** O proprio rodape avisa: "As pessoas tambem podem alterar o texto depois". Para prontuario clinico, registro alteravel sem rastro e problema.
+
+    ---
+
+    ## 51.4. O TESTE COM MODELO LOCAL, e por que ele mudou a recomendacao
+
+    Feito na maquina do usuario (Apple M4 Pro, 24 GB), com `whisper.cpp` e o modelo `large-v3-turbo`. **O audio nunca saiu da maquina.**
+
+    **Desempenho medido:** 3 minutos de audio em 23 segundos; a gravacao inteira de **2h05 em 6 minutos e meio** - cerca de 18x o tempo real. Extrapolando: **uma sessao de terapia de 50 minutos leva menos de 3 minutos para transcrever**. O ventilador liga porque a carga esta na GPU (o CPU ficou em 7%).
+
+    **Comparacao no MESMO audio:**
+
+    ```
+    Meet:   Reinaldo: Cara,
+            Pedro:    O que que eu?
+            Reinaldo: por mim e Oi.
+            Pedro:    Pode falar, pode falar.
+            Reinaldo: nao ia falar que por mim e aquilo la...
+
+    Local:  "Cara, pra mim e... Oi? So falar. Nao, eu ia falar que por mim
+             e aquilo la que a gente desenhou no Miro mesmo."
+    ```
+
+    | | Meet | Local |
+    |---|---|---|
+    | Texto corrido e legivel | nao (picotado) | **sim** |
+    | Sabe quem falou | **sim** | nao |
+    | Inventa outro idioma | sim | nao |
+    | Nome proprio consistente | nao (4 grafias de "Reinaldo") | **sim (26 de 26)** |
+    | Trava e repete | nao | sim (2,5% das frases) |
+    | Audio sai da maquina | sim | **nao** |
+    | Custo | zero | zero |
+
+    **Dois achados que so apareceram no teste completo:**
+
+    - **Nao picar o audio.** Na amostra de 3 minutos o modelo escreveu "nao **concordo** de mentoria com SOS"; rodando a gravacao inteira, escreveu "nao **concorre**" - o certo. Ele usa o contexto do que vem depois para decidir o que veio antes.
+    - **Ele alucina em silencio.** No trecho mudo do fim, inventou "Legenda por Sonia Ruberti". E falha conhecida desses modelos e some com filtro de silencio.
+
+    ---
+
+    ## 51.5. O ACHADO QUE MUDA O DESENHO: o que a gravacao capturou
+
+    Mais importante que a precisao. Na gravacao de 11/08 (2h22), a transcricao contem:
+
+    - **No comeco:** um bloco que **nao e a reuniao** - fala de metodologia, pilares, fases da restauracao, um caso de quatro anos de separacao. Ou seja, **atendimento**. Atribuido ao participante errado. Junto, conversa domestica (loja, prato, vassoura, "filha, para de fazer isso").
+    - **No fim, a partir de 02:15:** a reuniao acabou e o microfone nao. Sete minutos de **conversa particular de familia** - escola de uma crianca, dificuldade, avaliacao psicologica, o nome dela.
+    - E, nos ultimos minutos, alguem diz - e o modelo captou: **"eu nao sabia que eu estava gravando"**.
+
+    E a configuracao do proprio Meet, no print do usuario: **"As anotacoes serao enviadas para os convidados na sua organizacao"**.
+
+    **Isto nao e defeito de transcricao. E a natureza da coisa: ela grava enquanto o microfone estiver aberto e nao sabe quando a sessao comecou nem quando acabou.** Numa sessao de terapia significa que o que o terapeuta falar antes de o paciente entrar, depois de ele sair, ou qualquer coisa audivel na casa dele, entra no prontuario de um paciente. **Se a fala de um paciente vazar para o prontuario de outro, e quebra de sigilo entre pacientes.**
+
+    **Requisitos que isso impoe, se o projeto seguir:**
+    1. Comeco e fim precisos, amarrados ao horario que ja esta no sistema - nao ao microfone.
+    2. Nada antes, nada depois: um intervalo de silencio no comeco e no fim, descartado.
+    3. Uma sessao, um arquivo, um paciente. Sem documento compartilhado com "os convidados da organizacao".
+
+    **Outra armadilha operacional medida:** o audio da gravacao comeca **16 minutos depois** do que a transcricao registra. Transcricao e gravacao sao botoes separados e **nao ficam em sincronia**. Para prontuario, isso e perda de sessao.
+
+    ---
+
+    ## 51.6. Gravar sem o indicador visivel
+
+    Perguntado pelo usuario, que queria evitar que o paciente travasse na frente da camera - com a ressalva de que notificaria e de que ha clausula assinada.
+
+    **Pelo Meet nao da:** o aviso de gravacao e obrigatorio e nao tem como desligar, nem por administrador nem por API. **Fora do Meet da:** gravando o audio na maquina do Pedro, com programa local.
+
+    **A ressalva registrada na epoca:** conteudo de sessao e dado sensivel de saude, e a LGPD exige consentimento **especifico e destacado** para essa categoria - clausula generica dentro do termo de atendimento provavelmente nao cumpre. Alem disso, o conselho profissional do Pedro tem regras proprias, e quem responde num processo etico e o registro dele.
+
+    **O usuario respondeu:** *"quanto a isso pode ficar despreocupado. temos todo um time juridico e fazemos tudo conforme manda a lei e a LGPD."* **Decisao dele, assunto encerrado.** Registrado aqui apenas para que a discussao nao se repita.
+
+    ---
+
+    ## 51.7. Recomendacao e o que falta decidir
+
+    **Caminho recomendado: tudo local.** Nao por economia - o custo dos dois caminhos e proximo - mas porque **apaga o problema juridico inteiro**: sem terceiro envolvido, nao ha contrato de tratamento de dados, nao ha pergunta sobre retencao do fornecedor, e nao ha audio de paciente trafegando. O modelo local ja provou velocidade e qualidade suficientes na maquina que existe.
+
+    **A alternativa** (AssemblyAI, Deepgram) custaria **R$ 70 a 180/mes** no volume atual e ja vem com separacao de vozes pronta.
+
+    **O que falta, e e o unico bloqueio tecnico:** o modelo local **nao diz quem falou**. Falta testar um separador de vozes rodando local sobre a mesma gravacao. Se ele separar tres pessoas se atropelando numa reuniao, com duas pessoas numa terapia acerta com folga - sessao de terapia e o caso FACIL: uma pessoa por vez, turnos longos, sem interrupcao.
+
+    **Expectativa correta a manter com o usuario:** transcricao integral, sim - nada resumido, nada cortado. **Precisao de 100%, nao.** Reconhecimento de fala erra palavra, e sessao de terapia e o pior cenario acustico: choro, voz baixa, pausa longa, fala emocionada.
+
+    ---
+
+52. **09/09/2026 - os tres scripts de correcao em lote que ficaram versionados.** Todos rodam em **ensaio por padrao** e so gravam com `--gravar`. Ficam no repositorio de proposito: sao o molde para a proxima correcao em lote, e o registro do que foi feito.
+
+    | Script | O que faz | Trava de seguranca |
+    |---|---|---|
+    | `scripts/mover-1900-para-1920.ts` | moveu 12 sessoes do Pedro das 19:00 para 19:20, no banco e no Google | move o evento existente em vez de recriar - recriar trocaria o link do Meet de todos os pacientes por 20 minutos |
+    | `scripts/sincronizar-nome-nas-sessoes.ts` | sincronizou 13 sessoes de 5 pacientes com o nome corrigido na venda | **so sincroniza quando o E-MAIL bate**; nome diferente com e-mail diferente e outra pessoa. A trava isolou sozinha o caso Joicy/Ana Assis |
+    | `scripts/corrigir-terapeuta-4-sessoes.ts` | moveu 4 sessoes da Denise para o Pedro e zerou R$ 781,43 de comissao | **procura pelo criterio, nao por ids fixos**; se o dado mudou desde a auditoria, e melhor nao achar do que corrigir errado. Recusa mexer em comissao ja paga |
