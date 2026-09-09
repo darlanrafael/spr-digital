@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes , avisosDasDatas } from './diagnostico-guiado'
+import { readFileSync } from 'node:fs'
+import { formatoDaVenda, montarPacote, PAGAMENTO_DENISE_POR_SESSAO, quebraIntervalo, novasDatasSeguintes, avisosDasDatas, formatoDoNomeDaOferta } from './diagnostico-guiado'
 
 const venda = (order_id: string | undefined, id = 'v1') => ({ id, order_id }) as never
 
@@ -327,4 +328,79 @@ test('sobreposicao continua valendo com as datas fora de ordem', () => {
   const a = avisosDasDatas(['2026-09-02T14:00', '2026-09-20T14:30', '2026-09-20T14:00'])
   assert.deepEqual(a.duplicadas, [3])
   assert.deepEqual(a.foraDeOrdem, [3])
+})
+
+// ── O formato pelo NOME da oferta (Kiwify) ──────────────────────────────────
+test('CASO REAL: Ibraim, primeira venda de Diagnostico pela Kiwify', () => {
+  // O order_id da Kiwify e so o numero do pedido - a oferta nunca vai grudada
+  // nele como na Hubla. A tela mostrava "Oferta nao mapeada" e mostraria em
+  // toda venda da Kiwify daqui pra frente.
+  const f = formatoDaVenda({
+    id: 'ibraim', order_id: '3783277c-b14c-4d5b-bf97-7c424d304a88', oferta_nome: 'FORMATO 2',
+  } as never)
+  assert.equal(f?.formato, 2)
+  assert.equal(f?.totalSessoes, 4)
+  assert.equal(f?.sessoesPedro, 1)
+})
+
+test('o ID da oferta continua ganhando do nome', () => {
+  // Na Hubla o ID e estavel e nao depende de ninguem escrever o nome direito.
+  // Se o nome contradisser o ID, vale o ID.
+  const f = formatoDaVenda({
+    id: 'x', order_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee-WXwmPZfJxGqeXerA6dkO',
+    oferta_nome: 'FORMATO 3',
+  } as never)
+  assert.equal(f?.formato, 1, 'o ID diz formato 1, o nome diz 3: vale o ID')
+})
+
+test('a excecao por venda continua ganhando de tudo', () => {
+  const f = formatoDaVenda({
+    id: '27a669a3-dad9-4c8f-ae93-bca82bb13e90', order_id: null, oferta_nome: 'FORMATO 3',
+  } as never)
+  assert.equal(f?.formato, 1, 'a Paula e excecao mapeada como formato 1')
+})
+
+test('a leitura do nome e estrita: numero solto nao vira formato', () => {
+  for (const nome of [
+    'Pacote de 2 sessoes', 'Oferta 3', 'Promocao 1', 'FORMATO', 'FORMATO 4',
+    'FORMATO 12', 'formato zero', '', null, undefined,
+  ]) {
+    assert.equal(formatoDoNomeDaOferta(nome as never), null, `"${nome}" nao pode virar formato`)
+  }
+})
+
+test('o nome e lido com folga de escrita', () => {
+  assert.equal(formatoDoNomeDaOferta('FORMATO 2'), 2)
+  assert.equal(formatoDoNomeDaOferta('formato 2'), 2)
+  assert.equal(formatoDoNomeDaOferta('Formato   3'), 3)
+  assert.equal(formatoDoNomeDaOferta('FORMATO2'), 2)
+  assert.equal(formatoDoNomeDaOferta('Diagnóstico Guiado - Formato 1'), 1)
+  assert.equal(formatoDoNomeDaOferta('FORMATO 02'), 2)
+})
+
+test('venda sem oferta nenhuma continua sem formato', () => {
+  assert.equal(formatoDaVenda({ id: 'y', order_id: null, oferta_nome: null } as never), null)
+})
+
+test('todo select que alimenta formatoDaVenda traz oferta_nome', () => {
+  // O order_id da Kiwify nunca tem a oferta. Um select que esqueca
+  // `oferta_nome` faz o formato sumir de novo NAQUELA tela so - sem erro de
+  // compilacao, sem erro em tela, so a etiqueta desaparecendo. Foi assim que o
+  // Ibraim apareceu como "Oferta nao mapeada".
+  const arquivos = [
+    'app/terapeutas/agenda/page.tsx',
+    'app/terapeutas/[id]/page.tsx',
+    'app/api/terapeutas/sessoes/agendar/route.ts',
+    'app/api/terapeutas/sessoes/remarcar/route.ts',
+    'app/api/terapeutas/sessoes/empurrar-seguintes/route.ts',
+    'app/api/terapeutas/dashboard/route.ts',
+    'lib/whatsapp-pendentes.ts',
+  ]
+  for (const arq of arquivos) {
+    const texto = readFileSync(new URL('../' + arq, import.meta.url), 'utf8')
+    for (const linha of texto.split('\n')) {
+      if (!linha.includes('order_id') || !linha.includes('select(')) continue
+      assert.ok(linha.includes('oferta_nome'), `${arq}: select traz order_id mas nao oferta_nome -> ${linha.trim().slice(0, 100)}`)
+    }
+  }
 })

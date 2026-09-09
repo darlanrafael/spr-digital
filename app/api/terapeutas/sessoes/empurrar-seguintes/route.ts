@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
   // que aquele produto nunca seguiu, mexendo em consultas já combinadas com o
   // paciente. Só pacote do Diagnóstico (reconhecido pela oferta) passa.
   const { data: vendaMae, error: vendaErr } = await client
-    .from('sales').select('id,order_id').eq('id', sessao.sale_id).maybeSingle()
+    .from('sales').select('id,order_id,oferta_nome').eq('id', sessao.sale_id).maybeSingle()
   if (vendaErr) return NextResponse.json({ error: vendaErr.message }, { status: 500 })
   if (!vendaMae || !formatoDaVenda(vendaMae as { id: string; order_id?: string })) {
     return NextResponse.json(

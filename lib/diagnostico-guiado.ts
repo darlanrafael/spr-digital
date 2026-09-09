@@ -59,17 +59,50 @@ export function ofertaDoOrderId(orderId?: string | null): string | null {
   return partes.length > 5 ? partes.slice(5).join('-') : null
 }
 
-export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'>): FormatoDiagnostico | null {
+/**
+ * O formato lido do NOME da oferta.
+ *
+ * Existe por causa da Kiwify. O `order_id` dela e so o numero do pedido - a
+ * oferta nao vai grudada nele como na Hubla, e nunca vai. `ofertaDoOrderId`
+ * devolve null para toda venda da Kiwify, entao o caminho do ID nao tem como
+ * funcionar ali.
+ *
+ * Caso real: Ibraim Djalma Melo Costa, 09/09/2026, primeira venda de
+ * Diagnostico Guiado pela Kiwify. `oferta_nome` dizia "FORMATO 2" e a tela
+ * mostrava "Oferta nao mapeada" - e mostraria em toda venda da Kiwify daqui
+ * pra frente.
+ *
+ * A leitura e ESTRITA de proposito: so casa "formato" seguido de 1, 2 ou 3.
+ * Um nome que nao diga o formato com essas letras devolve null e cai no aviso,
+ * que e o comportamento certo - melhor recusar do que montar um pacote de 9
+ * sessoes por causa de um numero solto no meio do texto.
+ */
+export function formatoDoNomeDaOferta(ofertaNome?: string | null): 1 | 2 | 3 | null {
+  if (!ofertaNome) return null
+  const m = ofertaNome.toLowerCase().match(/formato\s*0*([123])(?![0-9])/)
+  if (!m) return null
+  return Number(m[1]) as 1 | 2 | 3
+}
+
+export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'> & { oferta_nome?: string | null }): FormatoDiagnostico | null {
   // Excecao por venda vem primeiro: e o unico caso em que a oferta esta errada
   // e nao ha o que consultar nela.
   const excecao = sale.id ? EXCECOES_DIAGNOSTICO[sale.id] : undefined
   if (excecao) return { formato: excecao, ...SESSOES_POR_FORMATO[excecao] }
 
+  // O ID da oferta continua sendo o caminho principal: na Hubla ele e estavel
+  // e nao depende de ninguem escrever o nome direito.
   const oferta = ofertaDoOrderId(sale.order_id)
-  if (!oferta) return null
-  const formato = OFERTAS_DIAGNOSTICO[oferta]
-  if (!formato) return null
-  return { formato, ...SESSOES_POR_FORMATO[formato] }
+  const porId = oferta ? OFERTAS_DIAGNOSTICO[oferta] : undefined
+  if (porId) return { formato: porId, ...SESSOES_POR_FORMATO[porId] }
+
+  // Sem ID que resolva, vale o NOME da oferta. E o unico caminho possivel na
+  // Kiwify, e na Hubla so entra quando o ID nao disse nada - entao nao muda
+  // nenhuma venda que ja funciona hoje.
+  const porNome = formatoDoNomeDaOferta(sale.oferta_nome)
+  if (porNome) return { formato: porNome, ...SESSOES_POR_FORMATO[porNome] }
+
+  return null
 }
 
 export type SessaoDoPacote = {

@@ -87,7 +87,7 @@ export async function buscarPendentes(
   // WhatsApp nunca mostra a etiqueta, sem erro nenhum.
   const formatoPorSale: Record<string, 1 | 2 | 3> = {}
   if (saleIds.length > 0) {
-    const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora,order_id').in('id', saleIds)
+    const { data: sales, error: salesErr } = await client.from('sales').select('id,telefone,data_hora,order_id,oferta_nome').in('id', saleIds)
     if (salesErr) throw new Error(salesErr.message)
     for (const s of sales ?? []) {
       // `paraWhatsApp` roda por ULTIMO, e so aqui. O numero guardado em `sales`

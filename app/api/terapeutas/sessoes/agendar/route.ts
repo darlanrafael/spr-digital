@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   // demais produtos nunca leem esse campo, entao acrescenta-lo aqui nao muda
   // nada do caminho antigo.
   const { data: sale, error: saleErr } = await client
-    .from('sales').select('id,nome,email,telefone,produto,valor_liquido,order_id,pacote_pai_id,status').eq('id', sale_id).single()
+    .from('sales').select('id,nome,email,telefone,produto,valor_liquido,order_id,pacote_pai_id,status,oferta_nome').eq('id', sale_id).single()
   if (saleErr || !sale) return NextResponse.json({ error: 'Venda não encontrada' }, { status: 404 })
 
   // Uma venda que JA foi ligada a outro pacote nao pode ser agendada por conta

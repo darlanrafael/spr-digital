@@ -700,7 +700,7 @@ export default function PainelTerapeuta() {
       // sem ele, formatoDaVenda() (usado no prontuário e na aba Vendas) nunca
       // reconhece o pacote e a etiqueta nunca aparece, sem erro nenhum.
       const { data: vendasData } = await client
-        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id').in('id', saleIds)
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id,oferta_nome').in('id', saleIds)
       for (const v of (vendasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
 
       // Vendas LIGADAS a estas: o paciente pagou o mesmo pacote em mais de uma
@@ -709,7 +709,7 @@ export default function PainelTerapeuta() {
       // mostraria R$ 700 onde ele pagou R$ 1.400 - e o reembolso, que sai desse
       // mesmo numero, devolveria metade do devido.
       const { data: filhasData } = await client
-        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id')
+        .from('sales').select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id,oferta_nome')
         .in('pacote_pai_id', saleIds)
       for (const v of (filhasData ?? []) as SaleInfo[]) vendasMap[v.id] = v
     }

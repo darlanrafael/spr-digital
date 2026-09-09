@@ -549,7 +549,7 @@ export async function GET(req: NextRequest) {
       const BATCH = 200
       for (let i = 0; i < saleIdsQuadrantes.length; i += BATCH) {
         const batch = saleIdsQuadrantes.slice(i, i + BATCH)
-        const { data } = await supabase.from('sales').select('id,order_id').in('id', batch)
+        const { data } = await supabase.from('sales').select('id,order_id,oferta_nome').in('id', batch)
         for (const v of (data ?? []) as { id: string; order_id?: string }[]) {
           const formato = formatoDaVenda(v)
           if (formato) formatoPorSaleQuadrante.set(v.id, formato.formato)
