@@ -1,6 +1,7 @@
 // components/terapeutas/AgendaDiaTerapeuta.tsx
 'use client'
 
+import { avisoDaLinha } from '@/lib/aviso-da-linha-da-agenda'
 import { fimEfetivoSessao } from '@/lib/agenda-horarios'
 
 export type SessaoDia = {
@@ -267,7 +268,17 @@ export default function AgendaDiaTerapeuta({
 
             return marcas.map(m => {
               const aqui = ancoras.get(m.minuto) ?? []
-              const emConflito = aqui.length > 1
+              // Uma linha junta itens que NAO estao no mesmo horario: a ancora
+              // e o horario da grade mais proximo. Chamar tudo de "consultas
+              // marcadas no mesmo horario" fazia o comercial procurar uma dupla
+              // marcacao inexistente - e fazia uma dupla de verdade parecer o
+              // caso inofensivo. A regra vive em lib/aviso-da-linha-da-agenda.ts.
+              const aviso = avisoDaLinha(aqui.map(i => ({
+                inicio: i.inicio,
+                ehSessao: !!i.sessao,
+                titulo: i.compromisso?.compromisso?.titulo ?? null,
+              })))
+              const emConflito = aviso?.gravidade === 'conflito'
 
               if (aqui.length === 0) {
                 return (
@@ -282,10 +293,13 @@ export default function AgendaDiaTerapeuta({
               }
 
               return (
-                <div key={m.minuto} className={emConflito ? 'bg-red-500/[0.07] border-l-2 border-red-500/60' : ''}>
-                  {emConflito && (
-                    <p className="px-5 pt-2.5 text-[11px] font-medium text-red-300">
-                      ⚠ {aqui.length} consultas marcadas no mesmo horário
+                <div key={m.minuto} className={
+                  emConflito ? 'bg-red-500/[0.07] border-l-2 border-red-500/60'
+                  : aviso ? 'bg-amber-500/[0.06] border-l-2 border-amber-500/50' : ''
+                }>
+                  {aviso && (
+                    <p className={`px-5 pt-2.5 text-[11px] font-medium ${emConflito ? 'text-red-300' : 'text-amber-300'}`}>
+                      ⚠ {aviso.texto}
                     </p>
                   )}
                   {aqui.map(item => {

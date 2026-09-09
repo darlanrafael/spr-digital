@@ -68,6 +68,8 @@ const FIACAO: { arquivo: string; trecho: string; porque: string }[] = [
     porque: 'sem o campo, o comercial volta a ficar travado em toda venda de pacote novo, que e o caso que ela existe para resolver' },
   { arquivo: 'app/terapeutas/vendas/page.tsx', trecho: 'setQtdInformadaInput',
     porque: 'sem zerar ao trocar de venda, o numero de uma venda aparece preenchido na proxima e induz ao erro' },
+  { arquivo: 'components/terapeutas/AgendaDiaTerapeuta.tsx', trecho: 'avisoDaLinha(',
+    porque: 'sem ela a agenda volta a chamar bloqueio de "consulta" e a dupla marcacao de verdade some no meio do ruido' },
   { arquivo: 'app/terapeutas/aprovacoes/page.tsx', trecho: 'rotuloDaOcorrencia',
     porque: 'sem ele o CEO lê "Compras separadas" onde alguém desfez uma junção já registrada' },
 ]
