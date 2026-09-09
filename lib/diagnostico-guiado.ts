@@ -44,6 +44,19 @@ export const EXCECOES_DIAGNOSTICO: Record<string, 1 | 2 | 3> = {
 /** Regra do PRODUTO, nao da terapeuta: nos demais produtos a Denise segue com os 30%. */
 export const PAGAMENTO_DENISE_POR_SESSAO = 95
 
+/**
+ * Quantas sessoes cada formato tem, e quantas sao do Pedro.
+ *
+ * Exportado desde 09/09/2026 porque o lancamento manual passou a perguntar o
+ * FORMATO em vez da quantidade: a quantidade e a divisao entre os dois
+ * terapeutas saem daqui, nao da escolha de quem lanca.
+ */
+export const SESSOES_POR_FORMATO_PUBLICO: Record<1 | 2 | 3, { totalSessoes: number; sessoesPedro: number }> = {
+  1: { totalSessoes: 9, sessoesPedro: 2 },
+  2: { totalSessoes: 4, sessoesPedro: 1 },
+  3: { totalSessoes: 2, sessoesPedro: 1 },
+}
+
 const SESSOES_POR_FORMATO: Record<1 | 2 | 3, { totalSessoes: number; sessoesPedro: number }> = {
   1: { totalSessoes: 9, sessoesPedro: 2 },
   2: { totalSessoes: 4, sessoesPedro: 1 },

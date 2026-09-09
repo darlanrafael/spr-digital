@@ -81,6 +81,12 @@ export default function TerapeutasAprovacoes() {
   // historico e a tela lia so os pendentes. O usuario aprovou o primeiro e nao
   // achou mais nada.
   const [lancHistorico, setLancHistorico] = useState<Record<string, unknown>[]>([])
+  const [edicoes, setEdicoes] = useState<Record<string, unknown>[]>([])
+  const [edicaoDecidindo, setEdicaoDecidindo] = useState<string | null>(null)
+  const [edicaoMotivo, setEdicaoMotivo] = useState('')
+  const [edicaoErro, setEdicaoErro] = useState('')
+  const [edicaoSenhaOpen, setEdicaoSenhaOpen] = useState(false)
+  const [edicaoPendente, setEdicaoPendente] = useState<{ id: string; acao: 'aprovar' | 'rejeitar' } | null>(null)
   const [lancDecidindo, setLancDecidindo] = useState<string | null>(null)
   const [lancMotivo, setLancMotivo] = useState('')
   const [lancErro, setLancErro] = useState('')
@@ -132,6 +138,13 @@ export default function TerapeutasAprovacoes() {
       }
     } catch { /* secao fica vazia */ }
 
+    // Troca de quem e o paciente, esperando decisao.
+    try {
+      const r5 = await fetch(`/api/terapeutas/aprovacoes/edicao-paciente?usuario_email=${encodeURIComponent(adminEmail)}`, { cache: 'no-store' })
+      const j5 = await r5.json()
+      if (r5.ok) setEdicoes(j5.pendentes ?? [])
+    } catch { /* secao fica vazia */ }
+
     // Estorno na plataforma com sessao futura. Mesmo tratamento da conferencia
     // de pacotes: fora do try do loading, com timeout, e falha visivel.
     try {
@@ -165,6 +178,39 @@ export default function TerapeutasAprovacoes() {
   // Guarda a decisao ate a senha ser digitada: toda acao que muda dado nesta
   // tela pede senha, e criar venda + sessoes + evento no Google e a que mais
   // muda.
+  async function decidirEdicao(id: string, acao: 'aprovar' | 'rejeitar') {
+    if (acao === 'rejeitar' && edicaoMotivo.trim().length < 10) {
+      setEdicaoErro('Escreva o motivo da recusa (mínimo 10 letras).')
+      return
+    }
+    setEdicaoPendente({ id, acao })
+    setEdicaoSenhaOpen(true)
+  }
+
+  async function confirmarEdicao(senhaAcao: string) {
+    if (!edicaoPendente) return
+    const { id, acao } = edicaoPendente
+    setEdicaoErro('')
+    try {
+      const res = await fetch('/api/terapeutas/aprovacoes/edicao-paciente', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          solicitacao_id: id, acao,
+          justificativa: acao === 'rejeitar' ? edicaoMotivo : undefined,
+          usuario_email: adminEmail, senha: senhaAcao,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setEdicaoErro(json.error ?? `Erro ${res.status}`); return }
+      setEdicaoSenhaOpen(false); setEdicaoPendente(null)
+      setEdicaoDecidindo(null); setEdicaoMotivo('')
+      loadData()
+    } catch (e) {
+      setEdicaoErro(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   async function decidirLancamento(id: string, acao: 'aprovar' | 'rejeitar') {
     if (acao === 'rejeitar' && lancMotivo.trim().length < 10) {
       setLancErro('Escreva o motivo da recusa (mínimo 10 letras).')
@@ -405,6 +451,76 @@ export default function TerapeutasAprovacoes() {
                 09/09/2026: o comercial pede, o CEO aprova, e SO ENTAO o sistema
                 cria venda, sessoes, Meet e prontuario. Agendamento de venda
                 real da plataforma nao passa por aqui. */}
+            {/* Troca de quem e o paciente do prontuario. Vem primeiro porque e a
+                acao mais sensivel da tela: foi ela que, em 04/08/2026,
+                sobrescreveu uma paciente inteira pela outra. Enquanto espera,
+                os dados ANTIGOS continuam valendo. */}
+            {edicoes.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xs font-semibold text-rose-300 uppercase tracking-wide mb-1">Troca de paciente aguardando você</h2>
+                <p className="text-[11px] text-gray-600 mb-3">
+                  Nada foi alterado ainda. O prontuário continua com os dados antigos até você decidir.
+                </p>
+                <div className="bg-gray-900 border border-rose-500/30 rounded-xl divide-y divide-white/5">
+                  {edicoes.map(e => {
+                    const id = String(e.id)
+                    const sessoes = Number(e.sessoes_afetadas ?? 0)
+                    return (
+                      <div key={id} className="p-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+                          <div className="bg-gray-800/60 rounded-lg p-2.5">
+                            <p className="text-[10px] text-gray-500 mb-0.5">HOJE</p>
+                            <p className="text-xs text-gray-200">{String(e.nome_atual ?? '-')}</p>
+                            <p className="text-[11px] text-gray-500">{String(e.email_atual ?? '-')}</p>
+                            {e.telefone_atual ? <p className="text-[11px] text-gray-500">{String(e.telefone_atual)}</p> : null}
+                          </div>
+                          <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-2.5">
+                            <p className="text-[10px] text-rose-400 mb-0.5">VAI FICAR</p>
+                            <p className="text-xs text-gray-200">{String(e.nome_novo ?? '-')}</p>
+                            <p className="text-[11px] text-gray-400">{String(e.email_novo ?? '-')}</p>
+                            {e.telefone_novo ? <p className="text-[11px] text-gray-400">{String(e.telefone_novo)}</p> : null}
+                          </div>
+                        </div>
+                        <div className="space-y-0.5 text-[11px] text-gray-400">
+                          <p>
+                            <span className="text-gray-500">A compra foi de</span> {String(e.nome_atual ?? '-')}:{' '}
+                            {String(e.produto ?? '-')} · {fmtBRL(Number(e.valor_pago_cliente ?? 0))} · {String(e.plataforma ?? '-')}
+                            {e.data_compra ? ` · ${fmtDt(String(e.data_compra))}` : ''}
+                          </p>
+                          <p className={sessoes > 0 ? 'text-amber-400' : ''}>
+                            {sessoes} {sessoes === 1 ? 'sessão vai receber' : 'sessões vão receber'} o nome novo
+                          </p>
+                          <p className="text-gray-300 mt-1">Motivo: &ldquo;{String(e.motivo ?? '')}&rdquo;</p>
+                          <p className="text-gray-600">Pedido por {String(e.solicitado_por_nome ?? '-')} · {fmtDt(String(e.created_at))}</p>
+                        </div>
+                        {edicaoDecidindo === id ? (
+                          <div className="mt-3 space-y-2">
+                            <input type="text" value={edicaoMotivo} onChange={ev => setEdicaoMotivo(ev.target.value)}
+                              placeholder="Motivo da recusa (mín. 10 letras)"
+                              className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
+                            {edicaoErro && <p className="text-[11px] text-red-400">{edicaoErro}</p>}
+                            <div className="flex gap-2">
+                              <button onClick={() => { setEdicaoDecidindo(null); setEdicaoMotivo(''); setEdicaoErro('') }}
+                                className="flex-1 py-2 text-xs text-gray-300 bg-gray-800 border border-white/10 rounded-lg">Voltar</button>
+                              <button onClick={() => decidirEdicao(id, 'rejeitar')}
+                                className="flex-1 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg">Confirmar recusa</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-3 flex gap-2">
+                            <button onClick={() => { setEdicaoDecidindo(id); setEdicaoMotivo(''); setEdicaoErro('') }}
+                              className="flex-1 py-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg hover:bg-red-500/20">Recusar</button>
+                            <button onClick={() => decidirEdicao(id, 'aprovar')}
+                              className="flex-1 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg">Aprovar troca</button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {lancamentos.length > 0 && (
               <div className="mb-8">
                 <h2 className="text-xs font-semibold text-amber-300 uppercase tracking-wide mb-1">Lançamentos manuais aguardando você</h2>
@@ -671,6 +787,15 @@ export default function TerapeutasAprovacoes() {
           </div>
         </div>
       )}
+
+      <SenhaModal isOpen={edicaoSenhaOpen}
+        onClose={() => { setEdicaoSenhaOpen(false); setEdicaoPendente(null); setEdicaoErro('') }}
+        onConfirm={confirmarEdicao}
+        titulo={edicaoPendente?.acao === 'aprovar' ? 'Aprovar troca de paciente' : 'Recusar troca de paciente'}
+        descricao={edicaoPendente?.acao === 'aprovar'
+          ? 'Ao confirmar, os dados da venda e de todas as sessões passam a ser do paciente novo, e fica uma nota no prontuário registrando quem comprou.'
+          : 'Nada foi alterado, então recusar mantém tudo como está. A recusa também vira nota no prontuário.'}
+        loading={false} erro={edicaoErro} />
 
       <SenhaModal isOpen={lancSenhaOpen}
         onClose={() => { setLancSenhaOpen(false); setLancPendente(null); setLancErro('') }}

@@ -670,6 +670,7 @@ export default function PainelTerapeuta() {
   // ver a rota, e o caso de 04/08/2026 que sobrescreveu uma paciente inteira
   // sem deixar nada visivel no prontuario.
   const [editMotivo, setEditMotivo] = useState('')
+  const [editAguardando, setEditAguardando] = useState(false)
   const [editNome, setEditNome] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editTelefone, setEditTelefone] = useState('')
@@ -1418,6 +1419,12 @@ export default function PainelTerapeuta() {
     setEditLoading(false)
     if (!res.ok) { setEditErro(json.error ?? 'Erro'); return }
     setEditSenhaOpen(false); setEditandoPaciente(false)
+    // Troca de IDENTIDADE nao vale na hora: virou pedido de aprovacao. Sem
+    // esta mensagem o comercial fecha a tela achando que ja mudou, ve o nome
+    // antigo e edita de novo - criando dois pedidos para a mesma coisa.
+    if (json.aguardando_aprovacao) {
+      setEditAguardando(true)
+    }
     loadData()
   }
 
@@ -2645,7 +2652,8 @@ export default function PainelTerapeuta() {
                           </p>
                           <p className="text-[11px] text-amber-400/80">
                             A compra continua sendo de <strong>{prontuarioSaleMaisRecente.nome}</strong> ({prontuarioSaleMaisRecente.email}).
-                            Escreva o que está acontecendo - isso vira uma nota no prontuário, visível para o terapeuta.
+                            Escreva o que está acontecendo. <strong>A troca só vale depois que o Rafael aprovar</strong>, e o
+                            que você escrever vira uma nota no prontuário, visível para o terapeuta.
                           </p>
                           <input type="text" value={editMotivo} onChange={e => setEditMotivo(e.target.value)}
                             placeholder="Ex: a esposa comprou a sessão para o marido; o atendimento é dele"
@@ -3323,6 +3331,23 @@ export default function PainelTerapeuta() {
         loading={manualLoading}
         erro={manualErro}
       />
+
+      {editAguardando && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setEditAguardando(false)}>
+          <div className="bg-gray-900 border border-rose-500/40 rounded-xl p-6 w-full max-w-md mx-4 text-center" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-rose-300 mb-2">Enviado para aprovação</h3>
+            <p className="text-sm text-gray-300 mb-5">
+              A troca de paciente foi enviada para o Rafael aprovar.
+              <strong className="text-gray-200"> Os dados continuam os antigos até ele decidir</strong> - o prontuário,
+              a agenda e os lembretes seguem com o nome atual. Não precisa enviar de novo.
+            </p>
+            <button onClick={() => setEditAguardando(false)}
+              className="w-full py-2.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
+              Entendi
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* O paciente já tem venda do mesmo produto. Não bloqueia - comprar dois
           pacotes é legítimo - mas obriga a ver antes. Em 04/08/2026 a Joicy

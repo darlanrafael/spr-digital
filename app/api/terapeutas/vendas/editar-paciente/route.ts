@@ -60,6 +60,8 @@ export async function PUT(req: NextRequest) {
       }, { status: 400 })
     }
 
+    // Daqui pra baixo so chega quem NAO trocou de identidade: correcao de
+    // telefone, acento, espaco. Essas valem na hora, como sempre valeram.
     const { data: sale, error: updErr } = await supabase
       .from('sales')
       .update({ nome: nome.trim(), email: email.trim(), telefone: normalizarTelefoneBR(telefone) ?? (telefone.trim() || null) })
@@ -93,30 +95,47 @@ export async function PUT(req: NextRequest) {
       }, { status: 500 })
     }
 
-    // A nota fica no PRONTUARIO, nao so no log de atividades. O log e para
-    // auditoria; o prontuario e o que o terapeuta e o comercial leem antes de
-    // atender. Guardar quem comprou so no log significa que ninguem ve.
+    // TROCA DE IDENTIDADE NAO APLICA AQUI: vira pedido de aprovacao.
+    //
+    // Decisao do usuario em 09/09/2026: "apos isso, deve ir para aprovacao
+    // para mim". Os dados ANTIGOS ficam no prontuario ate ele decidir - custo
+    // aceito por ele, sabendo que o terapeuta pode atender vendo o nome antigo
+    // nesse intervalo.
+    //
+    // Corrigir telefone ou acento no nome continua valendo na hora: so a troca
+    // de QUEM E O PACIENTE espera.
     if (mudouIdentidade && a) {
       const v = anterior as Record<string, unknown>
-      const compradoEm = v.data_hora ? new Date(new Date(v.data_hora as string).getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10).split('-').reverse().join('/') : '?'
-      await supabase.from('ocorrencias_prontuario').insert({
+      const { data: pedido, error: pedErr } = await supabase.from('solicitacoes_edicao_paciente').insert({
         sale_id,
-        tipo: 'nota',
-        titulo: 'Dados do paciente alterados',
-        descricao:
-          `Os dados deste prontuário passaram a ser de "${nome.trim()}" (${email.trim()}). ` +
-          `A COMPRA foi feita por "${a.nome ?? '?'}" (${a.email ?? '?'}), ` +
-          `${v.produto ?? 'produto não informado'}, ${v.valor_pago_cliente ? `R$ ${Number(v.valor_pago_cliente).toLocaleString('pt-BR')}` : 'valor não informado'}, ` +
-          `plataforma ${v.plataforma ?? '?'}, em ${compradoEm}. ` +
-          `Motivo informado por ${usuario_nome}: ${(motivo ?? '').trim()}`,
-        dados_extras: {
-          antes: { nome: a.nome, email: a.email, telefone: (anterior as { telefone?: string }).telefone },
-          depois: { nome: nome.trim(), email: email.trim(), telefone },
-          motivo: (motivo ?? '').trim(),
-        },
-        criado_por_nome: usuario_nome,
-        criado_por_tipo: usuario_tipo,
-        criado_por_email: usuario_email,
+        nome_atual: a.nome ?? null,
+        email_atual: a.email ?? null,
+        telefone_atual: (v.telefone as string) ?? null,
+        nome_novo: nome.trim(),
+        email_novo: email.trim(),
+        telefone_novo: normalizarTelefoneBR(telefone) ?? (telefone.trim() || null),
+        produto: (v.produto as string) ?? null,
+        plataforma: (v.plataforma as string) ?? null,
+        valor_pago_cliente: (v.valor_pago_cliente as number) ?? null,
+        data_compra: (v.data_hora as string) ?? null,
+        motivo: (motivo ?? '').trim(),
+        solicitado_por_nome: usuario_nome,
+        solicitado_por_email: usuario_email,
+      }).select('id').single()
+      if (pedErr) return NextResponse.json({ error: pedErr.message }, { status: 500 })
+
+      await registrarAtividade({
+        usuario_nome, usuario_tipo,
+        tipo_acao: 'paciente_editado',
+        sale_id,
+        descricao: `Pedido de troca de paciente enviado para aprovação: ${a.nome ?? '?'} → ${nome.trim()}. Motivo: ${(motivo ?? '').trim()}. Nada foi alterado ainda.`,
+        dados_anteriores: { nome: a.nome, email: a.email, telefone: v.telefone },
+      })
+
+      return NextResponse.json({
+        success: true,
+        aguardando_aprovacao: true,
+        solicitacao_id: (pedido as { id: string }).id,
       })
     }
 
