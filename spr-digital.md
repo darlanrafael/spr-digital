@@ -3033,3 +3033,272 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **Duas linhas novas em `lib/fiacao-do-pacote.test.ts`**, porque apagar o campo da tela nao daria erro nenhum - so voltaria a travar o comercial em silencio, que e exatamente o problema que esta mudanca resolve.
 
     340 testes, `tsc` limpo, build OK.
+
+50. **09/09/2026 - O DIA EM QUE UM ALERTA NA AGENDA ABRIU UMA INVESTIGACAO DE CADASTRO, COMISSAO E CONTROLE DE ACESSO.** Sete correcoes publicadas (`fd8a7d1`, `d238ef5`, `9bf736c`, `9e9273e`, `3fa8406`, `b4fd658`, `198b670`), duas correcoes de dado em producao, uma migracao nova, e a descoberta de um defeito que mandava sessao para o terapeuta errado ha meses. **Maxima redundancia por pedido do usuario: este item repete de proposito o que esta nos itens 44 a 49, porque quem for ler isto num incidente nao vai ter tempo de montar o quebra-cabeca.**
+
+    ---
+
+    ## 50.1. O fio da meada
+
+    Comecou com um pedido simples - mover as sessoes das 19:00 para as 19:20 - e cada resposta abriu a proxima pergunta:
+
+    ```
+    mover 19:00 -> 19:20 na agenda do Pedro
+      -> apareceu "2 consultas marcadas no mesmo horario" onde havia 1 consulta e 1 bloqueio
+        -> defeito de exibicao: a agenda chamava bloqueio de consulta                      [fd8a7d1]
+      -> no mesmo dia, um alerta LEGITIMO: Brenda 10:30 e Buzetti 10:31
+        -> lancamento manual criou sessao "ja entregue" com data no FUTURO
+      -> "as correcoes do prontuario nao aparecem no Overview"
+        -> a edicao gravava so em `sales`; as sessoes guardam copia propria     [d238ef5]
+        -> 15 sessoes com dado velho, uma exibindo o TELEFONE como nome
+      -> "por que o Ibraim da erro de oferta nao mapeada?"
+        -> primeira venda de Diagnostico pela Kiwify; o order_id dela nunca tem a oferta  [9bf736c]
+      -> "e essa Ana Assis, o que esta fazendo em Pendentes?"
+        -> cadastro sobrescrito em 04/08, duas vendas duplicadas por lancamento manual
+        -> as sessoes das duas pacientes estavam na DENISE, num produto do PEDRO
+          -> o modal abria sempre no primeiro terapeuta da lista, ordem alfabetica         [b4fd658]
+      -> "e se o cliente estornar depois de agendar?"
+        -> nao acontecia nada: sessao seguia marcada, convite ativo, lembrete saindo       [9e9273e]
+      -> "lancamento manual precisa ir para aprovacao"                                      [3fa8406]
+    ```
+
+    ---
+
+    ## 50.2. As sete correcoes, uma a uma
+
+    ### `fd8a7d1` - a agenda chamava bloqueio de "consulta"
+
+    **Sintoma:** dia 10/09, linha das 19:20, aviso vermelho "2 consultas marcadas no mesmo horario". Havia UMA consulta (Valdir, 19:20) e UM bloqueio (JANTAR, 19:30).
+
+    **Causa:** a agenda de horario fixo ancora cada item no horario da grade MAIS PROXIMO. Uma linha junta itens que nao estao no mesmo horario, e o aviso contava qualquer coisa que caisse junto - inclusive bloqueio.
+
+    **Por que importa:** as duas situacoes pedem acoes OPOSTAS. Duas consultas de pacientes diferentes e dupla marcacao: alguem fica sem atendimento e precisa remarcar hoje. Consulta em cima de compromisso e o terapeuta atendendo dentro de um horario que ele mesmo bloqueou: ninguem fica sem atendimento. Chamar as duas de "consultas no mesmo horario" fazia procurar uma dupla que nao existe **e fazia uma dupla de verdade parecer o caso inofensivo**.
+
+    **Correcao:** `lib/aviso-da-linha-da-agenda.ts`, 9 testes. Vermelho so para consulta contra consulta; consulta contra compromisso e ambar e NOMEIA o bloqueio ("Consulta avancando sobre o compromisso 'JANTAR' das 19:30"). Duas consultas mais um compromisso na mesma linha continuam sendo tratadas como o caso grave.
+
+    ### `d238ef5` - corrigir o nome no prontuario nao chegava no Overview
+
+    **Sintoma, nas palavras do usuario:** *"as minhas alteracoes no prontuario como por exemplo nome do paciente nao esta reverberando no overview"*.
+
+    **Causa:** as sessoes guardam a PROPRIA copia de `paciente_nome` e `paciente_email`, tirada no momento do agendamento. A rota de editar paciente gravava so em `sales`. O Overview, a agenda do terapeuta e o lembrete de WhatsApp leem `sessoes.paciente_nome`.
+
+    **Escala medida antes da correcao:** 15 sessoes de 6 pacientes com dado velho. **Uma delas exibia "41 98403-2550" como nome do paciente** - o telefone que alguem ja tinha corrigido na venda meses antes, e que ia junto no lembrete que o paciente recebe.
+
+    **Correcao:** a rota propaga para todas as sessoes da venda, inclusive as passadas (corrigir um nome digitado errado e corrigir quem a pessoa e). Falha ao propagar passou a devolver erro em vez de sucesso silencioso.
+
+    **Dado corrigido em producao:** 13 sessoes de 5 pacientes sincronizadas, com uma **trava de seguranca que so sincroniza quando o E-MAIL bate**. Nome diferente com e-mail diferente nao e correcao de nome, e outra pessoa. A trava isolou sozinha o unico caso que nao podia ser tocado (Joicy/Ana Assis).
+
+    ### `9bf736c` - Diagnostico Guiado vendido pela Kiwify nao era reconhecido
+
+    **Sintoma:** Ibraim Djalma Melo Costa, 09/09, "Oferta nao mapeada: o pacote nao pode ser montado".
+
+    **A pergunta do usuario que resolveu:** *"essa venda do Ibraim veio da Kiwify.. o webhook dela nao e diferente?"* Era exatamente isso.
+
+    **Causa:** o formato era lido SO pelo id da oferta, que na Hubla vem grudado no `order_id` (`{fatura}-{oferta}`). **O `order_id` da Kiwify e so o numero do pedido e nunca vai ter a oferta.** Nao era problema daquela venda: **toda venda de Diagnostico pela Kiwify daria esse erro**. O Ibraim foi so o primeiro - as outras 16 sao Hubla.
+
+    **Correcao:** `formatoDaVenda` agora le o NOME da oferta quando o id nao resolve. A ordem e: excecao por venda, depois id da oferta, depois nome. O id continua ganhando do nome, entao nenhuma venda da Hubla que ja funcionava mudou. A leitura do nome e ESTRITA: so casa "formato" seguido de 1, 2 ou 3 - numero solto em "Pacote de 2 sessoes" nao vira formato. **Conferido contra o banco: 17 de 17 vendas reconhecidas, contra 16 antes.**
+
+    Os 7 `select` que alimentam `formatoDaVenda` passaram a trazer `oferta_nome`, com teste que varre os arquivos: um select que traga `order_id` sem `oferta_nome` faz o formato sumir NAQUELA tela so, sem erro de compilacao e sem erro em tela.
+
+    ### `9e9273e` - estorno na plataforma com sessao marcada agora avisa
+
+    **A pergunta do usuario:** *"pagou, agendou a sessao e 10, 30 dias depois estornou a compra (chargeback) ou ate mesmo reembolsou de alguma forma... precisa sumir do sistema ou gerar um alerta... isso ja acontece?"*
+
+    **Resposta: nao acontecia.** Quando o reembolso e pedido pela nossa tela e o CEO aprova, as sessoes futuras sao canceladas e os convites retirados. Quando o estorno vem de FORA, o webhook so trocava o `status` da venda. A sessao continuava marcada, o convite ativo, o lembrete saindo, e ninguem era avisado.
+
+    **Caso vivo encontrado:** Cris Polonine, venda marcada como reembolsada desde 11/08, com sessao para 15/09 e convite ativo.
+
+    **As tres regras do alerta, cada uma de um caso real desta base:**
+
+    | Filtro | Por que |
+    |---|---|
+    | Lancamento manual nao conta | nao vem de plataforma, entao nao existe estorno de verdade nele. Na base, um foi marcado a mao so para sinalizar que nao era venda real |
+    | Paciente com outra venda aprovada nao conta | **a Cris pagou no cartao, achou o juro alto, foi reembolsada e pagou por PIX 21 minutos depois**. Alertar ali treinaria todo mundo a ignorar o alerta |
+    | Cancelada fica de fora | e correcao de faturamento, nao devolucao |
+
+    **Validado contra o banco antes de publicar: 176 sessoes futuras, 172 vendas avaliadas, ZERO alarmes falsos, e a Cris nao aparece.**
+
+    Junto: lembrete de WhatsApp suspenso para quem estornou e tem sessao marcada (mandar mensagem para quem pediu o dinheiro de volta e o pior dos dois erros); secao nova em Aprovacoes; e o texto do erro de formato desconhecido reescrito nas duas telas - dizia "associar essa oferta a um formato / avise o time tecnico" e agora diz o que conferir na plataforma antes de acionar alguem.
+
+    ### `3fa8406` - lancamento manual passa a exigir aprovacao do CEO
+
+    **Decisao do usuario:** *"toda vez que alguem for lancar um agendamento manual precisa ir para aprovacao. Eu aprovando, ai sim cria o fluxo restante do Meet, prontuario etc. Nao quero deixar o sistema aberto para isso mais."*
+
+    **SO o lancamento manual.** O usuario foi explicito: *"venda real do sistema o comercial tem autonomia para agendar"*. A rota de agendar NAO foi tocada - conferido com `git diff`, veio vazia.
+
+    **Por que so o manual:** e o unico caminho que INVENTA uma venda que nao existe em plataforma nenhuma. Cria faturamento, sessoes, comissao e evento no Google a partir de um formulario, sem nada do lado de fora para conferir contra. Foi por ai que entraram os dois problemas do dia.
+
+    **O fluxo:**
+
+    ```
+    1. comercial preenche  -> sistema confere as datas
+    2. paciente ja tem venda do mesmo produto? mostra quais e exige confirmacao
+       (nao bloqueia: comprar dois pacotes e legitimo)
+    3. confere conflito de horario
+    4. PRE-RESERVA os horarios com bloqueio na agenda
+    5. grava a solicitacao com o payload inteiro
+    6. CEO aprova  -> cria venda, sessoes, Meet, comissao e log
+       CEO recusa  -> nada foi criado, so libera os horarios (exige motivo)
+    ```
+
+    A pre-reserva foi escolha explicita do usuario: *"pre-reserva a data e horario"*. Sem ela, outra pessoa marca por cima enquanto o pedido espera e a aprovacao falha por conflito.
+
+    **Protecoes:** aprovar duas vezes e recusado (criaria dois pacotes, que e o problema que a fila veio resolver); se alguem ocupou o horario enquanto o pedido esperava, a aprovacao para, avisa e **DEVOLVE a reserva**; reserva pela metade e desfeita inteira.
+
+    Na fila o CEO ve **o que o paciente ja tem** - vendas, valores, datas e quantas sessoes cada uma. Era exatamente essa informacao que faltava em 04/08.
+
+    Migracao `20260909000000_solicitacoes_lancamento_manual.sql`, aplicada. Testado de ponta a ponta contra o banco: pedido criado, 2 horarios reservados, aprovacao criou venda e 2 sessoes, reservas liberadas, limpeza sem residuo.
+
+    ### `b4fd658` + `198b670` - o modal abria sempre na Denise
+
+    **Este e o defeito mais caro do dia**, e so apareceu porque o usuario perguntou: *"como a Ana Assis foi entregue pela Denise? sendo que e uma venda do Pedro cara?"*
+
+    **Causa:** o campo de terapeuta vinha de `terapeutas[0]`, e a lista chega do banco com `.order('nome')` - **ou seja, sempre a Denise, por ordem alfabetica**. Quem agendava uma venda do Pedro e nao trocava o campo mandava a sessao para a agenda dela, com os 30% de comissao dela calculados em cima. O caminho de menor resistencia levava para o lugar errado, e nada avisava.
+
+    **Correcao:** o padrao vem do PRODUTO da venda. Conferido contra as **10.637 vendas** do banco, os 8 produtos que envolvem terapeuta resolvem certo:
+
+    | Produto | Abre com |
+    |---|---|
+    | Mentoria Particular - Pedro Roncada (200x) | Pedro |
+    | Mentoria - Individual Pedro Roncada (25x) | Pedro |
+    | Mentoria Particular - Pedro \| Denise (22x) | **em branco, obriga escolher** |
+    | Diagnostico Guiado (17x) | Pedro (o select nem aparece: quem divide e a rota) |
+    | Mentoria Individual - Denise (1x) | Denise |
+    | Mentoria Particular - Denise Nascimento (1x) | Denise |
+    | Mentoria em grupo (47x) | **ninguem: nao e agendamento individual** |
+
+    **Duas correcoes do usuario sobre a primeira versao**, publicadas em `198b670`: (1) Mentoria em Grupo nunca chega no modal, porque sai de Pendentes em `ehPendenteDeAgendamento` - regra que ja estava no MD; listar "abre com Pedro" para ela era ruido. (2) o Diagnostico envolve OS DOIS terapeutas, nao so o Pedro - ele faz as primeiras sessoes e a Denise as demais conforme o formato, e o select nem aparece para esse produto.
+
+    Continua permitido agendar em quem o produto nao nomeia - remanejo e legitimo - mas com aviso dizendo de quem e o produto e que a comissao sai do percentual de quem for escolhido.
+
+    ---
+
+    ## 50.3. A investigacao da Ana Assis e da Joicy, reconstruida do log
+
+    Duas pacientes REAIS e separadas, cada uma com venda de plataforma propria. O que aconteceu em **04/08/2026**, minuto a minuto, tudo do **Guilherme Vargas**:
+
+    ```
+    08:10  remarcou Ana 1/2:    04/08 11:20 -> 21/07 11:20
+    08:11  remarcou Joicy 1/2:  04/08 09:40 -> 28/07 09:40   (motivo escrito: "erro...")
+    08:13  remarcou Joicy 2/2:  11/08 09:40 -> 21/07 09:40
+    08:14  remarcou Ana 2/2:    11/08 10:30 -> 22/07 10:30
+    08:15  paciente_editado: Joicy Machado da Silva -> Ana Assis
+    08:20  lancamento manual da Joicy (2 sessoes)
+    10:28  lancamento manual da Ana Assis (2 sessoes)
+    ```
+
+    As duas pacientes tinham sessoes marcadas **nos mesmos dias**, e ele estava alternando entre elas puxando tudo de volta para as datas reais em julho. **Trocou uma pela outra na hora de editar.**
+
+    O log guardou o antes e o depois campo por campo, e nao foi so o nome:
+
+    ```
+    ANTES   Joicy Machado da Silva | joicymachado884@gmail.com | +55 94 99295-1101
+    DEPOIS  Ana Assis              | assisana.organizer@outlook.com | +1 774 707-8167
+    ```
+
+    **Sobrescreveu a pessoa inteira.** As sessoes guardaram o nome da Joicy porque, ate `d238ef5`, editar o prontuario nao propagava para elas - **sem esse defeito, o nome dela teria sido apagado tambem e nao sobraria rastro nenhum.**
+
+    Detalhe que fecha: o telefone `+1 774 707-8167` que entrou ai e o mesmo da Ana Assis que apareceu na varredura de numeros estrangeiros do item 47 - o unico que **nao existe no WhatsApp**.
+
+    **Decisao do usuario:** a venda de 03/08 **fica como esta**. Nao foi revertida.
+
+    ---
+
+    ## 50.4. A auditoria das 606 sessoes, e o unico erro que ela achou
+
+    Feita a pedido do usuario (*"verifica no sistema inteiro e revise 100 vezes se necessario"*), depois de uma primeira varredura minha que excluia categorias inteiras sem mostrar o que estava excluindo - ele estava certo em desconfiar.
+
+    **Conferencia por tres caminhos independentes:** contagem exata do banco (606) = minha paginacao (606); 166 vendas distintas = 166 encontradas, nenhuma faltando; soma de todas as combinacoes = 606.
+
+    **TODAS as combinacoes terapeuta x produto que existem:**
+
+    ```
+    362  Pedro    Mentoria Particular - Pedro Roncada         R$ 0
+     74  Pedro    Mentoria - Individual Pedro Roncada         R$ 0
+     66  Denise   Mentoria Particular - Pedro | Denise        R$ 6.162,35   37 pagas
+     65  Denise   Diagnostico Guiado                          R$ 6.175,00
+     23  Pedro    Diagnostico Guiado                          R$ 0
+      4  Pedro    Mentoria em grupo - Pedro Roncada           R$ 0
+      4  Denise   Mentoria Individual - Denise                R$ 347,11
+      4  Denise   Mentoria Particular - Denise Nascimento     R$ 0
+      4  Denise   Mentoria Particular - Pedro Roncada         R$ 781,43   <- UNICA errada
+    ```
+
+    **4 sessoes em 606.** Todas da Ana Assis e da Joicy, todas agendadas pelo Felipe Vieira, em dias diferentes (28/07 e 03/08), todas com o modal abrindo na Denise por ordem alfabetica.
+
+    **Sobre o corte (`vendas_a_partir_de`), que o usuario mandou considerar:** o corte do Pedro e **17/07/2026**. As duas vendas sao de 28/07 e 03/08, as duas **depois** do corte. Nao e caso de venda antiga aparecendo onde nao devia; sao vendas normais, dentro do periodo dele, agendadas no terapeuta errado.
+
+    **CORRECAO APLICADA EM 09/09/2026, confirmada pelo usuario ("DENISE NAO ATENDEU"):** as 4 sessoes foram movidas para a agenda do Pedro e a comissao de **R$ 781,43 foi zerada** (ele e socio a 0%). Nenhuma havia sido paga, entao nao houve acerto de contas. Cada uma ganhou linha em `atividades_log` explicando o motivo. Script em `scripts/corrigir-terapeuta-4-sessoes.ts`, que roda em ensaio por padrao e **procura pelo criterio, nao por ids fixos** - se o dado tiver mudado desde a auditoria, e melhor nao achar do que corrigir errado. Segunda passagem depois da correcao: 0 divergentes.
+
+    **O QUE "MOVIDAS PARA O PEDRO" SIGNIFICA, porque a frase assusta e o usuario
+    perguntou na hora ("FOI CRIADO SESSAO NA AGENDA?"): NAO foi criada sessao
+    nenhuma.** Foram alteradas DUAS COLUNAS em 4 linhas que ja existiam:
+
+    ```
+    terapeuta_id:    Denise Nascimento  ->  Pedro Roncada
+    comissao_valor:  R$ 195,36          ->  R$ 0
+    ```
+
+    Provas conferidas depois da correcao:
+    - **o total de sessoes continua 606**, o mesmo de antes - nada criado, nada apagado;
+    - as **datas de criacao nao mudaram** (28/07, 03/08 e 04/08) - uma sessao criada por mim apareceria com a data de hoje;
+    - as 4 sao de **julho, todas ja entregues**, e **zero estao no futuro**: nao aparecem em agenda nenhuma, nem do Pedro nem da Denise, porque agenda mostra o que ainda vai acontecer.
+
+    O efeito pratico e um so: **os R$ 781,43 saem da conta de comissao da Denise.** Como ela nao atendeu, esse valor nao e devido. E reversivel: os valores originais estao no `atividades_log` de cada sessao.
+
+    ---
+
+    ## 50.5. As 12 sessoes movidas das 19:00 para as 19:20
+
+    Pedido do usuario: *"Quero alterar somente a agenda do PEDRO. TODOS PACIENTES QUE ESTIVER AS 19:00 IRAO PARA AS 19:20"*.
+
+    **12 sessoes futuras, todas do Pedro**, movidas no banco e no Google Agenda. A Denise tem sessoes as 19:00 tambem (Jeane, Valdir, Gisela, Elson) e **nao foi tocada**.
+
+    O evento do Google foi **movido**, nao recriado: recriar trocaria o link do Meet de todos os pacientes por causa de 20 minutos. Movendo, o Google avisa os convidados da mudanca e o link continua o mesmo.
+
+    **Conferido de forma independente depois:** 0 sessoes as 19:00 na agenda do Pedro, 12 as 19:20, 12 de 12 eventos batendo no Calendar, 12 linhas de auditoria.
+
+    **UM ERRO MEU NESSA TAREFA, registrado:** a checagem de conflito que eu rodei ANTES de mover consultou `data_inicio`/`data_fim` na tabela `compromissos_terapeuta`, cujas colunas se chamam `inicio`/`fim`. O PostgREST devolveu vazio e eu li o vazio como "zero conflitos". **Refazendo com as colunas certas: 10 das 12 sessoes avancam sobre o bloqueio de JANTAR do Pedro (19:30-20:10).** Isso ja acontecia as 19:00 (a sessao ia ate 20:00) - eu nao criei o problema, mas tambem nao o detectei quando disse que tinha detectado. O usuario decidiu corrigir so o aviso da tela, deixando os horarios como estao.
+
+    ---
+
+    ## 50.6. Os quatro erros meus deste dia, e o padrao entre eles
+
+    Registrados porque o padrao e mais util que os casos:
+
+    | # | O que eu afirmei | O que era |
+    |---|---|---|
+    | 1 | "zero conflito com compromisso" antes de mover as 19:00 | consultei `data_inicio`; a coluna e `inicio`. 10 conflitos reais |
+    | 2 | "a venda do Ibraim foi apagada do banco" | estava la, intacta. Tres buscas minhas deram vazio e eu concluí em vez de desconfiar |
+    | 3 | "nao existe fechamento de terapeuta nenhum" | a tabela e `fechamentos_terapeutas`, com "s". Existe 1 |
+    | 4 | tratei "fechamento" como uma coisa so | sao duas: `fechamentos_terapeutas` (comissao, 1 registro) e `closings` (socios, 8 registros) |
+
+    **O padrao:** em todos, uma consulta devolveu vazio ou pequeno e eu tratei o resultado como resposta sobre o MUNDO, quando era resposta sobre a MINHA PERGUNTA. Resultado zero nao e conclusao - e sinal de que a pergunta pode estar errada. Isso custou tempo do usuario e um alarme falso serio ("apagaram a venda").
+
+    **A regra que fica:** antes de concluir de um resultado vazio, conferir se a tabela e as colunas existem. E quando o numero nao bater com o que o usuario diz, a primeira hipotese e que eu estou olhando no lugar errado.
+
+    ---
+
+    ## 50.7. Estado do banco depois de tudo
+
+    ```
+    vendas                        10.637
+    sessoes                          606
+    sessoes com terapeuta errado       0   (eram 4)
+    sessoes com nome desatualizado     0   (eram 15)
+    vendas de Diagnostico reconhecidas 17 de 17   (eram 16)
+    solicitacoes de lancamento manual   0   (tabela nova, vazia)
+    alertas de estorno com sessao       0   (validado, sem falso positivo)
+    testes                            398   (eram 358 no inicio do dia)
+    ```
+
+    ---
+
+    ## 50.8. O que ficou aberto
+
+    1. **Quatro grafias diferentes do mesmo produto** na base: "Mentoria Particular - Pedro Roncada", "Mentoria - Individual Pedro Roncada", "MENTORIA EM GRUPO - PEDRO RONCADA", "Mentoria em grupo- Pedro Roncada". **Tudo que decide de quem e a venda depende do nome bater.** Hoje funciona; uma grafia nova quebra em silencio. Padronizar na plataforma resolveria na origem.
+    2. **O fechamento de 09/07 marcou como paga sessao ate 10/09** - dois meses depois da data do fechamento. As 37 sessoes com `comissao_paga = true` vao de 22/06 a 10/09. Nao foi investigado.
+    3. **`usuario_tipo` no log nao e confiavel:** o Guilherme aparece como `comercial` nas remarcacoes e como `admin` na edicao de paciente, com 4 minutos de diferenca. O campo vem do que a tela manda, nao do cadastro.
+    4. **A Joicy tem 4 sessoes entregues e comprou 1 pacote de 2.** Duas sao da venda real (julho) e duas do lancamento manual (agosto, confirmadas pelo proprio Pedro). Nao e duplicata de registro - sao atendimentos diferentes. Falta entender a compra.
+    5. **Autenticacao dos `GET`** de `/vendas` e `/aprovacoes` continua inexistente. O `GET` de pacote e o de estornos ganharam checagem por usuario ativo, que nao e autenticacao de verdade.
+    6. As pendencias antigas da secao 46.11 seguem validas.
