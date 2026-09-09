@@ -3297,7 +3297,7 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     ## 50.8. O que ficou aberto
 
     1. **Quatro grafias diferentes do mesmo produto** na base: "Mentoria Particular - Pedro Roncada", "Mentoria - Individual Pedro Roncada", "MENTORIA EM GRUPO - PEDRO RONCADA", "Mentoria em grupo- Pedro Roncada". **Tudo que decide de quem e a venda depende do nome bater.** Hoje funciona; uma grafia nova quebra em silencio. Padronizar na plataforma resolveria na origem.
-    2. **O fechamento de 09/07 marcou como paga sessao ate 10/09** - dois meses depois da data do fechamento. As 37 sessoes com `comissao_paga = true` vao de 22/06 a 10/09. Nao foi investigado.
+    2. ~~**O fechamento de 09/07 marcou como paga sessao ate 10/09**~~ **NAO E DEFEITO. Esclarecido pelo usuario em 09/09/2026: foi antecipacao deliberada de pagamento de sessoes futuras.** Conferido na coluna `sessoes` do fechamento: das 37, **31 ja eram futuras na data da confirmacao** (09/07), cobrindo de 22/06 a 10/09. O sistema registrou o que foi decidido.
     3. **`usuario_tipo` no log nao e confiavel:** o Guilherme aparece como `comercial` nas remarcacoes e como `admin` na edicao de paciente, com 4 minutos de diferenca. O campo vem do que a tela manda, nao do cadastro.
     4. **A Joicy tem 4 sessoes entregues e comprou 1 pacote de 2.** Duas sao da venda real (julho) e duas do lancamento manual (agosto, confirmadas pelo proprio Pedro). Nao e duplicata de registro - sao atendimentos diferentes. Falta entender a compra.
     5. **Autenticacao dos `GET`** de `/vendas` e `/aprovacoes` continua inexistente. O `GET` de pacote e o de estornos ganharam checagem por usuario ativo, que nao e autenticacao de verdade.
@@ -3432,3 +3432,26 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     | `scripts/mover-1900-para-1920.ts` | moveu 12 sessoes do Pedro das 19:00 para 19:20, no banco e no Google | move o evento existente em vez de recriar - recriar trocaria o link do Meet de todos os pacientes por 20 minutos |
     | `scripts/sincronizar-nome-nas-sessoes.ts` | sincronizou 13 sessoes de 5 pacientes com o nome corrigido na venda | **so sincroniza quando o E-MAIL bate**; nome diferente com e-mail diferente e outra pessoa. A trava isolou sozinha o caso Joicy/Ana Assis |
     | `scripts/corrigir-terapeuta-4-sessoes.ts` | moveu 4 sessoes da Denise para o Pedro e zerou R$ 781,43 de comissao | **procura pelo criterio, nao por ids fixos**; se o dado mudou desde a auditoria, e melhor nao achar do que corrigir errado. Recusa mexer em comissao ja paga |
+
+
+53. **09/09/2026 - lancamentos de fechamento e o primeiro uso real da fila de aprovacao.**
+
+    **Custo de trafego do Perpetuo CCC, lancado.** Pendencia aberta desde 14/08 (item 46.11, ponto 4), fechada a pedido do usuario: *"vou deduzir isso no proximo fechamento.. voce consegue meio que deixar isso lancado la? com uma observacao de que e um desconto de xpto"*. Gravado em `variable_costs` com `fechamento_id: null`, que e como o sistema marca "ainda nao entrou em fechamento nenhum" - o mesmo padrao da comissao do Felipe lancada na mesma manha.
+
+    ```
+    descricao: TRAFEGO PERPETUO CCC - deducao retroativa do fechamento
+               close_1786731068074 (14/08): R$ 3.234,23 x 1,1385 = R$ 3.682,17.
+               O custo nao foi aplicado naquele fechamento.
+    valor:     3682.17
+    data:      2026-09-01
+    ```
+
+    O calculo inteiro ficou na descricao de proposito: e o campo que aparece na tela, e quem ler daqui a seis meses precisa saber de onde saiu o numero. O script conferiu antes que nao existia lancamento parecido e abortaria se existisse.
+
+    **O Miguel confirmado como o reembolso parcial.** Duvida do usuario (*"esse Miguel e o cara que ta no sistema com pedido de reembolso?"*): sim. `solicitacoes_reembolso`, R$ 1.560, **aprovado por ele em 02/09 as 08:21**. Ja entra sozinho no proximo fechamento como deducao com rateio 35/65 (SPR R$ 546, Pedro R$ 1.014) - so falta marcar "Abater aqui", que vem desmarcado de proposito.
+
+    **PRIMEIRO USO REAL DA FILA DE APROVACAO, e o que ele revelou.** O Felipe lancou o Ibraim Djalma Melo Costa (R$ 2.497, Mentoria Particular - Pedro Roncada) as 17:08. A solicitacao entrou corretamente como `pendente`, com o payload inteiro, e nenhuma venda foi criada - o fluxo funcionou.
+
+    **Mas as reservas de horario ficaram vazias, e nao e defeito:** o payload veio com `proxima_sessao_data: null`. **O Felipe nao preencheu a data da primeira sessao.** Sem data nao ha sessao a calcular, logo nao ha horario a reservar. O pedido e valido e vai criar a venda quando aprovado, mas **sem sessao nenhuma** - as 2 teriam que ser agendadas depois pelo prontuario.
+
+    A data e opcional de proposito (permite lancar a venda e agendar depois), e a decisao de torna-la obrigatoria fica com o usuario. **O ponto que importa registrar: a fila fez exatamente o que devia, e o unico jeito de descobrir esse buraco de preenchimento foi o primeiro uso real.**
