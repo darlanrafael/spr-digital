@@ -87,7 +87,7 @@ export default function TerapeutasAgenda() {
         const BATCH = 200
         for (let i = 0; i < saleIds.length; i += BATCH) {
           const batch = saleIds.slice(i, i + BATCH)
-          const { data } = await client.from('sales').select('id,data_hora,order_id,oferta_nome').in('id', batch)
+          const { data } = await client.from('sales').select('id,data_hora,order_id,oferta_nome,produto').in('id', batch)
           for (const v of (data ?? []) as { id: string; data_hora: string; order_id?: string }[]) {
             dataHoraPorSale[v.id] = v.data_hora
             const formato = formatoDaVenda(v)

@@ -79,8 +79,8 @@ export async function POST(req: NextRequest) {
   let avisoIntervalo: string | null = null
   try {
     const { data: venda } = await client
-      .from('sales').select('id,order_id,oferta_nome').eq('id', sessao.sale_id).maybeSingle()
-    if (venda && formatoDaVenda(venda as { id: string; order_id?: string })) {
+      .from('sales').select('id,order_id,oferta_nome,produto').eq('id', sessao.sale_id).maybeSingle()
+    if (venda && formatoDaVenda(venda as { id: string; order_id?: string; oferta_nome?: string | null; produto?: string | null })) {
       // maybeSingle porque a primeira sessão não tem anterior e a última não
       // tem seguinte.
       const numeroSessaoAtual = sessao.numero_sessao as number

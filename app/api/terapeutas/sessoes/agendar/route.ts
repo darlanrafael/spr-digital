@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   if (terapErr || !terapeuta) return NextResponse.json({ error: 'Terapeuta não encontrado' }, { status: 404 })
 
   // Diagnostico Guiado: pacote com dois terapeutas. Detectado pela oferta.
-  const diagnostico = formatoDaVenda(sale as { id: string; order_id?: string })
+  const diagnostico = formatoDaVenda(sale as { id: string; order_id?: string; oferta_nome?: string | null; produto?: string | null })
 
   // O Diagnostico ACEITA datas soltas desde 02/09/2026. A regua de 7 dias
   // continua sendo o padrao que a tela calcula, mas o comercial pode ajustar

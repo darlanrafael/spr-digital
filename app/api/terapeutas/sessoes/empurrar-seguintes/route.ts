@@ -72,9 +72,9 @@ export async function POST(req: NextRequest) {
   // que aquele produto nunca seguiu, mexendo em consultas já combinadas com o
   // paciente. Só pacote do Diagnóstico (reconhecido pela oferta) passa.
   const { data: vendaMae, error: vendaErr } = await client
-    .from('sales').select('id,order_id,oferta_nome').eq('id', sessao.sale_id).maybeSingle()
+    .from('sales').select('id,order_id,oferta_nome,produto').eq('id', sessao.sale_id).maybeSingle()
   if (vendaErr) return NextResponse.json({ error: vendaErr.message }, { status: 500 })
-  if (!vendaMae || !formatoDaVenda(vendaMae as { id: string; order_id?: string })) {
+  if (!vendaMae || !formatoDaVenda(vendaMae as { id: string; order_id?: string; oferta_nome?: string | null; produto?: string | null })) {
     return NextResponse.json(
       { error: 'Empurrar as seguintes vale só para o Diagnóstico Guiado, que tem 7 dias fixos entre as sessões. Neste produto, remarque uma sessão de cada vez.' },
       { status: 400 },

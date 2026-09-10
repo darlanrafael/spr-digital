@@ -1,4 +1,5 @@
 import type { Sale } from '@/types'
+import { ehDiagnosticoGuiado } from './vendas-por-situacao'
 
 // O formato vem da OFERTA da Hubla, nunca do preco nem do nome.
 //
@@ -97,7 +98,9 @@ export function formatoDoNomeDaOferta(ofertaNome?: string | null): 1 | 2 | 3 | n
   return Number(m[1]) as 1 | 2 | 3
 }
 
-export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'> & { oferta_nome?: string | null }): FormatoDiagnostico | null {
+export function formatoDaVenda(
+  sale: Pick<Sale, 'id' | 'order_id'> & { oferta_nome?: string | null; produto?: string | null },
+): FormatoDiagnostico | null {
   // Excecao por venda vem primeiro: e o unico caso em que a oferta esta errada
   // e nao ha o que consultar nela.
   const excecao = sale.id ? EXCECOES_DIAGNOSTICO[sale.id] : undefined
@@ -109,10 +112,30 @@ export function formatoDaVenda(sale: Pick<Sale, 'id' | 'order_id'> & { oferta_no
   const porId = oferta ? OFERTAS_DIAGNOSTICO[oferta] : undefined
   if (porId) return { formato: porId, ...SESSOES_POR_FORMATO[porId] }
 
-  // Sem ID que resolva, vale o NOME da oferta. E o unico caminho possivel na
-  // Kiwify, e na Hubla so entra quando o ID nao disse nada - entao nao muda
-  // nenhuma venda que ja funciona hoje.
-  const porNome = formatoDoNomeDaOferta(sale.oferta_nome)
+  // Sem ID que resolva, vale o NOME da oferta - mas SO no produto do
+  // Diagnostico.
+  //
+  // A trava do produto foi acrescentada em 10/09/2026, depois de um defeito em
+  // producao que eu mesmo causei em 09/09. Caso real: AMANDA ALVES MACHADO
+  // CAVALLINI, produto "Mentoria Particular - Pedro | Denise", oferta
+  // "Formato 2 - 4 Sessoes". A leitura pelo nome casou "Formato 2" e a tela
+  // passou a chamar de Diagnostico uma Mentoria da Denise.
+  //
+  // O produto conjunto usa "Formato N" no nome da oferta com outro
+  // significado: ali o N e o codigo do pacote e a QUANTIDADE vem escrita ao
+  // lado ("Formato 2 - 2 Sessoes" sao DUAS). Sao dois vocabularios diferentes
+  // que colidem na mesma palavra, e nenhum dos dois vai mudar.
+  //
+  // Sete vendas leram errado: 4x "Formato 2 - 4 Sessoes", 2x "Formato 2 -
+  // 2 Sessoes" (que virariam 4 sessoes) e 1x "Formato 1 - Sessao Unica" (que
+  // viraria NOVE). Nenhuma tinha sido agendada depois do defeito, entao nao
+  // houve dano - o que existiu foi um dia de janela.
+  //
+  // Quem chama isto precisa trazer `produto` na consulta. Sem ele o caminho do
+  // nome nao vale, e uma venda de Diagnostico da Kiwify volta a cair no aviso
+  // de oferta desconhecida. O caminho do ID nao depende do produto e segue
+  // valendo para toda venda da Hubla.
+  const porNome = ehDiagnosticoGuiado(sale.produto ?? '') ? formatoDoNomeDaOferta(sale.oferta_nome) : null
   if (porNome) return { formato: porNome, ...SESSOES_POR_FORMATO[porNome] }
 
   return null

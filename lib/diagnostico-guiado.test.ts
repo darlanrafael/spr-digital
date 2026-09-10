@@ -337,6 +337,7 @@ test('CASO REAL: Ibraim, primeira venda de Diagnostico pela Kiwify', () => {
   // toda venda da Kiwify daqui pra frente.
   const f = formatoDaVenda({
     id: 'ibraim', order_id: '3783277c-b14c-4d5b-bf97-7c424d304a88', oferta_nome: 'FORMATO 2',
+    produto: 'Diagnóstico Guiado: Programa de acompanhamento Individual',
   } as never)
   assert.equal(f?.formato, 2)
   assert.equal(f?.totalSessoes, 4)
@@ -378,6 +379,63 @@ test('o nome e lido com folga de escrita', () => {
   assert.equal(formatoDoNomeDaOferta('FORMATO 02'), 2)
 })
 
+// ── A trava do PRODUTO no caminho do nome ───────────────────────────────────
+// Defeito real de 09-10/09/2026, causado pela correcao da Kiwify: o produto
+// "Mentoria Particular - Pedro | Denise" usa "Formato N" no nome da oferta com
+// OUTRO significado, e a leitura pelo nome passou a chamar Mentoria de
+// Diagnostico. As sete vendas abaixo sao as sete que leram errado em producao.
+test('CASO REAL: Amanda, Mentoria da Denise que virou Diagnostico', () => {
+  // O que o usuario reportou: "venda da Denise de 4 sessoes o sistema entendeu
+  // como diagnostico guiado". A coincidencia das 4 sessoes escondia o erro -
+  // a CONTA batia, a DIVISAO nao: viraria 1 do Pedro + 3 da Denise a R$ 95,
+  // em vez de 4 da Denise pelo percentual dela.
+  const f = formatoDaVenda({
+    id: '4c4bcbba-b55d-4bbc-8d6d-d4e3e162261b',
+    order_id: '636e4280-a87a-42bf-b17b-6c9a1ffdf6f0-vtRojHzIAzzJRq5PGWhO',
+    oferta_nome: 'Formato 2 - 4 Sessões',
+    produto: 'Mentoria Particular - Pedro | Denise',
+  } as never)
+  assert.equal(f, null, 'Mentoria com "Formato 2" no nome da oferta nao e Diagnostico')
+})
+
+test('CASO REAL: as ofertas do produto conjunto que colidiam', () => {
+  // "Formato 2 - 2 Sessoes" sao DUAS sessoes: ali o N e o codigo do pacote e a
+  // quantidade vem escrita ao lado. Lido como Diagnostico Formato 2 viraria 4.
+  // "Formato 1 - Sessao Unica" e UMA: viraria NOVE, com 7 da Denise.
+  const colisoes = [
+    ['Formato 2 - 4 Sessões', 'Jaqueline / Sara / Marcio / Amanda'],
+    ['Formato 2 - 2 Sessões', 'Daniel / Greice - viraria 4 sessoes'],
+    ['Formato 1 - Sessão Única', 'Osni - viraria 9 sessoes'],
+  ]
+  for (const [oferta, quem] of colisoes) {
+    const f = formatoDaVenda({
+      id: 'x', order_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-ofertaNaoMapeada',
+      oferta_nome: oferta, produto: 'Mentoria Particular - Pedro | Denise',
+    } as never)
+    assert.equal(f, null, `${quem}: "${oferta}" nao pode virar Diagnostico`)
+  }
+})
+
+test('sem o produto na consulta, o caminho do nome nao vale', () => {
+  // Registrado de proposito: e o custo da trava. Quem chamar formatoDaVenda
+  // sem trazer `produto` perde o reconhecimento das vendas da Kiwify, que e o
+  // motivo do caminho do nome existir. O teste de fiacao abaixo cobre isso nos
+  // selects; aqui fica a regra explicita.
+  const f = formatoDaVenda({ id: 'z', order_id: 'so-o-numero-do-pedido', oferta_nome: 'FORMATO 2' } as never)
+  assert.equal(f, null)
+})
+
+test('o caminho do ID nao depende do produto', () => {
+  // A trava e SO do nome. Venda da Hubla com oferta mapeada segue reconhecida
+  // mesmo que o produto esteja escrito de outro jeito - foi o caso da Paula,
+  // fechada dentro do produto da Mentoria.
+  const f = formatoDaVenda({
+    id: 'x', order_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee-H8DA8U21x7Lmv3NreVMs',
+    oferta_nome: null, produto: 'Mentoria Particular - Pedro Roncada',
+  } as never)
+  assert.equal(f?.formato, 2)
+})
+
 test('venda sem oferta nenhuma continua sem formato', () => {
   assert.equal(formatoDaVenda({ id: 'y', order_id: null, oferta_nome: null } as never), null)
 })
@@ -401,6 +459,9 @@ test('todo select que alimenta formatoDaVenda traz oferta_nome', () => {
     for (const linha of texto.split('\n')) {
       if (!linha.includes('order_id') || !linha.includes('select(')) continue
       assert.ok(linha.includes('oferta_nome'), `${arq}: select traz order_id mas nao oferta_nome -> ${linha.trim().slice(0, 100)}`)
+      // Desde 10/09/2026 o caminho do nome exige o produto: sem ele a venda de
+      // Diagnostico da Kiwify volta a cair no aviso de oferta desconhecida.
+      assert.ok(linha.includes('produto'), `${arq}: select traz oferta_nome mas nao produto -> ${linha.trim().slice(0, 100)}`)
     }
   }
 })
