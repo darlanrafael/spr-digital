@@ -3007,7 +3007,7 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     **CONTINUA ABERTO, e agora com tamanho conhecido:** o `sucesso: !item.json.error` do n8n. Enquanto ele estiver assim, qualquer erro futuro de numero volta a ser invisivel e o banco volta a mentir que enviou. Precisa de decisao do usuario: conferir `phone-exists` no cadastro do paciente, ou apertar a avaliacao da resposta no proprio n8n.
 
-49. **06-07/09/2026 - o comercial informa a quantidade quando o sistema nao sabe.** Mudanca de regra pedida pelo usuario, a partir de um caso real que travou o Felipe.
+49. **06-07/09/2026 - o comercial informa a quantidade quando o sistema nao sabe** (`5b9504e`). Mudanca de regra pedida pelo usuario, a partir de um caso real que travou o Felipe.
 
     **O caso.** Andre Tavares Barbosa, oferta **"F3 10% (Cópia)"**, R$ 5.450, produto "Mentoria Particular - Pedro Roncada", vendida em 04/09. O botao "Agendar" ficou travado com "Nao foi possivel determinar a quantidade".
 
@@ -3558,6 +3558,40 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **E ela provou em producao a correcao do mesmo dia:** as 15:52 o Felipe agendou o pacote dela pelo fluxo normal, e a distribuicao saiu certa - 1/4 com o Pedro (R$ 0) e 2/4, 3/4 e 4/4 com a Denise (R$ 95 cada), de 7 em 7 dias, com Meet em todas. **Antes de `9bf736c`, essa venda dava "oferta nao mapeada" e nao podia ser agendada.**
 
     ---
+
+    ---
+
+    ## 54.5. O historico da fila: aprovado sumia da tela
+
+    **Achado pelo usuario no primeiro uso real**, e nas palavras dele: *"O ibraim eu aprovei e voltou para o felipe fazer o agendamento.. porem ele nao aparece em meu historico"*.
+
+    **O defeito:** a rota `GET /api/terapeutas/aprovacoes/lancamento-manual` sempre devolveu duas listas - `pendentes` e `historico`. A tela lia **so `j4.pendentes`**. Aprovar tirava o item dos pendentes, e ele desaparecia por completo: nao havia como conferir depois o que foi decidido, por quem, ou quando.
+
+    Isso e pior do que parece numa fila de aprovacao. **A fila existe para dar rastro** - se o registro do que foi aprovado nao aparece em lugar nenhum, a fila protege contra a acao errada mas nao deixa prova da acao certa. E quem aprovou fica sem saber se a aprovacao pegou.
+
+    **Corrigido** com o estado `lancHistorico` e uma secao "ja decididos" abaixo dos pendentes, mostrando o que foi aprovado ou recusado, por quem e em que dia. A fila de troca de paciente (54.2) nasceu ja com o mesmo padrao (`historico`), de proposito - o defeito foi corrigido em `8b4c428`, o commit que criou aquela fila, exatamente para as duas nao divergirem.
+
+    **A licao, que e a mesma do item 50.6 em outra roupa:** a rota estava certa e o dado existia. O que faltava era a tela LER o que a rota mandava. Conferir a rota e concluir que funciona nao e conferir a feature - **so o uso real fecha o circuito**, e foi ele que achou.
+
+    ---
+
+    ## 54.6. A trava contra pagar a mesma sessao duas vezes: medida e confirmada
+
+    **Pedido explicito do usuario:** *"uma vez recebido o valor da sessao por mais que seja entregue no futuro precisa ter uma trava pra nao receber de novo"*.
+
+    A duvida nasceu de um fato real: o fechamento de 09/07 pagou sessao FUTURA (31 das 37). Se a trava nao existisse, cada uma dessas 31 voltaria a aparecer no fechamento seguinte quando fosse entregue, e o terapeuta receberia duas vezes pela mesma sessao.
+
+    **NAO E OPINIAO, FOI MEDIDO NO BANCO DE PRODUCAO.** Registro os tres achados porque essa pergunta vai voltar:
+
+    **1. As duas consultas do fechamento filtram `comissao_paga = false`.** E o unico portao, e ele esta nos dois lados - no preview (o que a tela mostra antes de confirmar) e na confirmacao. Sessao paga nao aparece nem para conferir.
+
+    **2. O `POST` marca como paga tanto a entregue quanto a antecipada.** E o ponto que fecha a trava: se ele marcasse so as entregues, a antecipacao criaria exatamente o pagamento duplo. Ele marca as duas.
+
+    **3. A prova no dado real: 30 sessoes foram pagas em julho e entregues DEPOIS. Nenhuma reapareceu em fechamento nenhum.** Zero repeticoes. A trava nao esta so escrita - ela ja foi exercitada por 30 casos reais, e passou.
+
+    **O que a trava NAO cobre, e precisa estar escrito:** ela e `comissao_paga`, um booleano por sessao. Protege contra pagar duas vezes. **Nao protege contra pagar o valor ERRADO uma vez** - se `comissao_valor` foi gravado errado no agendamento, o fechamento paga o valor errado e marca como pago, e nao existe caminho de recalculo (pendencia 7 do item 55). As duas coisas sao independentes: a trava do "quantas vezes" funciona, a do "quanto" nao existe.
+
+    **Sequela boa desta medicao:** ficou provado que o fechamento de 09/07 nao tinha defeito. Era antecipacao deliberada, e a pendencia que eu tinha aberto sobre ele foi fechada sem codigo - so com medicao.
 
 55. **10/09/2026 - PENDENCIAS CONSOLIDADAS.** Esta lista substitui as das secoes 46.11 e 50.8, que ficam como registro historico. Quem precisar saber o que falta deve ler AQUI.
 
