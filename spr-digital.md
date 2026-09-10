@@ -3455,3 +3455,139 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **Mas as reservas de horario ficaram vazias, e nao e defeito:** o payload veio com `proxima_sessao_data: null`. **O Felipe nao preencheu a data da primeira sessao.** Sem data nao ha sessao a calcular, logo nao ha horario a reservar. O pedido e valido e vai criar a venda quando aprovado, mas **sem sessao nenhuma** - as 2 teriam que ser agendadas depois pelo prontuario.
 
     A data e opcional de proposito (permite lancar a venda e agendar depois), e a decisao de torna-la obrigatoria fica com o usuario. **O ponto que importa registrar: a fila fez exatamente o que devia, e o unico jeito de descobrir esse buraco de preenchimento foi o primeiro uso real.**
+
+54. **09-10/09/2026 - nomenclatura CSP no trafego, e a troca de paciente passando a exigir aprovacao.** Quatro commits: `798aba1`, `d8e3d5f`, `8b4c428`, `43ed528`.
+
+    ---
+
+    ## 54.1. Nomenclatura CSP no investimento da tela inicial
+
+    **Pedido:** acrescentar mais uma nomenclatura de campanha para puxar o investimento em trafego.
+
+    **O que descobri ao abrir:** existem DOIS mecanismos diferentes, e so um deles precisava de codigo.
+
+    | Onde | De onde vem o termo |
+    |---|---|
+    | Tela de **Fechamentos** | o usuario DIGITA na hora, num campo que aceita vários - nao precisa de codigo |
+    | **Tela inicial** (investimento do dia) | lista FIXA no codigo - era `['[F01-IRM', '[PF01_RC']` |
+
+    E a lista estava **duplicada em dois arquivos** (`app/api/meta/insights` e `app/api/meta/test`). Acrescentar uma nomenclatura num e esquecer do outro faria a tela mostrar um numero e o teste confirmar outro, sem erro nenhum. Passou a viver em `lib/nomenclaturas-trafego.ts`, com teste que trava a volta da duplicacao.
+
+    **DUAS IDAS E VOLTAS MINHAS, registradas porque foram erro de processo e nao de codigo:**
+
+    1. Coloquei `'CSP_'` **com underscore**, por conta propria, para evitar falso positivo - as campanhas do print eram `CSP_Vendas_Frio_Advantage_...`. Nao foi o que ele pediu.
+    2. Quando ele perguntou *"E SE TIVER SOMENTE O CSP NAO PEGA?"*, comecei a construir um casamento por PALAVRA INTEIRA (`lib/casar-nomenclatura.ts`, com 10 testes) - uma solucao elegante para um problema que ele nao tinha pedido para resolver.
+
+    Ele foi explicito: *"POR FAVOR.. TUDO QUE TIVER CSP E PARA PEGAR NO NOME DA CAMPANHA"*. Apaguei o modulo novo e deixei `'CSP'` solto, casamento por CONTEM, como as demais.
+
+    **O custo dessa escolha esta registrado em teste, como comportamento ESPERADO e nao como bug:** campanha com as tres letras grudadas dentro de outra palavra ("CSPX", "ACSP") tambem entra. Se o investimento da tela inicial aparecer alto demais, e o primeiro lugar a olhar - a conta tem **246 campanhas** e gastou R$ 46.022,93 nos ultimos 30 dias.
+
+    **Nao consegui testar contra o Meta:** `META_ACCESS_TOKEN` so existe na Vercel, nao no `.env.local`. O numero precisa ser conferido na tela depois do deploy - o usuario confirmou que "aparentemente foi".
+
+    **A licao:** quando o pedido e simples e eu vejo um risco, o certo e apontar o risco e fazer o que foi pedido. Nas duas vezes eu decidi por ele, e nas duas ele tinha razao.
+
+    ---
+
+    ## 54.2. Troca de quem e o paciente: agora espera aprovacao
+
+    **O caso legitimo que motivou**, nas palavras do usuario: *"a mulher comprou uma sessao para o marido, ai ele queria colocar os dados do marido porem deixar uma ocorrencia registrada falando que os dados estavam com as informacoes do marido porem foi fulana de tal que comprou pela plataforma x com tal e-mail"*.
+
+    Antes so dava para escolher entre uma coisa e outra: ou o prontuario tinha os dados de quem atende, ou tinha os de quem comprou.
+
+    **E e exatamente a acao que estragou o cadastro em 04/08/2026** (ver 50.3). A diferenca e que ali ninguem registrou nada, e o unico motivo de ter sido possivel reconstruir o caso foi um SEGUNDO defeito: as sessoes ainda guardavam o nome antigo porque a edicao nao propagava para elas. **Corrigido aquele defeito em `d238ef5`, o proximo caso seria irrecuperavel.** Foi o que fechou a decisao.
+
+    **Decisao do usuario, em duas etapas na mesma conversa:**
+    1. *"pode deixar.. desde que ele registre uma ocorrencia e detalhe ao maximo"*
+    2. perguntado se a mudanca vale na hora ou espera: **"Espera sua aprovacao pra valer"**
+
+    **Como ficou:**
+
+    ```
+    comercial troca nome ou e-mail  -> exige motivo escrito (min. 10 letras)
+                                    -> vira pedido, NADA muda
+    CEO aprova   -> muda a venda, propaga para as sessoes, cria a nota
+    CEO recusa   -> nada muda, e a RECUSA tambem vira nota no prontuario
+    ```
+
+    **Corrigir telefone ou acento no nome continua valendo na hora.** So a troca de IDENTIDADE (nome ou e-mail) espera - e a mesma pergunta que a rota e a tela fazem, em `mudouIdentidade`.
+
+    **O custo aceito, dito na hora da escolha:** enquanto espera, o prontuario continua com os dados antigos, e o terapeuta pode atender vendo o nome errado nesse intervalo.
+
+    **A nota de aprovacao registra**, num paragrafo so: quem passou a ser o paciente, quem era antes, QUEM COMPROU com produto, valor, plataforma e data da compra, quantas sessoes receberam o nome novo, o motivo escrito pelo comercial e quem aprovou. Vai para `ocorrencias_prontuario`, nao so para o log - o log e auditoria, o prontuario e o que o terapeuta le antes de atender.
+
+    **Na tela de aprovacoes a fila vem PRIMEIRO**, antes de reembolso e de lancamento manual, porque e a acao mais sensivel da tela. Mostra o antes e o depois lado a lado, o contexto da compra, e quantas sessoes serao afetadas.
+
+    **E o comercial recebe aviso explicito** de que os dados continuam os antigos - sem isso ele fecha a tela achando que mudou, ve o nome velho e edita de novo, criando dois pedidos para a mesma coisa.
+
+    Migracao `20260909100000_solicitacoes_edicao_paciente.sql`, aplicada e conferida com insert real.
+
+    ---
+
+    ## 54.3. Os tres produtos do lancamento manual
+
+    **Pedido do usuario:** *"acho importante no agendamento manual colocar de qual produto deseja marcar? porque isso? como estamos com o diagnostico guiado existe uma distribuicao logica de cada sessao.. entao se for mentoria particular do Pedro..pergunta quantas sessoes.. se for diagnostico guiado pergunta qual pacote"*.
+
+    | Produto | O que a tela pergunta | Terapeuta |
+    |---|---|---|
+    | Mentoria Particular - Pedro Roncada | quantas sessoes | Pedro |
+    | Mentoria Particular - Denise Nascimento | quantas sessoes | Denise |
+    | Diagnostico Guiado | qual FORMATO | divide entre os dois |
+
+    No Diagnostico a quantidade **nao e escolha de quem lanca** - sai do formato, como no agendamento de venda real:
+
+    ```
+    Formato 1  ->  9 sessoes  ·  2 com Pedro, 7 com Denise
+    Formato 2  ->  4 sessoes  ·  1 com Pedro, 3 com Denise
+    Formato 3  ->  2 sessoes  ·  1 com Pedro, 1 com Denise
+    ```
+
+    `SESSOES_POR_FORMATO_PUBLICO` foi exportado de `lib/diagnostico-guiado.ts` para que a tabela seja **a mesma** nos dois caminhos: se ela divergir, o lancamento manual monta um pacote diferente do que o agendamento monta, e ninguem percebe. Ha teste travando isso.
+
+    **Efeito colateral bom:** isso encerra na origem as quatro grafias diferentes do mesmo produto (pendencia 1 do item 50.8) **para o lancamento manual**. Venda de plataforma continua trazendo o nome que a plataforma manda.
+
+    **AINDA NAO LIGADO NA TELA.** O modulo e a regra estao prontos e testados (`lib/produtos-do-lancamento-manual.ts`, 9 testes), mas o formulario do lancamento manual continua com campo de texto livre no produto. Falta trocar o campo pela lista e mostrar a pergunta certa conforme a escolha.
+
+    ---
+
+    ## 54.4. A venda de teste do Ibraim, excluida
+
+    O Felipe lancou o Ibraim manualmente para testar a fila, o usuario aprovou, e a venda `manual_1788987937967_p07fmp` foi criada com **zero sessoes** (o pedido veio sem a data da primeira sessao). A pedido dele, foi excluida: a venda, 1 linha de log e a solicitacao da fila.
+
+    **A venda REAL dele, da Kiwify (`166a57d7`), nao foi tocada** - e o script conferiu isso antes de apagar.
+
+    **E ela provou em producao a correcao do mesmo dia:** as 15:52 o Felipe agendou o pacote dela pelo fluxo normal, e a distribuicao saiu certa - 1/4 com o Pedro (R$ 0) e 2/4, 3/4 e 4/4 com a Denise (R$ 95 cada), de 7 em 7 dias, com Meet em todas. **Antes de `9bf736c`, essa venda dava "oferta nao mapeada" e nao podia ser agendada.**
+
+    ---
+
+55. **10/09/2026 - PENDENCIAS CONSOLIDADAS.** Esta lista substitui as das secoes 46.11 e 50.8, que ficam como registro historico. Quem precisar saber o que falta deve ler AQUI.
+
+    ## 55.1. Esperando decisao ou acao do usuario
+
+    1. **Ligar a lista de produtos no formulario do lancamento manual** (ver 54.3). A regra esta pronta e testada; o campo continua texto livre.
+    2. **Transcricao das sessoes** (item 51 inteiro). Falta uma coisa so: testar se o separador de vozes funciona rodando local. Meio dia, sem construir sistema.
+    3. **Marcar "Abater aqui" para os R$ 1.560 do Miguel** no proximo fechamento (Pedro absorve R$ 1.014, SPR R$ 546). A linha aparece sozinha; a caixa vem desmarcada de proposito.
+    4. **Data da primeira sessao no lancamento manual: obrigatoria ou nao?** Hoje e opcional, e foi por isso que o teste do Ibraim criou venda sem sessao. Torna-la obrigatoria fecha o caso de registrar venda antes de ter data com o paciente.
+    5. **Padronizar o nome do produto na plataforma.** Quatro grafias do mesmo produto. O lancamento manual ja foi resolvido (54.3), mas venda de plataforma continua trazendo o que a plataforma manda, e tudo que decide de quem e a venda depende do nome bater.
+
+    ## 55.2. Buracos conhecidos, sem custo hoje
+
+    6. **Estorno nao mexe em sessao nem em comissao.** Desde `9e9273e` ele AVISA, mas nao corrige sozinho: a sessao segue marcada e a comissao segue calculada sobre o pacote inteiro.
+    7. **A comissao ja gravada nunca e recalculada.** Custa R$ 0 hoje porque o Pedro e socio a 0%, mas `percentual_comissao` e campo de banco: se ele deixar de ser 0, as 410 sessoes dele entram de uma vez.
+    8. **Autenticacao dos `GET`** de `/api/terapeutas/vendas` e `/api/terapeutas/aprovacoes` continua inexistente. Os `GET` de pacote, estornos, lancamento manual e edicao de paciente ganharam checagem por usuario ATIVO, que **nao e autenticacao de verdade** - protege varredura anonima, nao quem saiba um e-mail cadastrado.
+    9. **`usuario_tipo` no log nao e confiavel:** o campo vem do que a tela manda, nao do cadastro. O mesmo usuario aparece como `comercial` e como `admin` com 4 minutos de diferenca.
+    10. **`order_ref` da Kiwify nunca e gravado.**
+    11. **A varredura preventiva diaria nunca foi construida.**
+
+    ## 55.3. Operacional
+
+    12. **Estender o "agendar assim mesmo" para `remarcar` e `empurrar-seguintes`** - 213 de 627 vagas da grade do Pedro estao bloqueadas so por compromisso.
+    13. **10 das 12 sessoes das 19:20 avancam sobre o bloqueio de JANTAR do Pedro** (19:30-20:10). Ja acontecia as 19:00; o usuario decidiu corrigir so o aviso da tela.
+    14. **A exclusao de compromisso por fora do app nao deixa rastro** em `atividades_log`.
+    15. **A Joicy tem 4 sessoes entregues e comprou 1 pacote de 2.** Duas da venda real (julho, Denise - depois corrigidas para o Pedro) e duas do lancamento manual (agosto, Pedro, uma confirmada por ele mesmo). Nao e duplicata de registro. Falta entender a compra.
+    16. **Residuo antigo no banco:** usuario `FELIPE TESTE` ativo desde 19/06, 28 linhas de `atividades_log` orfas, 2 solicitacoes de reembolso apontando para sessao inexistente, 1 ocorrencia "TESTE TESTE".
+
+    ## 55.4. Fechadas nesta rodada
+
+    - ~~Custo de trafego do Perpetuo CCC~~ **lancado** em 09/09 (item 53), R$ 3.682,17.
+    - ~~O fechamento de 09/07 marcou sessao futura como paga~~ **nao e defeito**: antecipacao deliberada, e a trava contra pagamento duplo foi verificada e funciona (30 sessoes pagas em julho e entregues depois nao reapareceram).
+    - ~~Bug de fuso na tela de fechamento~~ **nao existe**, medido e descartado (46.12).
