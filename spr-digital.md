@@ -3614,6 +3614,8 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     ## 55.3. Operacional
 
+    17. **As ofertas do produto conjunto usam "Formato N" com outro significado** (item 56). A colisao esta travada pelo produto, mas os dois vocabularios continuam existindo na plataforma. Se um dia o Diagnostico for vendido dentro do produto conjunto, a trava recusa - e o caminho e a excecao por venda (`EXCECOES_DIAGNOSTICO`), nao afrouxar a trava.
+
     12. **Estender o "agendar assim mesmo" para `remarcar` e `empurrar-seguintes`** - 213 de 627 vagas da grade do Pedro estao bloqueadas so por compromisso.
     13. **10 das 12 sessoes das 19:20 avancam sobre o bloqueio de JANTAR do Pedro** (19:30-20:10). Ja acontecia as 19:00; o usuario decidiu corrigir so o aviso da tela.
     14. **A exclusao de compromisso por fora do app nao deixa rastro** em `atividades_log`.
@@ -3625,3 +3627,120 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     - ~~Custo de trafego do Perpetuo CCC~~ **lancado** em 09/09 (item 53), R$ 3.682,17.
     - ~~O fechamento de 09/07 marcou sessao futura como paga~~ **nao e defeito**: antecipacao deliberada, e a trava contra pagamento duplo foi verificada e funciona (30 sessoes pagas em julho e entregues depois nao reapareceram).
     - ~~Bug de fuso na tela de fechamento~~ **nao existe**, medido e descartado (46.12).
+
+56. **10/09/2026 - A CORRECAO DA KIWIFY QUEBROU A MENTORIA: "Formato N" significa duas coisas diferentes.** Commit `85d8782`. Defeito que **eu** causei em 09/09 com `9bf736c`, e que o usuario achou em producao no dia seguinte.
+
+    ---
+
+    ## 56.1. O que o usuario viu
+
+    Palavras dele: *"Saiu uma venda de Amanda Alves Machado.. venda da Denise de 4 sessoes o sistema entendeu como diagnostico guiado... nao entendi porque isso aconteceu"*.
+
+    A venda, feita hoje as 09:48:
+
+    ```
+    id           4c4bcbba-b55d-4bbc-8d6d-d4e3e162261b
+    nome         AMANDA ALVES MACHADO CAVALLINI
+    produto      Mentoria Particular - Pedro | Denise
+    oferta_nome  "Formato 2 - 4 Sessões"        <-- a causa
+    order_id     636e4280-...-vtRojHzIAzzJRq5PGWhO
+    valor        R$ 1.349,65   hubla   aprovada
+    ```
+
+    ---
+
+    ## 56.2. A causa: duas linguagens colidindo na mesma palavra
+
+    Em 09/09 eu publiquei `9bf736c` para resolver a venda do Ibraim pela Kiwify: como o `order_id` da Kiwify nao carrega a oferta, o formato passou a ser lido tambem do **nome** da oferta, quando o ID nao diz nada.
+
+    **O que eu nao vi:** o produto conjunto `Mentoria Particular - Pedro | Denise` usa "Formato N" no nome da oferta com **outro significado**.
+
+    | Vocabulario | Exemplo | O que o N quer dizer | Quantas sessoes |
+    |---|---|---|---|
+    | Diagnostico Guiado | `FORMATO 2` | o formato do pacote | 4, dividido 1 Pedro + 3 Denise |
+    | Mentoria conjunta | `Formato 2 - 4 Sessões` | codigo do pacote | **esta escrito ao lado** |
+
+    No produto conjunto a quantidade vem no proprio nome, e o N e so um codigo. Sao dois dicionarios diferentes usando a mesma palavra, e **nenhum dos dois vai mudar** - sao nomes de oferta criados na plataforma pelo comercial.
+
+    ---
+
+    ## 56.3. As sete vendas que leram errado, e por que a da Amanda era a menos grave
+
+    ```
+    06/08  Greice kelly Rita Barbosa     "Formato 2 - 2 Sessões"     R$   760,94
+    25/08  Márcio de Castro Fonseca      "Formato 2 - 4 Sessões"     R$ 1.349,65
+    02/09  Osni Wesolovski               "Formato 1 - Sessão Única"  R$   542,58
+    03/09  Jaqueline de Freitas O. R.    "Formato 2 - 4 Sessões"     R$ 1.349,65
+    04/09  Daniel Botelho Cabral         "Formato 2 - 2 Sessões"     R$   760,94
+    08/09  Sara Batista                  "Formato 2 - 4 Sessões"     R$ 1.349,65
+    10/09  AMANDA ALVES MACHADO CAVALLINI "Formato 2 - 4 Sessões"    R$ 1.349,65
+    ```
+
+    **A coincidencia das 4 sessoes escondia o problema de verdade.** Nas quatro vendas de "Formato 2 - 4 Sessoes" a CONTA batia - Diagnostico Formato 2 tambem tem 4 sessoes. O que nao batia era a DIVISAO e o DINHEIRO:
+
+    | | Certo (Mentoria) | O que teria sido criado |
+    |---|---|---|
+    | sessoes | 4 com a Denise | 1 com o Pedro + 3 com a Denise |
+    | comissao | percentual dela (R$ 88,22/sessao) | R$ 95 fixos x 3 = R$ 285 |
+    | resultado | Denise recebe R$ 352,86 | Denise recebe R$ 285, e o Pedro fica com uma sessao que nao e dele |
+
+    **Os dois casos piores nao tinham coincidencia nenhuma:**
+
+    - **"Formato 2 - 2 Sessoes"** (Daniel, Greice) sao DUAS sessoes. Lido como Diagnostico Formato 2, viraria **4** - o dobro do vendido.
+    - **"Formato 1 - Sessao Unica"** (Osni, R$ 542,58) e UMA sessao. Lido como Diagnostico Formato 1, viraria **NOVE**, sendo 7 da Denise. Uma venda de meio mil reais gerando nove sessoes na agenda.
+
+    ---
+
+    ## 56.4. DANO REAL: ZERO. E o motivo e sorte de calendario, nao merito do desenho
+
+    Conferi as sessoes das sete vendas, uma por uma, no banco de producao:
+
+    - **As seis anteriores foram todas agendadas ANTES de `9bf736c`** (publicado em 09/09 as 12:35). Saiu tudo certo: quantidade correta, todas com a Denise, comissao pelo percentual dela.
+    - **A da Amanda tinha ZERO sessoes.** Entrou hoje as 09:48 e ninguem clicou em Agendar. O usuario viu a etiqueta errada na tela e reportou antes de qualquer coisa ser criada.
+
+    **A janela de exposicao foi de aproximadamente 24 horas** - de 09/09 12:35 a 10/09, quando corrigi. Nesse intervalo, qualquer clique em Agendar numa das sete teria montado o pacote errado, e nas duas de "2 Sessoes" teria dobrado a agenda.
+
+    **Isto nao e um final feliz de desenho, e um final feliz de acaso.** O que salvou foi o usuario ter olhado a tela no mesmo dia.
+
+    ---
+
+    ## 56.5. A correcao: a trava e SO do caminho do nome
+
+    ```ts
+    const porNome = ehDiagnosticoGuiado(sale.produto ?? '') ? formatoDoNomeDaOferta(sale.oferta_nome) : null
+    ```
+
+    **O caminho do ID da oferta continua sem depender do produto**, de proposito. Na Hubla o ID e estavel, e foi por ele que a venda da Paula Caroline funcionou mesmo tendo sido fechada dentro do produto da Mentoria. Travar o ID pelo produto quebraria esse caso e todos os parecidos.
+
+    **O custo da trava, escrito em teste e nao so em comentario:** quem chamar `formatoDaVenda` sem trazer `produto` na consulta perde o reconhecimento das vendas da Kiwify - que e exatamente o motivo do caminho do nome existir. Eram **quatro** consultas com `oferta_nome` e sem `produto`: `remarcar`, `empurrar-seguintes`, `dashboard` e `agenda/page.tsx`.
+
+    **O teste de fiacao achou o quarto, que eu havia deixado passar.** Eu corrigi tres, rodei, e ele falhou apontando o `agenda/page.tsx`. E o mesmo teste que existia desde `9bf736c` exigindo `oferta_nome` junto de `order_id` - agora exige `produto` junto de `oferta_nome`. **Foi a segunda vez que essa familia de teste pegou um erro meu.**
+
+    **Os casts estreitos, tambem corrigidos.** Tres rotas chamavam `formatoDaVenda(x as { id: string; order_id?: string })`. O objeto tinha `oferta_nome` e `produto` em runtime, mas o TIPO nao - entao tirar o campo da consulta **nao dava erro de compilacao**. Alargados para incluir os dois campos: agora o compilador cobra junto com o teste.
+
+    ---
+
+    ## 56.6. Medicao em producao, depois da correcao
+
+    ```
+    vendas com PRODUTO Diagnostico:        17
+    vendas RECONHECIDAS com formato:       17
+    falso positivo:                         0
+    reconhecimento perdido:                 0
+    ```
+
+    As sete da Mentoria voltaram a `null`. Ibraim (Kiwify) e Paula (excecao) seguem reconhecidos. 424 testes, `tsc` limpo, build OK.
+
+    ---
+
+    ## 56.7. O QUE EU ERREI, e o que isso ensina sobre o teste
+
+    **O comentario que eu escrevi em `9bf736c` era falso**, e esta no repositorio como prova:
+
+    > *"na Hubla so entra quando o ID nao disse nada - entao nao muda nenhuma venda que ja funciona hoje"*
+
+    A primeira metade e verdadeira. **A segunda e uma conclusao que eu nao medi.** Eu conferi as ofertas MAPEADAS e vi que nenhuma mudava. Nao conferi o conjunto que importava: **as ofertas NAO mapeadas cujo nome contem "formato"**. Se eu tivesse rodado a varredura de uma linha que rodei hoje, teria visto as sete na hora.
+
+    **O padrao e primo do que esta em 50.6.** Lá eu tratei resultado vazio como resposta sobre o mundo. Aqui eu tratei "as vendas que ja funcionam nao mudam" como se fosse a pergunta inteira, quando a pergunta era "que vendas passam a ser reconhecidas agora?". **Ampliar uma regra de reconhecimento exige medir o que ENTRA, nao so o que continua igual.**
+
+    **Regra para a proxima vez:** toda vez que uma regra de classificacao ganhar um caminho novo, rodar a varredura completa de producao ANTES de publicar, listando tudo que o caminho novo passa a casar. Nao e opcional e nao e caro - a varredura de hoje levou menos de um minuto em 10.703 vendas.
