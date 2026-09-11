@@ -3614,6 +3614,12 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     ## 55.3. Operacional
 
+    18. **O webhook da Hubla nao trata moeda estrangeira** (item 57). A proxima venda internacional entra em euro/dolar gravado como reais. O sinal existe no payload (`receivers[].currency` e `amount.settlement`) e nao e lido. A Kiwify tem detector; a Hubla nao tem nada.
+
+    19. **5 vendas da Kiwify de maio/2026 em moeda estrangeira** seguem com liquido acima do pago (item 57.6). Estao fora dos periodos em aberto e entraram em fechamentos passados.
+
+    20. **A base do imposto brasileiro na venda internacional inclui o IVA estrangeiro** (item 57.5). Decisao contabil pendente: excluir o IVA derruba o imposto da venda da Rosana de R$ 231,38 para R$ 188,11. O liquido nao muda.
+
     17. **As ofertas do produto conjunto usam "Formato N" com outro significado** (item 56). A colisao esta travada pelo produto, mas os dois vocabularios continuam existindo na plataforma. Se um dia o Diagnostico for vendido dentro do produto conjunto, a trava recusa - e o caminho e a excecao por venda (`EXCECOES_DIAGNOSTICO`), nao afrouxar a trava.
 
     12. **Estender o "agendar assim mesmo" para `remarcar` e `empurrar-seguintes`** - 213 de 627 vagas da grade do Pedro estao bloqueadas so por compromisso.
@@ -3744,3 +3750,133 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **O padrao e primo do que esta em 50.6.** Lá eu tratei resultado vazio como resposta sobre o mundo. Aqui eu tratei "as vendas que ja funcionam nao mudam" como se fosse a pergunta inteira, quando a pergunta era "que vendas passam a ser reconhecidas agora?". **Ampliar uma regra de reconhecimento exige medir o que ENTRA, nao so o que continua igual.**
 
     **Regra para a proxima vez:** toda vez que uma regra de classificacao ganhar um caminho novo, rodar a varredura completa de producao ANTES de publicar, listando tudo que o caminho novo passa a casar. Nao e opcional e nao e caro - a varredura de hoje levou menos de um minuto em 10.703 vendas.
+
+57. **11/09/2026 - A PRIMEIRA VENDA INTERNACIONAL DA HUBLA: euro e dolar gravados como reais.** Correcao de dado em producao, script `scripts/converter-venda-em-moeda-estrangeira.ts`. Achado pelo usuario durante um fechamento: *"Estou fazendo um fechamento agora e apareceu isso. Estou sem entender"*.
+
+    ---
+
+    ## 57.1. O alerta que apareceu
+
+    Na aba Conferencia com as plataformas, dentro do fechamento de setembro:
+
+    ```
+    1 venda(s) com liquido maior que o valor pago
+    05/09/2026 · Mentoria Particular - Pedro Roncada · pago R$ 259,80 · liquido R$ 278,73
+    ```
+
+    A trava e `valor_liquido > valor_pago_cliente`, e existe desde 10/08/2026 como **preventiva** - o comentario no webhook da Hubla dizia "Nenhum caso detectado na Hubla ate 10/08/2026". Foi o primeiro disparo real dela, e ela fez o servico: **pegou a venda antes de o fechamento ser confirmado.**
+
+    ---
+
+    ## 57.2. A causa: a venda inteira estava em moeda estrangeira
+
+    Rosana Martins Afonso, telefone `+351` (Portugal), fatura `1f0890b1-26e4-4b2b-b255-0a8b1d38f24d`. **Primeira venda internacional que passou pela Hubla: 1 em 1.992 eventos no log.**
+
+    A cadeia real, confirmada nos dois lados (payload do webhook e painel da Hubla):
+
+    ```
+    cliente pagou          EUR 319,55    = 259,80 da oferta + 23% de IVA
+    Hubla liquidou em      USD 360,12    = 292,78 + 67,34 de IVA
+    - IVA de Portugal      USD  67,34    retido na fonte
+    - taxa Hubla 4,8%      USD  14,05
+    = repasse ao vendedor  USD 278,73
+    ```
+
+    **O webhook nao le o campo de moeda.** Ele gravou:
+
+    | campo | de onde veio | moeda real | gravado como |
+    |---|---|---|---|
+    | `preco_base` | `amount.subtotalCents` | EUR 259,80 | R$ 259,80 |
+    | `valor_pago_cliente` | `amount.subtotalCents` | EUR 259,80 | R$ 259,80 |
+    | `valor_com_juros` | `amount.totalCents` | EUR 319,55 | R$ 319,55 |
+    | `valor_liquido` | `receivers[seller].totalCents` | **USD 278,73** | R$ 278,73 |
+
+    **Tres campos em euro e um em dolar, todos rotulados reais.** O alerta disparou porque os dois que ele compara estavam em moedas DIFERENTES - foi o unico sintoma visivel.
+
+    ---
+
+    ## 57.3. Como eu tive certeza de que nao era reais (o raciocinio, para nao ser refeito)
+
+    Duas medicoes fecharam a questao, e valem registro porque a primeira hipotese era outra:
+
+    **1. A hipotese inicial estava errada.** O texto do proprio alerta diz *"o faturamento liquido esta superestimado"*, e ele foi escrito pensando em PARCELAMENTO. Nesta venda `installments: 1` - pagamento a vista, nao ha juros. O liquido nao estava superestimado: estava **subestimado**, e por muito.
+
+    **2. O fator entre os dois blocos do payload e 1,1269.** Se o bloco `amount` fosse reais e o `settlement` dolar, esse fator teria que ser ~0,18. Sendo 1,1269, os dois blocos NAO sao reais e dolar - e euro e dolar. **Isso sozinho provou que `amount` nao esta em reais.**
+
+    **3. Os 23% aparecem duas vezes**, exatos, nos dois blocos: `319,55 / 259,80 = 1,23` e `360,12 / 292,78 = 1,23`. **23% e a taxa de IVA de Portugal**, e o telefone da cliente e de Portugal. Tres sinais independentes apontando o mesmo lugar.
+
+    **4. E a contabilidade fecha na casa dos centavos:** `278,73 (vendedor) + 14,05 (taxa) = 292,78 (subtotal do acerto)`, e `81,39 (plataforma) = 67,34 (IVA) + 14,05 (taxa)`.
+
+    **Medicao de controle que confirmou a leitura:** em 36 de 40 vendas normais da Hubla, `plataforma + vendedor` soma **exatamente** `amount.totalCents`, e os `receivers` vem marcados `BRL`. Nesta venda eles vem marcados `USD` e somam o total do bloco `settlement`. Os outros 4 casos que nao fecharam eram so ruido de ponto flutuante (`29699,999999999996`), nao anomalia.
+
+    **Detalhe que atrasou o diagnostico: a tela da Hubla esconde a linha do IVA.** Ela mostra "venda $360.12 - taxa $14.05 = liquido $278.73", que nao fecha. Os $67,34 aparecem so no payload.
+
+    ---
+
+    ## 57.4. O cambio, e por que nao ha cotacao oficial
+
+    **A Hubla paga em DOLAR e nao converte** - nao existe valor em reais no painel dela. O usuario conferiu: *"essa venda nao mostra em reais"*.
+
+    Busquei a cotacao oficial no Banco Central e **05/09/2026 foi SABADO**: nao existe PTAX em fim de semana. As uteis vizinhas eram **5,1253 (04/09)** e **5,0856 (08/09)**, o que dava liquido de R$ 1.428,57 ou R$ 1.417,51 - R$ 11,06 de diferenca entre as duas.
+
+    **Decisao do usuario em 11/09/2026: *"vamos considerar 5,00"*.** Cambio fixo, escolhido por ele, mais conservador que as duas cotacoes reais.
+
+    ---
+
+    ## 57.5. A correcao aplicada
+
+    ```
+    campo                  antes      depois
+    preco_base             259,80  -> 1.463,90     (USD 292,78 x 5)
+    valor_pago_cliente     259,80  -> 1.463,90
+    valor_com_juros        319,55  -> 1.800,60     (USD 360,12 x 5)
+    valor_liquido          278,73  -> 1.393,65     (USD 278,73 x 5)
+    ```
+
+    O mapeamento segue **campo por campo a semantica que a Hubla ja tem no sistema**, para a linha do fechamento fechar sozinha:
+
+    ```
+    faturamento bruto     R$ 1.463,90   (getSaleBruto = valor_pago_cliente)
+    taxas da plataforma   R$    70,25   = bruto - liquido, e exatamente a taxa Hubla x 5
+    imposto 12,85%        R$   231,38   (getImpostoBase = valor_com_juros)
+    faturamento liquido   R$ 1.393,65
+    liquido pos-imposto   R$ 1.162,27
+    ```
+
+    **Entraram R$ 1.114,92 de faturamento liquido que estavam faltando.** A taxa deixou de ser **negativa** (era `259,80 - 278,73 = -18,93`, o sintoma na tela) e o alerta saiu.
+
+    **Duas escolhas minhas, ditas ao usuario na hora e nao escondidas:**
+
+    1. **O IVA de Portugal ficou FORA do bruto.** Os USD 67,34 foram cobrados a mais do cliente e remetidos ao fisco portugues - nunca foram dinheiro da empresa. Por isso bruto = R$ 1.463,90 (a venda) e nao R$ 1.800,60 (venda + IVA).
+    2. **Mas a base do imposto brasileiro ficou em R$ 1.800,60, que INCLUI o IVA**, porque e a regra que o sistema ja aplica em toda venda da Hubla (`getImpostoBase` = valor com juros).
+
+    **PENDENTE DE DECISAO CONTABIL, registrada e nao decidida por mim:** se o contador disser que a base do imposto deve excluir o IVA portugues, e trocar `valor_com_juros` para 1463.90 - o imposto cai de **R$ 231,38 para R$ 188,11**. **O liquido nao muda em nenhuma das duas leituras**, entao o repasse aos socios esta correto de qualquer forma.
+
+    **O alerta de bitributacao tambem foi levantado e nao decidido:** a venda paga 23% de IVA em Portugal e 12,85% no Brasil.
+
+    ---
+
+    ## 57.6. Guardas do script, e verificacao
+
+    O script roda em **ensaio por padrao** e aborta se: a fatura nao for a esperada, a plataforma nao for `hubla`, o `valor_liquido` nao for mais 278,73 (alguem ja mexeu), ou a venda ja estiver consistente. Fica versionado no repositorio como molde para a proxima venda internacional.
+
+    **Depois de gravar, varredura completa em 10.768 vendas:**
+
+    ```
+    ainda com liquido acima do pago: 5   (todas Kiwify, maio/2026)
+      20/05 Chico Sousa        pago 150,89  liq 175,04
+      21/05 Daniel Barbosa     pago  39,56  liq  44,42
+      21/05 Alexis             pago  34,55  liq  40,96
+      21/05 Alexis             pago 150,22  liq 173,96
+      21/05 Daniel Barbosa     pago 155,23  liq 170,25
+    ```
+
+    **Nenhuma em setembro: o fechamento do usuario ficou sem alerta.** As 5 da Kiwify sao do detector antigo de moeda estrangeira (27 vendas historicas conhecidas, mai-jun/2026), estao fora do periodo e entraram em fechamentos passados - ficam como pendencia.
+
+    ---
+
+    ## 57.7. O buraco que continua aberto
+
+    **O webhook da Hubla nao le moeda nenhuma.** A Kiwify tem detector desde junho; a Hubla nao tem nada. **A proxima venda internacional entra torta do mesmo jeito** - e agora sabemos que ela vem com `receivers[].currency` e com o bloco `amount.settlement`, que e exatamente o sinal que faltava.
+
+    A correcao de hoje foi no DADO, nao no CODIGO. Esta na lista de pendencias.
