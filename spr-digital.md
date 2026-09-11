@@ -3616,9 +3616,9 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     18. ~~**O webhook da Hubla nao trata moeda estrangeira**~~ **RESOLVIDO em 11/09/2026** (item 58): os dois webhooks leem a moeda, a linha sai homogenea, e o fechamento trava enquanto houver venda nao convertida.
 
-    19. **5 vendas da Kiwify de maio/2026 em moeda estrangeira** seguem com liquido acima do pago (item 57.6). Estao fora dos periodos em aberto e entraram em fechamentos passados.
+    19. ~~**5 vendas da Kiwify de maio/2026 em moeda estrangeira**~~ **DECIDIDO em 11/09/2026: ficam como estao** (item 59.1). R$ 74,18 em dois fechamentos ja confirmados que somam R$ 375.374,79. Nao travam nada e nao voltam.
 
-    20. **A base do imposto brasileiro na venda internacional inclui o IVA estrangeiro** (item 57.5). Decisao contabil pendente: excluir o IVA derruba o imposto da venda da Rosana de R$ 231,38 para R$ 188,11. O liquido nao muda.
+    20. ~~**A base do imposto brasileiro inclui o IVA estrangeiro**~~ **DECIDIDO em 11/09/2026: fica como esta** (item 59.2). R$ 43,27 a mais de provisao, para cima e nao para baixo. O liquido nao muda, entao o repasse aos socios esta certo de qualquer forma.
 
     17. **As ofertas do produto conjunto usam "Formato N" com outro significado** (item 56). A colisao esta travada pelo produto, mas os dois vocabularios continuam existindo na plataforma. Se um dia o Diagnostico for vendido dentro do produto conjunto, a trava recusa - e o caminho e a excecao por venda (`EXCECOES_DIAGNOSTICO`), nao afrouxar a trava.
 
@@ -3633,6 +3633,9 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     - ~~Custo de trafego do Perpetuo CCC~~ **lancado** em 09/09 (item 53), R$ 3.682,17.
     - ~~O fechamento de 09/07 marcou sessao futura como paga~~ **nao e defeito**: antecipacao deliberada, e a trava contra pagamento duplo foi verificada e funciona (30 sessoes pagas em julho e entregues depois nao reapareceram).
     - ~~Bug de fuso na tela de fechamento~~ **nao existe**, medido e descartado (46.12).
+    - ~~5 vendas da Kiwify de maio em moeda estrangeira~~ **decidido em 11/09: ficam como estao** (59.1).
+    - ~~Base do imposto com IVA estrangeiro~~ **decidido em 11/09: fica como esta** (59.2).
+    - ~~Webhook sem tratar moeda estrangeira~~ **resolvido em 11/09** (item 58).
 
 56. **10/09/2026 - A CORRECAO DA KIWIFY QUEBROU A MENTORIA: "Formato N" significa duas coisas diferentes.** Commit `85d8782`. Defeito que **eu** causei em 09/09 com `9bf736c`, e que o usuario achou em producao no dia seguinte.
 
@@ -3989,3 +3992,141 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     - **As 5 vendas da Kiwify de maio/2026** continuam com liquido acima do pago (pendencia 19). Sao anteriores a coluna `moeda`, entao nao aparecem na fila de conversao. Estao fora dos periodos em aberto.
     - **A base do imposto brasileiro** numa venda internacional continua incluindo o imposto estrangeiro (pendencia 20). Decisao contabil, nao tecnica.
     - **Vendas antigas** nao foram remarcadas: a deteccao vale para o que entrar daqui pra frente, conforme a regra de corte que o usuario ja estabeleceu.
+
+59. **11/09/2026 - DUAS DECISOES DO USUARIO QUE FECHAM PENDENCIAS SEM CODIGO.** Palavras dele: *"essas vendas de Maio deixa como esta e a base do imposto tbm.. deixa tudo documentado no MD com maxima redundancia de detalhes"*.
+
+    **Este item existe para que ninguem reabra nenhuma das duas.** As duas foram levantadas por mim, medidas por mim, apresentadas com numero e decididas por ele. **Nao sao pendencias. Sao assuntos encerrados.** Quem encontrar qualquer uma delas numa varredura futura deve ler aqui antes de propor correcao.
+
+    ---
+
+    ## 59.1. DECISAO 1: as 5 vendas da Kiwify de maio/2026 ficam como estao
+
+    ### As cinco, uma por uma, com tudo que se sabe
+
+    ```
+    20/05/2026 20:34  Chico Sousa          chicosousa2010@hotmail.com
+                      Como convencer seu cônjuge
+                      base 197,00 | pago 150,89 | liquido 175,04 | aprovada
+                      telefone 7958464882 | order oOL5gJq
+
+    21/05/2026 02:24  Alexis               alexworkshop1995@hotmail.com
+                      Combo: Primeiros Passos da Restauração - OB - imersão
+                      base  44,90 | pago  34,55 | liquido  40,96 | aprovada
+                      telefone 447732716995 (Reino Unido) | order 8lNkGKu
+
+    21/05/2026 02:24  Alexis               alexworkshop1995@hotmail.com
+                      Como convencer seu cônjuge
+                      base 197,00 | pago 150,22 | liquido 173,96 | aprovada
+                      telefone 447732716995 (Reino Unido) | order wUW3vUG
+
+    21/05/2026 04:53  Daniel Barbosa       danielgoncalves86@hotmail.com
+                      Combo: Primeiros Passos da Restauração - OB - imersão
+                      base  44,90 | pago  39,56 | liquido  44,42 | aprovada
+                      telefone 41792455529 (Suíça) | order xGYU4Hn
+
+    21/05/2026 04:53  Daniel Barbosa       danielgoncalves86@hotmail.com
+                      Como convencer seu cônjuge
+                      base 197,00 | pago 155,23 | liquido 170,25 | aprovada
+                      telefone 41792455529 (Suíça) | order OiZAyKo
+    ```
+
+    **Sao 3 clientes, nao 5.** Alexis e Daniel compraram dois produtos cada, no mesmo minuto - uma compra so, duas linhas. Os telefones confirmam o que os numeros ja diziam: `+44` Reino Unido e `+41` Suica.
+
+    ### Qual e exatamente o defeito
+
+    Em todas, `valor_liquido > valor_pago_cliente`. Impossivel na pratica: o produtor nao pode receber mais do que o cliente pagou.
+
+    A causa e a mesma do item 57, na outra plataforma: a Kiwify manda `charge_amount` e `my_commission` na moeda estrangeira, e `product_base_price` em real. **Tres campos, duas moedas, uma linha.** Nesta epoca o codigo nao lia `Commissions.currency` (o campo existia; ver 58.2).
+
+    ### O tamanho do erro, medido e nao estimado
+
+    ```
+    SOMA das 5:   base 680,80  |  pago 530,45  |  liquido 604,63
+    liquido - pago = R$ 74,18   <- todo o erro cabe aqui
+    ```
+
+    **R$ 74,18.** E o mesmo numero que ja estava escrito no comentario do webhook da Kiwify desde junho.
+
+    ### Em quais fechamentos elas entraram
+
+    ```
+    close_1783384583964 | 01/06 a 06/07 | bruto R$ 274.674,79 | FECHAMENTO IAR
+      contem 2: Daniel Barbosa, Alexis
+
+    close_1783445699441 | 11/05 a 07/07 | bruto R$ 100.700,00 | FECHAMENTO PERPÉTUO - CCC
+      contem 3: Chico Sousa, Alexis, Daniel Barbosa
+    ```
+
+    **Os dois fechamentos estao CONFIRMADOS e somam R$ 375.374,79 de faturamento bruto.** O erro de R$ 74,18 representa **0,02%** disso.
+
+    ### Por que a decisao de nao mexer esta certa
+
+    1. **Os dois fechamentos ja foram confirmados e o dinheiro ja foi repassado aos socios.** Corrigir as vendas agora nao devolve nada: exigiria refazer dois fechamentos fechados, com rateio, e gerar acerto retroativo de R$ 74,18 divididos entre duas competencias.
+    2. **R$ 74,18 em R$ 375.374,79.** O custo de mexer e maior que o erro.
+    3. **Elas nao vao voltar a incomodar.** Sao anteriores a coluna `moeda` (criada em 11/09), entao **nao aparecem na fila de conversao** do item 58 e nao travam fechamento nenhum. So aparecem no aviso amarelo de conferencia, se algum dia um periodo em aberto as alcancar - e maio ja esta fechado.
+    4. **A regra de corte que o usuario ja estabeleceu se aplica:** regra nova vale para o que entra depois. As cinco sao de maio; a leitura de moeda e de setembro.
+
+    ### O que continua acontecendo, e esta certo que continue
+
+    O alerta `liquido maior que o valor pago` **continua disparando** para essas cinco se um fechamento as incluir. **Nao foi silenciado de proposito.** Silenciar exigiria uma lista de excecoes por venda, e uma lista dessas e exatamente o tipo de coisa que esconde o proximo caso de verdade. O aviso e amarelo, nao trava nada, e quem ler cai neste item.
+
+    ---
+
+    ## 59.2. DECISAO 2: a base do imposto brasileiro continua incluindo o imposto estrangeiro
+
+    ### O caso concreto
+
+    Na venda da Rosana (item 57), a cadeia foi:
+
+    ```
+    cliente pagou          EUR 319,55  = 259,80 da oferta + 23% de IVA de Portugal
+    Hubla liquidou em      USD 360,12  = 292,78 + 67,34 de IVA
+    - IVA de Portugal      USD  67,34  retido na fonte, remetido ao fisco portugues
+    - taxa Hubla 4,8%      USD  14,05
+    = repasse ao vendedor  USD 278,73
+    ```
+
+    Convertido a 5,00 (cambio escolhido pelo usuario), gravado em producao:
+
+    ```
+    preco_base          R$ 1.463,90
+    valor_pago_cliente  R$ 1.463,90   -> vira o faturamento BRUTO
+    valor_com_juros     R$ 1.800,60   -> vira a BASE DO IMPOSTO
+    valor_liquido       R$ 1.393,65
+    ```
+
+    ### A pergunta que eu levantei
+
+    `getImpostoBase` devolve `valor_com_juros`, que aqui e **R$ 1.800,60 - e esse numero INCLUI o IVA portugues de R$ 336,70**. Ou seja: a venda paga 23% de imposto em Portugal e depois 12,85% no Brasil sobre uma base que contem aquele mesmo imposto.
+
+    ### Os dois numeros, para nao precisar recalcular
+
+    | base usada | imposto 12,85% | diferenca |
+    |---|---|---|
+    | **R$ 1.800,60** (com IVA) - **o que esta valendo** | **R$ 231,38** | - |
+    | R$ 1.463,90 (sem IVA) | R$ 188,11 | R$ 43,27 |
+
+    ### O que a decisao NAO afeta
+
+    **O faturamento liquido nao muda em nenhuma das duas leituras: R$ 1.393,65.** Logo **o repasse aos socios esta correto de qualquer forma**, e nenhum fechamento fica errado por causa desta escolha. O que muda e so quanto de imposto e provisionado na linha.
+
+    ### Por que ficou assim
+
+    1. **E a regra que o sistema ja aplica em TODA venda da Hubla:** base do imposto = valor com juros = o total pago pelo cliente. Abrir excecao para venda internacional criaria dois caminhos de calculo de imposto, e o segundo so seria exercitado uma vez por semestre - e o tipo de caminho que apodrece sem ninguem ver.
+    2. **E decisao contabil, nao tecnica.** Eu levantei, medi e apresentei; a escolha e do usuario e do contador dele.
+    3. **O erro, se for erro, e conservador:** provisiona R$ 43,27 de imposto A MAIS numa venda, nao a menos. Errar para cima em provisao de imposto nao gera passivo.
+
+    ### Se um dia mudar de ideia
+
+    Nao precisa de codigo novo nem de migracao. Basta trocar `valor_com_juros` da venda `f18a93aa-385e-49ac-ba83-eae91ca204eb` de `1800.60` para `1463.90`. Os valores originais estao guardados em `valores_originais` desde a conversao, entao da pra refazer a conta inteira.
+
+    ---
+
+    ## 59.3. Resumo das duas decisoes
+
+    | | assunto | decisao | dinheiro envolvido | risco de deixar como esta |
+    |---|---|---|---|---|
+    | 1 | 5 vendas da Kiwify, maio/2026 | **nao mexer** | R$ 74,18 em R$ 375.374,79 (0,02%) | nenhum: fechamentos ja confirmados, nao travam nada |
+    | 2 | base do imposto com IVA estrangeiro | **manter como esta** | R$ 43,27 a mais de provisao | nenhum: erra para cima, e o liquido nao muda |
+
+    **Nenhuma das duas volta para a lista de pendencias.**
