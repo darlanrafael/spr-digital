@@ -8,6 +8,7 @@ import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import Pagination from '@/components/Pagination'
 import { getSession } from '@/lib/auth'
+import { resumoDoFechamento } from '@/lib/resumo-do-fechamento-terapeuta'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -44,6 +45,13 @@ function fmtBRL(n: number) {
 function fmtDt(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+// Só a data, para a faixa de período do histórico de fechamento. Fuso
+// explícito: o banco guarda UTC, e uma entrega das 21h30 BRT cai no dia
+// seguinte se a conversão for deixada para o navegador.
+function fmtData(iso: string | null) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Sao_Paulo' })
 }
 function exportFechamentoCSV(f: FechamentoHistorico) {
   const header = 'Paciente,Sessão,Total sessões,Data entrega,Comissão'
@@ -385,9 +393,31 @@ export default function FechamentosTerapeutasPage() {
                     <div key={f.id}>
                       <button onClick={() => { setExpandido(e => e === f.id ? null : f.id); setHistoricoSessoesPage(1) }}
                         className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/2 transition-colors">
-                        <div className="text-left">
-                          <p className="text-sm text-white">{fmtDt(f.data_confirmacao)}</p>
-                          <p className="text-xs text-gray-500">{f.quantidade_sessoes} sessão(ões)</p>
+                        <div className="text-left min-w-0">
+                          {/* O periodo apurado na faixa de cima, como no historico da
+                              empresa desde 17/08/2026. A data de confirmacao NAO diz o
+                              periodo: o fechamento de 14/08 cobre entregas de 17/06 a
+                              17/08. Ver lib/resumo-do-fechamento-terapeuta.ts. */}
+                          {(() => {
+                            const r = resumoDoFechamento(f.sessoes)
+                            return (
+                              <>
+                                <p className="text-sm text-white">
+                                  {r.de && r.ate
+                                    ? (r.de.slice(0, 10) === r.ate.slice(0, 10)
+                                        ? fmtData(r.de)
+                                        : <>{fmtData(r.de)} <span className="text-gray-500">→</span> {fmtData(r.ate)}</>)
+                                    : 'Somente sessões antecipadas'}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  Confirmado em {fmtDt(f.data_confirmacao)}
+                                  {' · '}{f.quantidade_sessoes} sessão(ões)
+                                  {r.pacientes > 0 && ` · ${r.pacientes} paciente(s)`}
+                                  {r.antecipadas > 0 && `, ${r.antecipadas} antecipada(s)`}
+                                </p>
+                              </>
+                            )
+                          })()}
                         </div>
                         <div className="flex items-center gap-3">
                           <span className="text-sm font-semibold text-green-500">{fmtBRL(f.valor_total)}</span>
