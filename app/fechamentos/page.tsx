@@ -21,6 +21,8 @@ import { getSupabaseClient } from '@/lib/supabase'
 import { precisaConverter } from '@/lib/moeda-da-venda'
 import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
+import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
+import { ehDiagnosticoGuiado } from '@/lib/vendas-por-situacao'
 
 type Step = 1 | 2 | 3 | 4
 const PAGE_TABS = ['novo', 'historico'] as const
@@ -363,13 +365,23 @@ function FechamentosContent() {
     // "confira antes de fechar"; este e "nao da pra fechar assim".
     const naoConvertidas = periodSales.filter(s => precisaConverter(s))
 
-    return { multiplos, moedaEstrangeira, liquidoAcimaDoPago, naoConvertidas }
+    // Venda de Diagnostico cujo formato o sistema nao reconhece. Sem o formato
+    // nao ha como saber quantas sessoes sao da Denise, e o repasse DELA sai de
+    // fora do total - a venda entra no faturamento e a despesa nao. E o mesmo
+    // defeito que a regra do Diagnostico acabou de consertar, na outra roupa,
+    // entao nao pode ficar silencioso.
+    const diagSemFormato = repasseDoDiagnostico(
+      periodSales.filter(s => ehDiagnosticoGuiado(s.produto)),
+    ).semFormato
+
+    return { multiplos, moedaEstrangeira, liquidoAcimaDoPago, naoConvertidas, diagSemFormato }
   }, [periodSales])
 
   const temConferencia = conferencia.multiplos.length > 0
     || conferencia.moedaEstrangeira.length > 0
     || conferencia.liquidoAcimaDoPago.length > 0
     || conferencia.naoConvertidas.length > 0
+    || conferencia.diagSemFormato.length > 0
 
   // Conversao de venda em moeda estrangeira, feita aqui mesmo: o cambio e
   // decisao do negocio (na primeira vez o usuario escolheu 5,00 tendo 5,1253 e
@@ -409,6 +421,7 @@ function FechamentosContent() {
       bruto: number; taxas: number; aliquota: number; imposto: number; liquido: number; liquido_pos_impostos: number
       terapeuta_nome: string | null; repasse_terapeuta: number
     }> = {}
+    const vendasDaLinha: Record<string, Sale[]> = {}
     for (const s of periodSales) {
       const prod = productMap[s.produto]
       const aliquota = getAliquotaByPreco(s.preco_base)
@@ -417,6 +430,9 @@ function FechamentosContent() {
       }
       const bruto = getSaleBruto(s)
       const impostoVenda = getImpostoBase(s) * (aliquota / 100)
+      // As vendas da linha precisam ficar guardadas: no Diagnostico o repasse e
+      // por SESSAO, e a quantidade de sessoes sai da oferta de cada venda.
+      vendasDaLinha[s.produto] = [...(vendasDaLinha[s.produto] ?? []), s]
       map[s.produto].qtd++
       map[s.produto].bruto += bruto
       map[s.produto].taxas += bruto - s.valor_liquido
@@ -433,6 +449,23 @@ function FechamentosContent() {
     // recebe comissão: mostrar "-R$ 0,00 (Pedro Roncada)" no Detalhamento só
     // poluía a coluna, dando a entender que havia repasse quando não há.
     for (const row of Object.values(map)) {
+      // O DIAGNOSTICO GUIADO NAO SEGUE O PERCENTUAL, e nem seria encontrado
+      // pelo nome: "Diagnóstico Guiado: Programa de acompanhamento Individual"
+      // nao contem o nome de terapeuta nenhum, entao `matchTerapeutaComissao`
+      // devolvia null e o repasse saia R$ 0,00 - com a Denise entregando as
+      // sessoes e cobrando R$ 95 cada depois, de dinheiro que os socios ja
+      // tinham dividido. Eram R$ 6.175,00 nas 17 vendas existentes.
+      //
+      // Aqui o repasse e sessoes da Denise x R$ 95, pelo formato de cada venda.
+      // Ver lib/repasse-do-diagnostico.ts para o porque de contar as sessoes
+      // VENDIDAS e nao as entregues.
+      if (ehDiagnosticoGuiado(row.id)) {
+        const r = repasseDoDiagnostico(vendasDaLinha[row.id] ?? [])
+        const denise = terapeutasComissao.find(t => t.nome.toLowerCase().includes('denise'))
+        row.terapeuta_nome = denise?.nome ?? 'Denise Nascimento'
+        row.repasse_terapeuta = r.total
+        continue
+      }
       const terapeuta = matchTerapeutaComissao(row.nome)
       if (terapeuta && terapeuta.percentual_comissao > 0) {
         row.terapeuta_nome = terapeuta.nome
@@ -1299,6 +1332,24 @@ function FechamentosContent() {
                                 </span>
                               )}
                             </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {conferencia.diagSemFormato.length > 0 && (
+                      <div className="px-4 py-3 border-b border-amber-500/10">
+                        <p className="text-xs font-medium text-red-300">
+                          {conferencia.diagSemFormato.length} venda(s) de Diagnóstico Guiado sem formato reconhecido
+                        </p>
+                        <p className="text-[11px] text-amber-200/80 mt-1">
+                          O faturamento dessas vendas entra normalmente, mas <strong>o repasse da Denise não</strong>:
+                          sem o formato não há como saber quantas das sessões são dela. Cada sessão dela vale R$ 95,
+                          então o lucro deste fechamento está alto nesse valor.
+                        </p>
+                        <div className="mt-1.5 space-y-0.5">
+                          {conferencia.diagSemFormato.map(v => (
+                            <p key={v.saleId} className="text-[11px] text-gray-400">{v.nome}</p>
                           ))}
                         </div>
                       </div>

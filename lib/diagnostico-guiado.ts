@@ -99,7 +99,11 @@ export function formatoDoNomeDaOferta(ofertaNome?: string | null): 1 | 2 | 3 | n
 }
 
 export function formatoDaVenda(
-  sale: Pick<Sale, 'id' | 'order_id'> & { oferta_nome?: string | null; produto?: string | null },
+  // `order_id` aceita null porque e o que o banco devolve em venda da Kiwify e
+  // em lancamento manual. O tipo `Sale` declara so `string | undefined`, e por
+  // causa disso as rotas chamavam esta funcao com `as` - cast que existia para
+  // agradar o compilador e que escondia de quais campos a funcao depende.
+  sale: Pick<Sale, 'id'> & { order_id?: string | null; oferta_nome?: string | null; produto?: string | null },
 ): FormatoDiagnostico | null {
   // Excecao por venda vem primeiro: e o unico caso em que a oferta esta errada
   // e nao ha o que consultar nela.
