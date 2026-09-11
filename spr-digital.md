@@ -3622,6 +3622,8 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     17. **As ofertas do produto conjunto usam "Formato N" com outro significado** (item 56). A colisao esta travada pelo produto, mas os dois vocabularios continuam existindo na plataforma. Se um dia o Diagnostico for vendido dentro do produto conjunto, a trava recusa - e o caminho e a excecao por venda (`EXCECOES_DIAGNOSTICO`), nao afrouxar a trava.
 
+    21. **A divisao de origem nao existe para venda que nunca entrou em fechamento** (item 60.2). Foi o caso do Miguel: reembolso parcial de venda nao repassada. A tela avisa "sem origem, confira" e quem fecha digita, mas nao ha de onde herdar. Se isso virar rotina, o caminho e gravar a divisao combinada no momento em que a solicitacao de reembolso e aprovada.
+
     12. **Estender o "agendar assim mesmo" para `remarcar` e `empurrar-seguintes`** - 213 de 627 vagas da grade do Pedro estao bloqueadas so por compromisso.
     13. **10 das 12 sessoes das 19:20 avancam sobre o bloqueio de JANTAR do Pedro** (19:30-20:10). Ja acontecia as 19:00; o usuario decidiu corrigir so o aviso da tela.
     14. **A exclusao de compromisso por fora do app nao deixa rastro** em `atividades_log`.
@@ -4130,3 +4132,166 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     | 2 | base do imposto com IVA estrangeiro | **manter como esta** | R$ 43,27 a mais de provisao | nenhum: erra para cima, e o liquido nao muda |
 
     **Nenhuma das duas volta para a lista de pendencias.**
+
+60. **11/09/2026 - CADA REEMBOLSO PASSA A SER RATEADO PELA DIVISAO DO FECHAMENTO QUE PAGOU A VENDA.** Commit `2b238f5`. Quatro pontos levantados pelo usuario olhando a tela de um fechamento em andamento, **todos procedentes**. Um deles era dinheiro saindo errado do bolso dele.
+
+    ---
+
+    ## 60.1. O que ele viu, e nas palavras dele
+
+    *"o miguel e lead de mentoria particular onde meu % e menor.. porem pela equacao que consta na tela estou dividindo 50% com pedro.. outra coisa.. na ultima coluna mostra repasse final em verde... estranho.. precisa mudar tbm.. na tela da divisao onde mostra a divisao dos prejuizos seria importante os reembolsos e charback aparecer logo aqui nao? e mais uma opcao da gente lancar esse prejuizo no caixa da empresa"*.
+
+    ---
+
+    ## 60.2. DEFEITO 1: o rateio usava a divisao errada
+
+    ### O que o codigo fazia
+
+    ```ts
+    deducoes: alertasTotal * (socioPercents[i] / 100)
+    ```
+
+    **Toda deducao era rateada pelo percentual digitado NAQUELE fechamento.** Ele estava fechando o funil IAR a 50/50, e o reembolso parcial do Miguel Pires - que e **Mentoria Particular**, combinada em 35/65 - foi rateado 50/50 junto.
+
+    ```
+    Miguel, R$ 1.560        SPR          Pedro
+    50/50 (estava assim)    R$ 780,00    R$   780,00
+    35/65 (o combinado)     R$ 546,00    R$ 1.014,00
+                            -------------------------
+    a SPR absorvia          R$ 234,00 a mais do que o acordado
+    ```
+
+    O MD ja registrava a regra desde 02/09, com as palavras do proprio usuario: *"na proporcao ja combinada antes, de trinta e cinco por cento para a SPR, sessenta e cinco por cento para o Pedro"*.
+
+    ### A MEDICAO, que e o que deu a regra certa
+
+    Antes de escrever qualquer linha, varri os 8 fechamentos do banco. **Cada funil sempre rodou com a mesma divisao:**
+
+    ```
+    FECHAMENTO IAR               50/50   (2 fechamentos)
+    FECHAMENTO PERPETUO - CCC    50/50   (2)
+    FECHAMENTO TERAPEUTA-DENISE  50/50   (2)
+    FECHAMENTO MENTORIAS-PEDRO   35/65   (2)
+    ```
+
+    E entao o achado que mudou o desenho: **os 6 estornos do O RESGATE daquela tela vieram TODOS do mesmo fechamento** (`close_1786715202610`, IAR, 50/50). **Ou seja: estavam certos.** So o Miguel estava errado.
+
+    **E o dado explica por que so ele:** a venda do Miguel **nunca entrou em fechamento nenhum** (e reembolso PARCIAL de venda nao repassada). Nao havia divisao de origem a herdar, entao o codigo caia no percentual do fechamento atual.
+
+    ### A regra que saiu disso
+
+    **A deducao de um estorno usa a divisao do FECHAMENTO QUE PAGOU aquela venda.** E o dinheiro voltando pelo mesmo caminho por onde saiu. Quando nao ha fechamento de origem, quem fecha digita - e a tela avisa **"sem origem, confira"**.
+
+    Ordem de precedencia, deliberada: **escolha manual > divisao de origem > divisao do fechamento atual**. A manual ganha porque quem fecha pode saber de um acordo que o historico nao conta; a do fechamento atual vira ultimo recurso - era ela que valia para tudo antes.
+
+    Coluna nova **"Quem absorve"** na tabela de reembolsos, mostrando a divisao, de onde ela veio, e um campo para mudar.
+
+    ### O QUE EU DECIDI NAO FAZER, e por que
+
+    **Nao criei cadastro de "% por produto".** A divisao e negociacao por funil e **muda com o tempo** - o proprio banco tem 35/65 num mes e 50/50 em outro. Um cadastro desses vira numero velho que ninguem lembra de atualizar, e passa a errar em silencio, que e pior que o problema de hoje. **O fechamento de origem, ao contrario, e fato historico: nao muda depois de gravado.**
+
+    ---
+
+    ## 60.3. DEFEITO 2: verde em numero negativo
+
+    A coluna "Repasse final" tinha `text-emerald-400` **fixo**, sem olhar o sinal. Com o fechamento no prejuizo, **-R$ 4.455,62 aparecia em verde** - cor de coisa boa, num numero que significa "o socio deve dinheiro".
+
+    Corrigido: a cor segue o sinal, nas linhas e no total. Teste de fiacao trava.
+
+    ---
+
+    ## 60.4. DEFEITO 3: ele dividia as cegas (o mais grave dos quatro)
+
+    O passo 3 mostrava:
+
+    ```
+    Prejuizo a ratear     -R$ 3.202,55     <- e ele dividia ESTE numero
+    ```
+
+    Mas o numero real, com os reembolsos, era **-R$ 8.911,25** - e isso so aparecia **no passo seguinte**. Ele escolhia os percentuais da divisao sobre um valor que nao era o final.
+
+    Agora o card mostra o valor **ja com as deducoes** e abre a conta:
+
+    ```
+    Prejuizo a ratear        -R$ 8.911,25
+      Prejuizo do periodo    -R$ 3.202,55
+      (-) 7 reembolsos        R$ 5.708,70
+    ```
+
+    E cada socio, na Divisao, mostra **o que efetivamente recebe ou deve**, com a conta em letra menor embaixo.
+
+    ---
+
+    ## 60.5. PEDIDO 4: a empresa pode absorver o prejuizo
+
+    Opcao por fechamento, **desmarcada por padrao** - a regra definida em 02/09 (*"nao saem do caixa da empresa, sao descontados do repasse dos socios"*) continua sendo o padrao.
+
+    Marcada, a deducao dos socios vai a zero e e gerada uma **saida no Caixa** (`saida_reembolso`).
+
+    **O usuario foi explicito sobre o texto:** *"concordo em fazer e que a saida sera do caixa da empresa. ou seja, a empresa ta pagando.. isso so precisa constar nos minimos detalhes para melhor orientacao"*. O painel que abre diz, em cinco pontos:
+
+    1. **Sai do caixa da empresa** - saida lancada ao confirmar, com a lista completa de quem gerou o prejuizo
+    2. **Os socios nao pagam nada disto** - a coluna Deducoes vai a zero
+    3. **O prejuizo nao some, so muda de dono** - e mostra o efeito liquido no caixa, ja somando a reserva
+    4. **Os estornos nao voltam a aparecer** no proximo fechamento
+    5. **Fica registrado no fechamento** quem absorveu (`prejuizoAbsorvidoPelaEmpresa`)
+
+    **A descricao do lancamento carrega a lista inteira** de nome, produto, tipo, data e valor. E o campo que aparece na tela do Caixa: quem abrir daqui a seis meses precisa saber de onde veio sem cruzar tabela nenhuma.
+
+    **Por que o campo no fechamento importa:** sem ele o historico nao distingue *"nao havia reembolso"* de *"a empresa absorveu"*.
+
+    ---
+
+    ## 60.6. UM DEFEITO MEU QUE O PROPRIO TESTE PEGOU
+
+    Eu arredondava o rateio **a cada item**:
+
+    ```ts
+    total[nome] = Math.round((total[nome] + item.valor * (pct / 100)) * 100) / 100
+    ```
+
+    Com as sete deducoes reais da tela, o desvio ja aparecia no centavo (R$ 2.620,36 em vez de R$ 2.620,35). **E o pior nem era o centavo: a soma dos socios deixava de bater com o total mostrado na tela.** Num fechamento, dois numeros que deveriam ser iguais e nao sao custam mais tempo do que valem.
+
+    Corrigido com a pratica certa para dinheiro: **acumula exato, arredonda uma vez so, e o ULTIMO socio recebe o RESTO.** Assim a soma fecha exatamente com o total, sempre. Teste proprio trava isso com dizima em todos os rateios.
+
+    **O teste falhou porque eu escrevi a expectativa CERTA e o codigo errado** - e so por isso o defeito nao foi para producao.
+
+    ---
+
+61. **11/09/2026 - lupa para buscar produto na lista do fechamento.** Commit `8e45f85`. Pedido do usuario: *"nessa parte onde mostra os produtos incluidos eu gostaria de ter uma lupa para eu digitar o nome e mostrar somente os produtos com base no nome sabe? pra filtrar mais rapido?"*. Sao **31 produtos** na tela.
+
+    ---
+
+    ## 61.1. Por que virou modulo em vez de um `includes` na tela
+
+    **Busca em portugues erra de um jeito chato.** Sem tirar acento dos dois lados, digitar `diagnostico` nao acha `Diagnóstico Guiado` - e a conclusao natural de quem esta olhando a tela e que **o produto sumiu do sistema**, nao que a busca e literal.
+
+    `lib/busca-de-produto.ts`, com os **31 nomes reais da producao** copiados no teste.
+
+    ## 61.2. Casa por TERMO, nao pela frase
+
+    Os nomes reais sao longos e cheios de pontuacao: `Combo: Primeiros Passos da Restauração - OB - imersão`. Quem procura digita **dois pedacos soltos** - `combo imersao` - e nao a frase exata. Busca por frase nao acharia. A ordem tambem nao importa.
+
+    ```
+    "diagnostico"     -> 1    (com ou sem acento)
+    "csp"             -> 3    (com ou sem maiuscula)
+    "restauracao"     -> 6
+    "combo imersao"   -> 1
+    "mentoria pedro"  -> 5
+    ```
+
+    ## 61.3. A ARMADILHA QUE ISTO EVITA
+
+    Com busca ativa, **"Selecionar todos" ACRESCENTA os visiveis** em vez de substituir a selecao, e **"Nenhum" desmarca so os visiveis**.
+
+    Sem isso: filtrar por "CSP", clicar em selecionar todos, e **perder os 25 produtos marcados antes, sem nenhum aviso na tela**. Os rotulos mudam para dizer o que vao fazer (`Marcar os 3 encontrados` / `Desmarcar encontrados`).
+
+    ## 61.4. O contador continua contando o TOTAL
+
+    `31 de 31 produtos selecionados` **nao** passou a contar os visiveis. Se contasse, filtrar mudaria o numero e pareceria que produtos foram desmarcados. **Ha teste travando exatamente isso**, lendo a linha do contador no arquivo.
+
+    ## 61.5. Outro erro meu que o teste pegou
+
+    Eu escrevi que `mentoria pedro` daria **4** resultados. Sao **5** - esqueci o `Mentoria Particular - Pedro | Denise`. **O codigo estava certo; a minha contagem e que estava errada.** Corrigi o teste, nao o codigo.
+
+    E o segundo erro de contagem meu nesta sessao pego por teste. Vale a nota: quando eu escrevo o numero esperado de cabeca numa lista de 31 itens, eu erro.
