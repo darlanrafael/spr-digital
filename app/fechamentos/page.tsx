@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { AlertCircle, Check, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Copy, Download, Hash, Loader2, X } from 'lucide-react'
+import { AlertCircle, Check, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Copy, Download, Hash, Loader2, Search, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
@@ -20,6 +20,7 @@ import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/
 import { getSupabaseClient } from '@/lib/supabase'
 import { precisaConverter } from '@/lib/moeda-da-venda'
 import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
+import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 
 type Step = 1 | 2 | 3 | 4
 const PAGE_TABS = ['novo', 'historico'] as const
@@ -599,11 +600,26 @@ function FechamentosContent() {
   function toggleProduct(id: string) {
     setSelectedProducts(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
   }
+  // Busca por nome na lista de produtos. Sao 31 na tela, e achar um no meio
+  // dos outros a olho custa mais que digitar tres letras.
+  const [buscaProduto, setBuscaProduto] = useState('')
+  const produtosVisiveis = useMemo(
+    () => filtrarProdutos(availableProducts, buscaProduto),
+    [availableProducts, buscaProduto],
+  )
+  const buscando = buscaProduto.trim().length > 0
+
+  // Com busca ativa os dois botoes agem SO sobre o que esta visivel, e sem
+  // derrubar o que esta marcado e escondido pelo filtro. Filtrar por "CSP",
+  // clicar em selecionar todos e perder os 25 marcados antes seria uma
+  // armadilha silenciosa. Ver lib/busca-de-produto.ts.
   function selecionarTodosProdutos() {
-    setSelectedProducts(availableProducts.map(p => p.id))
+    const visiveis = produtosVisiveis.map(p => p.id)
+    setSelectedProducts(prev => buscando ? comOsVisiveisMarcados(prev, visiveis) : visiveis)
   }
   function desmarcarTodosProdutos() {
-    setSelectedProducts([])
+    const visiveis = produtosVisiveis.map(p => p.id)
+    setSelectedProducts(prev => buscando ? semOsVisiveis(prev, visiveis) : [])
   }
 
   async function handleConfirm() {
@@ -1045,18 +1061,47 @@ function FechamentosContent() {
                     <h3 className="text-sm font-semibold text-white">Produtos incluídos</h3>
                     <div className="flex items-center gap-3">
                       <button onClick={selecionarTodosProdutos} className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">
-                        Selecionar todos
+                        {buscando ? `Marcar os ${produtosVisiveis.length} encontrados` : 'Selecionar todos'}
                       </button>
                       <button onClick={desmarcarTodosProdutos} className="text-xs text-gray-500 hover:text-gray-300 font-medium transition-colors">
-                        Nenhum
+                        {buscando ? 'Desmarcar encontrados' : 'Nenhum'}
                       </button>
                     </div>
                   </div>
                   <p className="text-xs text-gray-500 mb-3">
                     Marcado (✓) = entra no fechamento. Produtos com <Clock className="w-3 h-3 inline -mt-0.5" /> usam um período próprio (definido abaixo em &quot;Períodos adicionais&quot;), não o período principal.
                   </p>
+                  <div className="relative mb-3">
+                    <Search className="w-3.5 h-3.5 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={buscaProduto}
+                      onChange={e => setBuscaProduto(e.target.value)}
+                      placeholder={`Buscar entre ${availableProducts.length} produtos (ex: mentoria pedro)`}
+                      className="w-full bg-gray-800/60 border border-white/10 rounded-lg pl-9 pr-16 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500/50"
+                      aria-label="Buscar produto pelo nome"
+                    />
+                    {buscando && (
+                      <button
+                        type="button"
+                        onClick={() => setBuscaProduto('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 px-2 py-1 rounded text-[11px] text-gray-400 hover:text-white hover:bg-white/10"
+                        aria-label="Limpar busca"
+                      >
+                        {produtosVisiveis.length} <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+
+                  {buscando && produtosVisiveis.length === 0 && (
+                    <p className="text-xs text-gray-500 mb-3">
+                      Nenhum produto com <strong className="text-gray-300">{buscaProduto}</strong> no nome.
+                      Os já marcados continuam marcados.
+                    </p>
+                  )}
+
                   <div className="flex flex-wrap gap-2 mb-3">
-                    {availableProducts.map(p => {
+                    {produtosVisiveis.map(p => {
                       const grupo = produtoParaGrupo[p.id]
                       const marcado = selectedProducts.includes(p.id)
                       return (
