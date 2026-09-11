@@ -19,6 +19,7 @@ import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
 import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/lib/etiqueta-fechamento'
 import { getSupabaseClient } from '@/lib/supabase'
 import { precisaConverter } from '@/lib/moeda-da-venda'
+import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
 
 type Step = 1 | 2 | 3 | 4
 const PAGE_TABS = ['novo', 'historico'] as const
@@ -529,6 +530,59 @@ function FechamentosContent() {
   )
   const alertasTotal = alertasSelecionados.reduce((a, x) => a + x.valor, 0)
 
+  // Quem absorve cada reembolso, e em que proporcao.
+  //
+  // Ate 11/09/2026 TODA deducao era rateada pelo percentual digitado NESTE
+  // fechamento (`alertasTotal * socioPercents[i] / 100`). O usuario pegou o
+  // erro na tela: fechando o funil IAR a 50/50, o reembolso parcial do Miguel
+  // Pires - que e Mentoria Particular, combinada em 35/65 - foi rateado 50/50
+  // junto, e a SPR absorvia R$ 234 a mais do que o acordado.
+  //
+  // Agora cada deducao usa a divisao do fechamento que PAGOU aquela venda. Ver
+  // lib/rateio-das-deducoes.ts.
+  const divisaoDoFechamento = useMemo(() => {
+    const d: Record<string, number> = {}
+    SOCIO_NAMES.forEach((nome, i) => { d[nome] = socioPercents[i] })
+    return d
+  }, [socioPercents])
+
+  // Percentual do PRIMEIRO socio, digitado por linha. O segundo e o resto.
+  const [divisaoManualDoAlerta, setDivisaoManualDoAlerta] = useState<Record<string, string>>({})
+
+  // Quando marcado, a EMPRESA paga: as deducoes nao tocam o repasse dos socios
+  // e viram uma saida no Caixa. Comeca desmarcado de proposito - o padrao
+  // continua sendo descontar dos socios, que e a regra definida em 02/09.
+  const [empresaAbsorve, setEmpresaAbsorve] = useState(false)
+
+  const deducoesDetalhadas = useMemo(() => alertasSelecionados.map(a => {
+    const chave = chaveAlerta(a) ?? ''
+    const origem = divisaoOriginalDoAlerta(a, closings)
+    const digitado = divisaoManualDoAlerta[chave]
+    const pct = digitado !== undefined && String(digitado).trim() !== ''
+      ? Number(String(digitado).replace(',', '.'))
+      : null
+    const escolhaManual = pct !== null && Number.isFinite(pct) && pct >= 0 && pct <= 100
+      ? { [SOCIO_NAMES[0]]: pct, [SOCIO_NAMES[1]]: 100 - pct }
+      : null
+    const { divisao, fonte } = divisaoQueVale({ origem, escolhaManual, divisaoDoFechamento })
+    return { alerta: a, chave, valor: a.valor, divisao, fonte, origem }
+  }), [alertasSelecionados, closings, divisaoManualDoAlerta, divisaoDoFechamento])
+
+  const deducoesSocio = useMemo(
+    () => deducoesPorSocio(
+      deducoesDetalhadas.map(d => ({ chave: d.chave, valor: d.valor, divisao: d.divisao })),
+      SOCIO_NAMES,
+    ),
+    [deducoesDetalhadas],
+  )
+
+  /** Quanto ESTE socio absorve. Zero quando a empresa esta pagando. */
+  const deducaoDoSocio = (nome: string) => empresaAbsorve ? 0 : (deducoesSocio[nome] ?? 0)
+  /** O que sai do repasse dos socios no total. Zero quando a empresa paga. */
+  const deducaoDosSocios = empresaAbsorve ? 0 : alertasTotal
+  /** O numero que REALMENTE vai ser dividido entre os socios. */
+  const lucroAposDeducoes = lucroReal - deducaoDosSocios
+
   function toggleAlerta(chave?: string) {
     if (!chave) return
     setAlertasAceitos(prev => {
@@ -574,8 +628,8 @@ function FechamentosContent() {
       percentual: socioPercents[i],
       valor: socioValues[i],
       repasse_original: socioValues[i],
-      deducoes: alertasTotal * (socioPercents[i] / 100),
-      repasse_final: socioValues[i] - alertasTotal * (socioPercents[i] / 100),
+      deducoes: deducaoDoSocio(nome),
+      repasse_final: socioValues[i] - deducaoDoSocio(nome),
     }))
 
     const productNames = selectedProducts.length > 0
@@ -617,6 +671,9 @@ function FechamentosContent() {
       lucroBruto,
       reservaCaixa,
       lucroReal,
+      // Quem pagou os reembolsos deste fechamento. Sem isto o historico nao
+      // distingue "nao havia reembolso" de "a empresa absorveu".
+      prejuizoAbsorvidoPelaEmpresa: empresaAbsorve && alertasTotal > 0 ? alertasTotal : undefined,
       repasseTerapeutasTotal,
       socios: sociosData,
       compradores: buyers,
@@ -663,9 +720,46 @@ function FechamentosContent() {
     try { await svcAddCashflow(cfEntry, selectedProject) } catch (e) { console.error(e) }
     setCashflow(prev => [...prev, cfEntry])
 
+    // A EMPRESA PAGANDO: saida no caixa em vez de desconto no repasse.
+    //
+    // A descricao carrega a lista inteira de quem gerou o prejuizo de
+    // proposito: e o campo que aparece na tela do Caixa, e quem abrir isso daqui
+    // a seis meses precisa saber de onde veio sem cruzar tabela nenhuma. Pedido
+    // textual do usuario: "isso so precisa constar nos minimos detalhes para
+    // melhor orientacao".
+    let cfPrejuizo: CashflowEntry | null = null
+    if (empresaAbsorve && alertasTotal > 0) {
+      cfPrejuizo = {
+        id: `cf_${Date.now() + 1}`,
+        data: now.toISOString().split('T')[0],
+        descricao: descricaoDoPrejuizoNoCaixa({
+          itens: alertasSelecionados.map(a => ({
+            nome: a.nome,
+            produto: a.produto,
+            valor: a.valor,
+            tipo: a.tipo === 'chargeback' ? 'Chargeback' : a.tipo === 'reembolso_parcial' ? 'Reembolso parcial' : 'Reembolso',
+            data: formatDate(a.data),
+          })),
+          etiquetaDoFechamento: etiqueta || undefined,
+          periodo: `${formatDate(periodo.inicio)} a ${formatDate(periodo.fim)}`,
+        }),
+        origem: 'Fechamento Automático',
+        tipo: 'saida_reembolso',
+        valor: -alertasTotal,
+        saldoAcumulado: cfEntry.saldoAcumulado - alertasTotal,
+      }
+      try { await svcAddCashflow(cfPrejuizo, selectedProject) } catch (e) { console.error(e) }
+      setCashflow(prev => [...prev, cfPrejuizo!])
+    }
+
     setConfirmedClosing(newClosing)
     setConfirmed(true)
-    setSuccessMsg(`Fechamento confirmado com sucesso! A reserva de ${formatCurrency(reservaCaixa)} foi lançada automaticamente no Caixa.`)
+    setSuccessMsg(
+      `Fechamento confirmado com sucesso! A reserva de ${formatCurrency(reservaCaixa)} foi lançada automaticamente no Caixa.`
+      + (cfPrejuizo
+        ? ` A EMPRESA absorveu ${formatCurrency(alertasTotal)} de reembolsos: saída lançada no Caixa, sem desconto no repasse dos sócios.`
+        : ''),
+    )
   }
 
   const steps = [
@@ -1332,10 +1426,30 @@ function FechamentosContent() {
                       </p>
                     )}
                   </div>
-                  <div className={`bg-gray-900 rounded-xl border p-4 text-center ${lucroReal >= 0 ? 'border-emerald-500/30' : 'border-red-500/30'}`}>
-                    <p className="text-xs text-gray-500 mb-2">{lucroReal >= 0 ? 'Lucro Real' : 'Prejuízo a ratear'}</p>
-                    <p className={`text-2xl font-bold ${lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal)}</p>
-                    <p className="text-xs text-gray-600 mt-1">Para divisão entre sócios</p>
+                  {/* O valor que realmente sera dividido.
+                      Ate 11/09/2026 este card mostrava so o `lucroReal`, e as
+                      deducoes de reembolso apareciam apenas no passo seguinte.
+                      O usuario dividia -R$ 3.202,55 sem saber que o numero real
+                      era -R$ 8.911,25: dividia as cegas. */}
+                  <div className={`bg-gray-900 rounded-xl border p-4 text-center ${lucroAposDeducoes >= 0 ? 'border-emerald-500/30' : 'border-red-500/30'}`}>
+                    <p className="text-xs text-gray-500 mb-2">{lucroAposDeducoes >= 0 ? 'Lucro Real' : 'Prejuízo a ratear'}</p>
+                    <p className={`text-2xl font-bold ${lucroAposDeducoes >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroAposDeducoes)}</p>
+                    {deducaoDosSocios > 0 ? (
+                      <div className="mt-2 pt-2 border-t border-white/10 text-[11px] space-y-0.5">
+                        <p className="text-gray-500">
+                          {lucroReal >= 0 ? 'Lucro' : 'Prejuízo'} do período: <span className="text-gray-300">{formatCurrency(lucroReal)}</span>
+                        </p>
+                        <p className="text-red-400">
+                          (-) {alertasSelecionados.length} reembolso(s): {formatCurrency(deducaoDosSocios)}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-600 mt-1">
+                        {empresaAbsorve && alertasTotal > 0
+                          ? `Os ${formatCurrency(alertasTotal)} de reembolso saem do caixa da empresa`
+                          : 'Para divisão entre sócios'}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1350,7 +1464,17 @@ function FechamentosContent() {
                         </div>
                         <div className="flex-1">
                           <p className="text-sm text-white font-medium">{nome}</p>
-                          <p className={`text-xs ${socioValues[i] >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(socioValues[i])}</p>
+                          {/* O que este socio efetivamente recebe ou deve, ja com os
+                              reembolsos. O numero de cima (socioValues) e so a fatia
+                              do lucro do periodo, e era o unico visivel aqui. */}
+                          <p className={`text-xs ${(socioValues[i] - deducaoDoSocio(nome)) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {formatCurrency(socioValues[i] - deducaoDoSocio(nome))}
+                          </p>
+                          {deducaoDoSocio(nome) > 0 && (
+                            <p className="text-[10px] text-gray-500">
+                              {formatCurrency(socioValues[i])} do período, menos {formatCurrency(deducaoDoSocio(nome))} de reembolsos
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1">
                           <input
@@ -1603,6 +1727,7 @@ function FechamentosContent() {
                                 <th className="text-right px-4 py-2.5 text-gray-500">Valor</th>
                                 <th className="text-center px-4 py-2.5 text-gray-500">Tipo</th>
                                 <th className="text-right px-4 py-2.5 text-gray-500 hidden lg:table-cell">Data</th>
+                                <th className="text-center px-4 py-2.5 text-gray-500">Quem absorve</th>
                                 <th className="text-center px-4 py-2.5 text-gray-500">Abater aqui</th>
                               </tr>
                             </thead>
@@ -1626,6 +1751,43 @@ function FechamentosContent() {
                                     </span>
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-gray-400 hidden lg:table-cell">{formatDate(a.data)}</td>
+                                  {/* Quem absorve ESTE estorno. A divisao vem do fechamento que
+                                      PAGOU a venda, nao do fechamento que esta sendo feito agora:
+                                      e o dinheiro voltando pelo mesmo caminho por onde saiu. */}
+                                  <td className="px-4 py-2.5 text-center whitespace-nowrap">
+                                    {(() => {
+                                      const det = deducoesDetalhadas.find(d => d.chave === chaveAlerta(a))
+                                      const origem = divisaoOriginalDoAlerta(a, closings)
+                                      const pctAtual = det
+                                        ? det.divisao[SOCIO_NAMES[0]]
+                                        : (origem?.divisao[SOCIO_NAMES[0]] ?? socioPercents[0])
+                                      const chave = chaveAlerta(a) ?? ''
+                                      const marcado = !!chave && alertasAceitos.has(chave)
+                                      return (
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              type="text" inputMode="decimal"
+                                              value={divisaoManualDoAlerta[chave] ?? ''}
+                                              placeholder={String(pctAtual)}
+                                              onChange={e => setDivisaoManualDoAlerta(v => ({ ...v, [chave]: e.target.value }))}
+                                              disabled={!marcado || empresaAbsorve}
+                                              className="w-12 bg-gray-900 border border-white/15 rounded px-1 py-0.5 text-[11px] text-white text-right disabled:opacity-40"
+                                              aria-label={`Percentual da ${SOCIO_NAMES[0]} no estorno de ${a.nome}`}
+                                            />
+                                            <span className="text-[10px] text-gray-500">/ {100 - pctAtual}</span>
+                                          </div>
+                                          <span className="text-[9px] text-gray-600">
+                                            {empresaAbsorve
+                                              ? 'empresa paga'
+                                              : det?.fonte === 'manual' ? 'você definiu'
+                                              : origem ? (origem.etiqueta ?? 'fechamento de origem')
+                                              : 'sem origem — confira'}
+                                          </span>
+                                        </div>
+                                      )
+                                    })()}
+                                  </td>
                                   <td className="px-4 py-2.5 text-center">
                                     <input
                                       type="checkbox"
@@ -1645,10 +1807,72 @@ function FechamentosContent() {
                                   <span className="text-gray-600 font-normal"> ({alertasSelecionados.length} de {alertas.length})</span>:
                                 </td>
                                 <td className="px-4 py-2.5 text-right text-red-400 font-bold">-{formatCurrency(alertasTotal)}</td>
-                                <td colSpan={3} />
+                                <td colSpan={4} />
                               </tr>
                             </tfoot>
                           </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Quem paga o prejuizo: os socios (padrao) ou a empresa.
+                        Pedido do usuario em 11/09/2026. Ele foi explicito sobre
+                        o texto: "a empresa ta pagando.. isso so precisa constar
+                        nos minimos detalhes para melhor orientacao". */}
+                    {alertas.length > 0 && alertasSelecionados.length > 0 && podeVerRepasse && (
+                      <div className={`rounded-xl border overflow-hidden ${empresaAbsorve ? 'bg-purple-500/[0.07] border-purple-500/40' : 'bg-gray-900 border-white/10'}`}>
+                        <div className="p-4">
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={empresaAbsorve}
+                              onChange={e => setEmpresaAbsorve(e.target.checked)}
+                              className="w-4 h-4 mt-0.5 accent-purple-500 cursor-pointer shrink-0"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-semibold text-white">
+                                A empresa absorve estes {formatCurrency(alertasTotal)}, em vez de descontar dos sócios
+                              </span>
+                              <span className="block text-xs text-gray-400 mt-1">
+                                Desmarcado (padrão): o valor é descontado do repasse de cada sócio, na proporção mostrada
+                                na coluna <strong className="text-gray-300">Quem absorve</strong>.
+                              </span>
+                            </span>
+                          </label>
+
+                          {empresaAbsorve && (
+                            <div className="mt-3 ml-7 rounded-lg bg-black/25 border border-purple-500/25 p-3">
+                              <p className="text-xs font-semibold text-purple-300">A EMPRESA ESTÁ PAGANDO</p>
+                              <ul className="mt-2 space-y-1.5 text-[11px] text-gray-300">
+                                <li>
+                                  <strong className="text-white">Sai do caixa da empresa.</strong> Ao confirmar, é lançada
+                                  uma saída de {formatCurrency(alertasTotal)} no Caixa, do tipo reembolso, com a lista
+                                  completa de quem gerou o prejuízo.
+                                </li>
+                                <li>
+                                  <strong className="text-white">Os sócios não pagam nada disto.</strong> O repasse de cada um
+                                  fica igual ao repasse original: a coluna Deduções vai para zero.
+                                </li>
+                                <li>
+                                  <strong className="text-white">O prejuízo não some, só muda de dono.</strong> O caixa da
+                                  empresa fica {formatCurrency(alertasTotal)} menor, e é de lá que sai o dinheiro devolvido
+                                  ao cliente.
+                                </li>
+                                <li>
+                                  <strong className="text-white">Os estornos não voltam a aparecer.</strong> Marcados como
+                                  abatidos neste fechamento, eles não reaparecem no próximo - independentemente de quem pagou.
+                                </li>
+                                <li>
+                                  <strong className="text-white">Fica registrado no fechamento.</strong> O histórico grava que
+                                  a empresa absorveu, não os sócios, para não haver dúvida depois.
+                                </li>
+                              </ul>
+                              <p className="mt-2 text-[11px] text-gray-500">
+                                Efeito no caixa: saída de <strong className="text-purple-300">{formatCurrency(alertasTotal)}</strong>
+                                {reservaCaixa > 0 && <> (a reserva de {formatCurrency(reservaCaixa)} entra normalmente, então o efeito líquido no caixa é de {formatCurrency(reservaCaixa - alertasTotal)})</>}.
+                              </p>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1672,15 +1896,17 @@ function FechamentosContent() {
                             </thead>
                             <tbody>
                               {SOCIO_NAMES.map((nome, i) => {
-                                const deducao = alertasTotal * (socioPercents[i] / 100)
+                                const deducao = deducaoDoSocio(nome)
                                 const original = socioValues[i]
                                 const final = original - deducao
                                 return (
                                   <tr key={nome} className="border-b border-white/5">
                                     <td className="px-4 py-3 text-gray-200 font-medium">{nome}</td>
                                     <td className="px-4 py-3 text-right text-gray-300">{formatCurrency(original)}</td>
-                                    <td className="px-4 py-3 text-right text-red-400">-{formatCurrency(deducao)}</td>
-                                    <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(final)}</td>
+                                    <td className="px-4 py-3 text-right text-red-400">{deducao > 0 ? `-${formatCurrency(deducao)}` : '—'}</td>
+                                    {/* A cor segue o SINAL. Era emerald fixo, entao -R$ 4.455,62
+                                        aparecia em verde, cor de coisa boa. */}
+                                    <td className={`px-4 py-3 text-right font-semibold ${final >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(final)}</td>
                                   </tr>
                                 )
                               })}
@@ -1689,8 +1915,8 @@ function FechamentosContent() {
                               <tr className="border-t border-white/10 bg-gray-800/20">
                                 <td className="px-4 py-3 text-gray-200 font-semibold">Total</td>
                                 <td className="px-4 py-3 text-right text-gray-200 font-semibold">{formatCurrency(lucroReal)}</td>
-                                <td className="px-4 py-3 text-right text-red-400 font-semibold">-{formatCurrency(alertasTotal)}</td>
-                                <td className="px-4 py-3 text-right text-emerald-400 font-bold">{formatCurrency(lucroReal - alertasTotal)}</td>
+                                <td className="px-4 py-3 text-right text-red-400 font-semibold">{deducaoDosSocios > 0 ? `-${formatCurrency(deducaoDosSocios)}` : '—'}</td>
+                                <td className={`px-4 py-3 text-right font-bold ${(lucroReal - deducaoDosSocios) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal - deducaoDosSocios)}</td>
                               </tr>
                             </tfoot>
                           </table>

@@ -187,6 +187,12 @@ export interface Closing {
   lucroReal: number
   socios: Socio[]
   compradores: ClosingBuyer[]
+  /**
+   * Quanto de reembolso a EMPRESA absorveu neste fechamento, em vez de
+   * descontar do repasse dos socios. Ausente = os socios absorveram (o padrao)
+   * ou nao havia reembolso a deduzir. Ver lib/rateio-das-deducoes.ts.
+   */
+  prejuizoAbsorvidoPelaEmpresa?: number
   alertas: ClosingAlert[]
   byProduct?: ClosingProductRow[]
   custos_trafego_total?: number
