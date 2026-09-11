@@ -3614,7 +3614,7 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     ## 55.3. Operacional
 
-    18. **O webhook da Hubla nao trata moeda estrangeira** (item 57). A proxima venda internacional entra em euro/dolar gravado como reais. O sinal existe no payload (`receivers[].currency` e `amount.settlement`) e nao e lido. A Kiwify tem detector; a Hubla nao tem nada.
+    18. ~~**O webhook da Hubla nao trata moeda estrangeira**~~ **RESOLVIDO em 11/09/2026** (item 58): os dois webhooks leem a moeda, a linha sai homogenea, e o fechamento trava enquanto houver venda nao convertida.
 
     19. **5 vendas da Kiwify de maio/2026 em moeda estrangeira** seguem com liquido acima do pago (item 57.6). Estao fora dos periodos em aberto e entraram em fechamentos passados.
 
@@ -3880,3 +3880,112 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     **O webhook da Hubla nao le moeda nenhuma.** A Kiwify tem detector desde junho; a Hubla nao tem nada. **A proxima venda internacional entra torta do mesmo jeito** - e agora sabemos que ela vem com `receivers[].currency` e com o bloco `amount.settlement`, que e exatamente o sinal que faltava.
 
     A correcao de hoje foi no DADO, nao no CODIGO. Esta na lista de pendencias.
+
+58. **11/09/2026 - MOEDA ESTRANGEIRA DETECTADA NA ENTRADA, E O FECHAMENTO TRAVADO ATE CONVERTER.** Commit `0af38a6`, migracao `20260911000000_moeda_da_venda.sql`. Fecha o buraco que o item 57 deixou aberto: **aquela correcao foi no DADO, nao no CODIGO.**
+
+    ---
+
+    ## 58.1. O que faltava
+
+    O item 57 corrigiu a venda da Rosana a mao. O webhook continuava sem ler moeda nenhuma, entao **a proxima venda internacional entraria torta do mesmo jeito**. Pedido do usuario: *"vamos corrigir agora para as proximas vendas de outra moeda nao da esse problema"*.
+
+    Duas coisas tornavam o defeito invisivel, e as duas foram atacadas:
+
+    1. **Os quatro campos de dinheiro ficavam em moedas DIFERENTES na mesma linha** - tres em euro e um em dolar. Nenhum cambio unico conserta uma linha assim. Foi o que fez o diagnostico levar tanto tempo.
+    2. **Nada impedia o fechamento.** Em 05/09 o alerta apareceu na tela do usuario e o botao Confirmar continuava clicavel. **A trava de conferencia avisava; ela nao barrava.**
+
+    ---
+
+    ## 58.2. O campo sempre chegou, nas DUAS plataformas
+
+    Medido no log de producao antes de escrever qualquer codigo:
+
+    | Plataforma | Onde a moeda vem | Estava sendo lida? |
+    |---|---|---|
+    | Hubla | `amount.settlement.currency` e `receivers[].currency` | **nao** |
+    | Kiwify | `Commissions.currency`, `kiwify_fee_currency`, `product_base_price_currency` | **nao** |
+
+    **O comentario no webhook da Kiwify dizia que ela "manda o valor original cobrado sem indicar a moeda".** Era falso: o campo existia e estava sendo ignorado. O detector que existia ali era uma RAZAO (`valor_pago_cliente / preco_base < 0.4`), que e chute - acerta quando a diferenca de cambio e grande, erra em cupom e em promocao.
+
+    `moedaDaHubla` le os DOIS lugares e aceita qualquer um: se a Hubla parar de mandar um deles, o outro ainda pega. Recusar por falta de um seria voltar ao defeito de deixar passar em silencio.
+
+    ---
+
+    ## 58.3. A regra da casa: a linha sai homogenea
+
+    **Quando `moeda` esta preenchida, os QUATRO valores estao naquela moeda. Sem excecao.** E o webhook que garante, escolhendo o bloco do payload que ja vem homogeneo:
+
+    | | Hubla | Kiwify |
+    |---|---|---|
+    | de onde vem | `amount.settlement` (moeda da LIQUIDACAO) | `charge_amount` / `my_commission` |
+    | o que NAO usa | `amount` (moeda do CLIENTE, euro) | `product_base_price` (catalogo em real) |
+
+    Na Hubla o bloco `amount` esta em euro e o repasse em dolar: **misturar os dois foi exatamente o defeito.** Na Kiwify o `product_base_price` fica em real enquanto o cobrado vem na moeda estrangeira, entao o preco base passa a ser o cobrado e o catalogo em real fica guardado em `valores_originais`.
+
+    Com a linha homogenea, converter e multiplicar os quatro por um numero so.
+
+    ---
+
+    ## 58.4. O fechamento TRAVA, nao so avisa
+
+    Esta e a mudanca que importa. A tela de Fechamentos ganhou um quarto bloco na Conferencia, e ele e diferente dos outros tres:
+
+    ```
+    multiplos           -> "confira antes de fechar"
+    moedaEstrangeira    -> "confira antes de fechar"
+    liquidoAcimaDoPago  -> "confira antes de fechar"
+    naoConvertidas      -> NAO DA PRA FECHAR ASSIM     <- novo
+    ```
+
+    Enquanto houver venda com `moeda` preenchida no periodo, o botao **Confirmar fechamento fica desabilitado**. O bloco mostra o valor na moeda de origem (`USD 278.73`, nao `R$ 278,73`), um campo para o cambio, o valor que vai virar em reais **antes** de aplicar, e o botao de converter.
+
+    ---
+
+    ## 58.5. Por que o cambio e digitado, e nao buscado
+
+    **O cambio e decisao do negocio, nao dado tecnico.** Na primeira conversao o usuario escolheu **5,00** tendo as cotacoes oficiais de 5,1253 (04/09) e 5,0856 (08/09) na mesa - e 05/09/2026 foi sabado, sem PTAX nenhuma. Buscar cotacao e aplicar sozinho seria decidir o faturamento por ele.
+
+    A tela mostra a conversao antes de gravar. A escolha continua sendo de quem fecha.
+
+    ---
+
+    ## 58.6. A rota de conversao, e por que ela e idempotente por construcao
+
+    `POST /api/sales/converter-moeda`.
+
+    **A MESMA gravacao que converte os valores limpa o campo `moeda`.** Separado em dois updates, uma falha no meio deixaria a venda convertida E ainda marcada como estrangeira - pronta para ser convertida de novo, com o faturamento multiplicado pelo cambio duas vezes. A segunda chamada e recusada com 409.
+
+    **Teto de sanidade no cambio:** acima de 100 a rota recusa. Digitar 500 no lugar de 5,00 multiplicaria o faturamento por cem, e a linha ainda pareceria plausivel na tela.
+
+    **`valores_originais` guarda os valores de antes** em toda conversao, entao da pra refazer a conta com outro cambio sem depender do payload original.
+
+    ---
+
+    ## 58.7. Quatro testes de fiacao, e por que eles sao o coracao disto
+
+    A suite **nao executa rotas nem componentes** (`npm test` roda so `lib/*.test.ts`). Toda a deteccao pode estar perfeita e nao ser chamada - foi assim que o campo `currency` da Kiwify passou meses chegando e sendo ignorado. Os quatro travam a fiacao por presenca de texto:
+
+    1. **os dois webhooks chamam o detector e gravam a coluna**
+    2. **a moeda chega do banco ate a tela** (`mapSaleRow` descarta tudo que nao esta listado nele)
+    3. **o botao de confirmar esta travado** por `conferencia.naoConvertidas.length > 0` - o mais importante do arquivo
+    4. **a rota limpa a moeda junto dos valores**, no mesmo update
+
+    **Um deles falhou durante a construcao e estava certo em falhar:** o de numero 4, porque eu tinha fatiado o arquivo errado no teste (existe um `.eq('id', sale_id)` antes, no SELECT). O codigo estava correto; o teste e que media errado. Corrigido o teste, nao o codigo.
+
+    O payload REAL da venda da Rosana esta copiado dentro do arquivo de teste, junto com uma venda brasileira normal como controle. Se um teste ali quebrar, e porque o defeito do item 57 voltou.
+
+    ---
+
+    ## 58.8. Ordem de aplicacao, que importou
+
+    **A migracao teve que rodar ANTES do deploy.** O insert do webhook passou a incluir `moeda`, e sem a coluna o PostgREST recusa a linha inteira - **o sistema pararia de registrar venda.** O commit ficou local ate o usuario confirmar (*"rodei"*), e so entao publiquei.
+
+    Conferido em producao depois da migracao: as tres colunas existem, 0 vendas marcadas como estrangeiras, e a Rosana segue com `moeda` nula e R$ 1.393,65 (ela foi convertida a mao no item 57, entao nao pode reaparecer na fila).
+
+    ---
+
+    ## 58.9. O que isto NAO resolve
+
+    - **As 5 vendas da Kiwify de maio/2026** continuam com liquido acima do pago (pendencia 19). Sao anteriores a coluna `moeda`, entao nao aparecem na fila de conversao. Estao fora dos periodos em aberto.
+    - **A base do imposto brasileiro** numa venda internacional continua incluindo o imposto estrangeiro (pendencia 20). Decisao contabil, nao tecnica.
+    - **Vendas antigas** nao foram remarcadas: a deteccao vale para o que entrar daqui pra frente, conforme a regra de corte que o usuario ja estabeleceu.
