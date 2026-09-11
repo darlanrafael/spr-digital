@@ -18,6 +18,7 @@ import { readequacoesDoPeriodo } from '@/lib/readequacoes-produto'
 import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
 import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/lib/etiqueta-fechamento'
 import { getSupabaseClient } from '@/lib/supabase'
+import { precisaConverter } from '@/lib/moeda-da-venda'
 
 type Step = 1 | 2 | 3 | 4
 const PAGE_TABS = ['novo', 'historico'] as const
@@ -46,7 +47,7 @@ export default function FechamentosPage() {
 }
 
 function FechamentosContent() {
-  const { sales, costs, setCosts, products, closings, setClosings, cashflow, setCashflow, selectedProject, user } = useApp()
+  const { sales, setSales, costs, setCosts, products, closings, setClosings, cashflow, setCashflow, selectedProject, user } = useApp()
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -351,12 +352,54 @@ function FechamentosContent() {
     const liquidoAcimaDoPago = periodSales.filter(s =>
       s.valor_liquido > s.valor_pago_cliente && s.valor_pago_cliente > 0)
 
-    return { multiplos, moedaEstrangeira, liquidoAcimaDoPago }
+    // Venda que entrou em moeda estrangeira e ainda nao foi convertida. Os
+    // quatro valores dela NAO sao reais, entao ela nao pode somar com as
+    // outras: R$ 278,73 no lugar de USD 278,73 tirou R$ 1.114,92 de um
+    // fechamento antes de alguem perceber (item 57).
+    //
+    // Diferente dos outros tres, este item TRAVA o fechamento. Os outros sao
+    // "confira antes de fechar"; este e "nao da pra fechar assim".
+    const naoConvertidas = periodSales.filter(s => precisaConverter(s))
+
+    return { multiplos, moedaEstrangeira, liquidoAcimaDoPago, naoConvertidas }
   }, [periodSales])
 
   const temConferencia = conferencia.multiplos.length > 0
     || conferencia.moedaEstrangeira.length > 0
     || conferencia.liquidoAcimaDoPago.length > 0
+    || conferencia.naoConvertidas.length > 0
+
+  // Conversao de venda em moeda estrangeira, feita aqui mesmo: o cambio e
+  // decisao do negocio (na primeira vez o usuario escolheu 5,00 tendo 5,1253 e
+  // 5,0856 oficiais na mesa), entao ninguem converte por ele.
+  const [cambioDaVenda, setCambioDaVenda] = useState<Record<string, string>>({})
+  const [convertendoVenda, setConvertendoVenda] = useState<string | null>(null)
+  const [erroConversao, setErroConversao] = useState<string | null>(null)
+
+  async function converterVenda(sale: Sale) {
+    const taxa = Number(String(cambioDaVenda[sale.id] ?? '').replace(',', '.'))
+    if (!(taxa > 0)) { setErroConversao('Informe o câmbio antes de converter.'); return }
+    setConvertendoVenda(sale.id)
+    setErroConversao(null)
+    try {
+      const r = await fetch('/api/sales/converter-moeda', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sale_id: sale.id, cambio: taxa }),
+      })
+      const j = await r.json()
+      if (!r.ok) { setErroConversao(j.error ?? 'Não foi possível converter.'); return }
+      // Atualiza em memoria em vez de recarregar a pagina: o usuario esta no
+      // meio de um fechamento, com periodo e produtos ja escolhidos.
+      setSales(prev => prev.map(v => v.id === sale.id
+        ? { ...v, ...j.depois, moeda: null, cambio_aplicado: taxa }
+        : v))
+      setCambioDaVenda(c => ({ ...c, [sale.id]: '' }))
+    } catch {
+      setErroConversao('Falha de rede ao converter.')
+    } finally {
+      setConvertendoVenda(null)
+    }
+  }
 
   const byProduct = useMemo(() => {
     const map: Record<string, {
@@ -1072,6 +1115,56 @@ function FechamentosContent() {
                       </p>
                     </div>
 
+                    {conferencia.naoConvertidas.length > 0 && (
+                      <div className="px-4 py-3 border-b border-amber-500/10 bg-red-500/[0.07]">
+                        <p className="text-xs font-semibold text-red-300">
+                          {conferencia.naoConvertidas.length} venda(s) em moeda estrangeira ainda não convertida(s)
+                        </p>
+                        <p className="text-[11px] text-amber-200/80 mt-1">
+                          Os valores dessas vendas <strong>não estão em reais</strong>. Enquanto elas estiverem aqui,
+                          o fechamento fica travado: somar moeda estrangeira com real dá um total errado sem parecer errado.
+                        </p>
+                        <p className="text-[11px] text-gray-400 mt-1">
+                          A plataforma paga na moeda dela e não converte. Informe o câmbio que você quer usar
+                          (o oficial do dia é referência, a escolha é sua) e converta cada uma.
+                        </p>
+                        {erroConversao && (
+                          <p className="text-[11px] text-red-300 mt-2">{erroConversao}</p>
+                        )}
+                        <div className="mt-2 space-y-2">
+                          {conferencia.naoConvertidas.map(s => (
+                            <div key={s.id} className="flex flex-wrap items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] text-white truncate">{s.nome}</p>
+                                <p className="text-[11px] text-gray-400">
+                                  {new Date(s.data_hora).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })} ·
+                                  {' '}{s.produto} · líquido <strong className="text-amber-300">{s.moeda} {s.valor_liquido.toFixed(2)}</strong>
+                                </p>
+                              </div>
+                              <input
+                                type="text" inputMode="decimal" placeholder="câmbio"
+                                value={cambioDaVenda[s.id] ?? ''}
+                                onChange={e => setCambioDaVenda(c => ({ ...c, [s.id]: e.target.value }))}
+                                className="w-24 bg-gray-900 border border-white/15 rounded-md px-2 py-1 text-xs text-white placeholder-gray-600"
+                              />
+                              <button
+                                onClick={() => converterVenda(s)}
+                                disabled={convertendoVenda === s.id}
+                                className="px-3 py-1 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-200 text-xs font-medium hover:bg-amber-500/30 disabled:opacity-50"
+                              >
+                                {convertendoVenda === s.id ? 'Convertendo...' : 'Converter'}
+                              </button>
+                              {Number(String(cambioDaVenda[s.id] ?? '').replace(',', '.')) > 0 && (
+                                <span className="text-[11px] text-gray-400 w-full sm:w-auto">
+                                  vira {formatCurrency(s.valor_liquido * Number(String(cambioDaVenda[s.id]).replace(',', '.')))}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {conferencia.multiplos.map(m => (
                       <div key={m.produto} className="px-4 py-3 border-b border-amber-500/10">
                         <p className="text-xs font-medium text-white">{m.produto}</p>
@@ -1612,7 +1705,7 @@ function FechamentosContent() {
                         Voltar
                       </button>
                       {canEdit && (
-                        <button onClick={handleConfirm} disabled={periodSales.length === 0}
+                        <button onClick={handleConfirm} disabled={periodSales.length === 0 || conferencia.naoConvertidas.length > 0}
                           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors font-semibold">
                           <CheckCircle className="w-4 h-4" /> ✓ Confirmar fechamento
                         </button>

@@ -186,6 +186,10 @@ function mapSaleRow(r: Record<string, unknown>): Sale {
     preco_base: Number(r.preco_base),
     valor_pago_cliente: Number(r.valor_pago_cliente),
     valor_liquido: Number(r.valor_liquido),
+    // Precisa chegar na tela de Fechamentos: enquanto preenchida, os valores
+    // acima NAO sao reais e a venda nao pode entrar num fechamento. Ver
+    // lib/moeda-da-venda.ts e o item 57 do spr-digital.md.
+    moeda: r.moeda ? String(r.moeda) : null,
     data_hora: normTs(String(r.data_hora ?? ''), String(r.plataforma ?? '').toLowerCase() === 'kiwify'),
     utm_source: String(r.utm_source ?? ''),
     utm_medium: String(r.utm_medium ?? ''),

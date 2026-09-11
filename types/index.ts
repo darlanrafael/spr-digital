@@ -63,6 +63,19 @@ export interface Sale {
   status: SaleStatus
   projetoId: string
   data_reembolso?: string
+  /**
+   * Moeda dos valores desta venda quando NAO e real (ex: "USD"). NULL/ausente
+   * significa real, que e o caso de 10.768 das 10.769 vendas.
+   *
+   * Enquanto preenchida, os QUATRO campos de dinheiro acima estao nessa moeda e
+   * a venda NAO pode entrar num fechamento. Ver lib/moeda-da-venda.ts e o item
+   * 57 do spr-digital.md.
+   */
+  moeda?: string | null
+  /** Cambio usado na conversao para real. Gravado junto com a limpeza de `moeda`. */
+  cambio_aplicado?: number | null
+  /** Os valores como vieram da plataforma, antes de converter. Auditoria. */
+  valores_originais?: Record<string, unknown> | null
 }
 
 export interface FixedCost {

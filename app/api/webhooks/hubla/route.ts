@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { moedaDaHubla, valoresInternacionaisDaHubla } from '@/lib/moeda-da-venda'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { logWebhookEvent } from '@/lib/webhook-log'
 import { resolveRefundTargets, type SaleRow } from '@/lib/refund-target'
@@ -63,6 +64,13 @@ export async function POST(req: NextRequest) {
       const sellerReceiver = receivers.find((r) => r.role === 'seller')
       const sellerTotalCents = (sellerReceiver?.totalCents as number) ?? 0
 
+      // Venda internacional. Ate 11/09/2026 a moeda chegava aqui e era jogada
+      // fora: a venda da Rosana (05/09) entrou com tres campos em euro e um em
+      // dolar, todos gravados como reais, e o fechamento contou R$ 278,73 onde
+      // havia USD 278,73. Ver item 57 do spr-digital.md.
+      const moeda = moedaDaHubla(invoice as Record<string, unknown>)
+      const valoresEmMoeda = moeda ? valoresInternacionaisDaHubla(invoice as Record<string, unknown>) : null
+
       const invoiceId = (invoice?.id as string) ?? null
 
       // product.id identifica o produto-base do catálogo, mas o mesmo produto-base pode
@@ -104,10 +112,17 @@ export async function POST(req: NextRequest) {
         telefone:           (payer?.phone as string) ?? '',
         produto:            ((product?.name as string) ?? '').trim(),
         oferta_nome:        ofertaNome,
-        preco_base:         ((amount?.subtotalCents as number) ?? 0) / 100,
-        valor_pago_cliente: ((amount?.subtotalCents as number) ?? 0) / 100,
-        valor_com_juros:    ((amount?.totalCents as number) ?? 0) / 100,
-        valor_liquido:      Math.round(sellerTotalCents) / 100,
+        // Em venda internacional os quatro valores vem do bloco `settlement`,
+        // que esta na MESMA moeda do repasse. O bloco `amount` esta na moeda do
+        // cliente (euro, em Portugal): misturar os dois foi o defeito, e nenhum
+        // cambio unico conserta uma linha mista.
+        preco_base:         valoresEmMoeda?.preco_base         ?? ((amount?.subtotalCents as number) ?? 0) / 100,
+        valor_pago_cliente: valoresEmMoeda?.valor_pago_cliente ?? ((amount?.subtotalCents as number) ?? 0) / 100,
+        valor_com_juros:    valoresEmMoeda?.valor_com_juros    ?? ((amount?.totalCents as number) ?? 0) / 100,
+        valor_liquido:      valoresEmMoeda?.valor_liquido      ?? Math.round(sellerTotalCents) / 100,
+        // NULL = real. Enquanto preenchida, a venda nao entra em fechamento.
+        moeda:              valoresEmMoeda ? moeda : null,
+        valores_originais:  valoresEmMoeda ? { moeda, amount, receivers } : null,
         utm_source:         (utm?.source as string) ?? '',
         utm_medium:         (utm?.medium as string) ?? '',
         utm_campaign:       (utm?.campaign as string) ?? '',
