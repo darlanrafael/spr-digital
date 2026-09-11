@@ -163,6 +163,16 @@ export interface ClosingProductRow {
   liquido: number
   terapeuta_nome?: string
   repasse_terapeuta?: number
+  /**
+   * Como o repasse foi calculado, quando NAO e o percentual padrao da
+   * terapeuta. Hoje so o Diagnostico Guiado usa: o pagamento dela ali e fixo
+   * por sessao (R$ 95), nao percentual sobre faturamento.
+   *
+   * Gravado no fechamento de proposito: o historico tem que explicar o numero
+   * sozinho. Sem isto a linha mostra "-R$ 6.175,00 (Denise)" e quem ler daqui a
+   * seis meses divide pelo liquido, acha 13,6% e nao entende de onde saiu.
+   */
+  repasse_detalhe?: string
 }
 
 export interface Closing {

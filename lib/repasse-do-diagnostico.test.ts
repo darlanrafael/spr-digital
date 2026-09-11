@@ -101,3 +101,21 @@ test('a tela AVISA quando uma venda de Diagnostico fica de fora do repasse', () 
   assert.ok(tela.includes('diagSemFormato'), 'a tela nao calcula as vendas sem formato')
   assert.ok(tela.includes('sem formato reconhecido'), 'a tela nao avisa o usuario')
 })
+
+test('a linha do Diagnostico EXPLICA de onde vem o numero', () => {
+  // Organizacao, pedida pelo usuario: sem isto a linha mostra
+  // "-R$ 6.175,00 (Denise Nascimento)" e quem ler divide pelo liquido, acha
+  // 13,6% e procura um percentual que nao existe. E grava no fechamento, para
+  // o historico explicar sozinho daqui a seis meses.
+  const tela = readFileSync(new URL('../app/fechamentos/page.tsx', import.meta.url), 'utf8')
+  assert.ok(tela.includes('repasse_detalhe'), 'a tela nao monta o detalhe do repasse')
+  assert.ok(tela.includes('sessões ×'), 'o detalhe nao diz sessoes x valor')
+  // Tem que aparecer nas DUAS tabelas: a do fechamento em andamento e a do
+  // historico. Sao codigo duplicado, e corrigir uma e esquecer a outra nao da
+  // erro nenhum - foi o que aconteceu com a faixa de periodo em 17/08.
+  const ocorrencias = tela.split('repasse_detalhe').length - 1
+  assert.ok(ocorrencias >= 4, `repasse_detalhe aparece ${ocorrencias}x, esperava pelo menos 4 (tipo, calculo, persistencia, e as duas tabelas)`)
+
+  const tipos = readFileSync(new URL('../types/index.ts', import.meta.url), 'utf8')
+  assert.ok(/repasse_detalhe\?: string/.test(tipos), 'ClosingProductRow nao tem o campo, o historico perde o detalhe')
+})

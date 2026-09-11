@@ -22,6 +22,7 @@ import { precisaConverter } from '@/lib/moeda-da-venda'
 import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
+import { PAGAMENTO_DENISE_POR_SESSAO } from '@/lib/diagnostico-guiado'
 import { ehDiagnosticoGuiado } from '@/lib/vendas-por-situacao'
 
 type Step = 1 | 2 | 3 | 4
@@ -420,6 +421,13 @@ function FechamentosContent() {
       id: string; nome: string; plataforma: string; qtd: number
       bruto: number; taxas: number; aliquota: number; imposto: number; liquido: number; liquido_pos_impostos: number
       terapeuta_nome: string | null; repasse_terapeuta: number
+      /**
+       * Como o repasse foi calculado, quando NAO e o percentual padrao.
+       * No Diagnostico o valor e fixo por sessao, e sem isto a linha mostra
+       * "-R$ 6.175,00 (Denise)" e quem ler depois divide pelo liquido, acha
+       * 13,6% e nao entende de onde saiu.
+       */
+      repasse_detalhe?: string
     }> = {}
     const vendasDaLinha: Record<string, Sale[]> = {}
     for (const s of periodSales) {
@@ -462,8 +470,10 @@ function FechamentosContent() {
       if (ehDiagnosticoGuiado(row.id)) {
         const r = repasseDoDiagnostico(vendasDaLinha[row.id] ?? [])
         const denise = terapeutasComissao.find(t => t.nome.toLowerCase().includes('denise'))
+        const sessoes = r.porVenda.reduce((acc, v) => acc + v.sessoesDenise, 0)
         row.terapeuta_nome = denise?.nome ?? 'Denise Nascimento'
         row.repasse_terapeuta = r.total
+        row.repasse_detalhe = `${sessoes} sessões × ${formatCurrency(PAGAMENTO_DENISE_POR_SESSAO)}`
         continue
       }
       const terapeuta = matchTerapeutaComissao(row.nome)
@@ -740,6 +750,9 @@ function FechamentosContent() {
         liquido: p.liquido,
         terapeuta_nome: p.terapeuta_nome ?? undefined,
         repasse_terapeuta: p.repasse_terapeuta || undefined,
+        // Vai gravado no fechamento: o historico tem que explicar o numero
+        // sozinho, sem depender de quem lembra da regra.
+        repasse_detalhe: p.repasse_detalhe,
       })),
     }
     try { await svcAddClosing(newClosing, selectedProject) } catch (e) { console.error(e) }
@@ -1450,9 +1463,14 @@ function FechamentosContent() {
                               <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(row.liquido)}</td>
                               <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(row.liquido_pos_impostos)}</td>
                               <td className="px-4 py-3 text-right text-orange-400">
-                                {row.terapeuta_nome && row.repasse_terapeuta > 0
-                                  ? `-${formatCurrency(row.repasse_terapeuta)} (${row.terapeuta_nome})`
-                                  : '—'}
+                                {row.terapeuta_nome && row.repasse_terapeuta > 0 ? (
+                                  <>
+                                    -{formatCurrency(row.repasse_terapeuta)} ({row.terapeuta_nome})
+                                    {row.repasse_detalhe && (
+                                      <span className="block text-[10px] text-gray-500 font-normal">{row.repasse_detalhe}</span>
+                                    )}
+                                  </>
+                                ) : '—'}
                               </td>
                             </tr>
                           ))}
@@ -2603,7 +2621,14 @@ function ClosingCard({ closing }: { closing: Closing }) {
                         <td className="px-4 py-2.5 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                         <td className="px-4 py-2.5 text-right text-emerald-400 font-medium">{formatCurrency(row.liquido)}</td>
                         <td className="px-4 py-2.5 text-right text-orange-400">
-                          {row.terapeuta_nome && (row.repasse_terapeuta ?? 0) > 0 ? `-${formatCurrency(row.repasse_terapeuta ?? 0)} (${row.terapeuta_nome})` : '—'}
+                          {row.terapeuta_nome && (row.repasse_terapeuta ?? 0) > 0 ? (
+                            <>
+                              -{formatCurrency(row.repasse_terapeuta ?? 0)} ({row.terapeuta_nome})
+                              {row.repasse_detalhe && (
+                                <span className="block text-[10px] text-gray-500 font-normal">{row.repasse_detalhe}</span>
+                              )}
+                            </>
+                          ) : '—'}
                         </td>
                       </tr>
                     ))}
