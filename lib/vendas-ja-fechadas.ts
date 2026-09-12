@@ -24,6 +24,31 @@ export type VendaJaFechada = Sale & { fechamentoId: string }
 
 const dia = (iso: string) => String(iso).slice(0, 10)
 
+/**
+ * O INSTANTE da venda, em milissegundos.
+ *
+ * `Sale.data_hora` sai de `normTs` (lib/services.ts) e e sempre hora de
+ * BRASILIA sem fuso escrito: `2026-08-14T14:42:44`. Na Hubla o UTC ja foi
+ * convertido subtraindo 3h; na Kiwify o valor ja vinha em BRT e so teve o
+ * sufixo cortado. Nos dois casos o texto e BRT, entao o fuso e -03:00.
+ *
+ * Sem isto a comparacao com `data_confirmacao` - que vem do banco em UTC, com
+ * fracao de segundo e `+00:00` - era feita como TEXTO entre bases diferentes, e
+ * errava por TRES HORAS.
+ *
+ * Achado pelo pre-voo em 12/09/2026 e medido: 11 vendas, R$ 3.181,85 marcadas
+ * como "ja fechadas" tendo vindo DEPOIS do fechamento, sem estar em
+ * `compradores` de nenhum - receita presa, que nunca seria contada. A maior e a
+ * do Marcio Adriano Silva, R$ 2.827,65, feita 3h depois do fechamento de 14/08.
+ */
+const instanteBRT = (data_hora: string): number | null => {
+  if (!data_hora) return null
+  // Se ja vier com fuso (dado antigo ou de outra origem), respeita o que veio.
+  const comFuso = /[+-]\d{2}:\d{2}$|Z$/.test(data_hora) ? data_hora : `${data_hora}-03:00`
+  const t = new Date(comFuso).getTime()
+  return Number.isNaN(t) ? null : t
+}
+
 export function fechamentoQueContou(venda: Sale, closings: Closing[]): Closing | null {
   for (const c of closings) {
     if (!c.data_confirmacao) continue
@@ -38,7 +63,14 @@ export function fechamentoQueContou(venda: Sale, closings: Closing[]): Closing |
 
     // O corte é o INSTANTE da confirmação, não o dia: é isso que separa a venda
     // que entrou no fechamento anterior da que veio depois dele, no mesmo dia.
-    if (venda.data_hora >= c.data_confirmacao) continue
+    //
+    // Comparado por ÉPOCA. Como texto, `2026-08-14T14:42:44` (BRT) contra
+    // `2026-08-14T14:46:08.403+00:00` (UTC) errava por 3 horas — ver
+    // `instanteBRT` acima.
+    const tVenda = instanteBRT(venda.data_hora)
+    const tFechamento = new Date(String(c.data_confirmacao)).getTime()
+    if (tVenda === null || Number.isNaN(tFechamento)) continue
+    if (tVenda >= tFechamento) continue
 
     return c
   }

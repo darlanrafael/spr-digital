@@ -361,10 +361,14 @@ export async function POST(req: NextRequest) {
       const { data: sessaoData } = await supabase
         .from('sessoes').select('paciente_nome').eq('id', sessao_id).single()
 
-      await supabase.from('sessoes').update({
+      // Erro conferido: sem isto uma falha aqui grava no historico uma
+      // remarcacao que NAO aconteceu, e a sessao fica na data antiga enquanto o
+      // paciente foi avisado da nova. Achada pelo pre-voo em 12/09/2026.
+      const { error: errRemarcar } = await supabase.from('sessoes').update({
         data_agendada: nova_data,
         status: 'agendada',
       }).eq('id', sessao_id)
+      if (errRemarcar) return NextResponse.json({ error: errRemarcar.message }, { status: 500 })
 
       await supabase.from('remarcacoes_historico').insert({
         sessao_id,

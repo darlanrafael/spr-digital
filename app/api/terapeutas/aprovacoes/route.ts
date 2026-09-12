@@ -165,13 +165,18 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: 'Justificativa obrigatória (mínimo 10 caracteres)' }, { status: 400 })
       }
 
-      await supabase.from('solicitacoes_reembolso').update({
+      // Erro conferido: sem isto uma falha aqui deixa o pedido PENDENTE na fila
+      // e devolve sucesso para quem recusou - o CEO acha que recusou e o pedido
+      // reaparece. Mesma classe do item 39 do spr-digital.md, achada pelo
+      // pre-voo em 12/09/2026.
+      const { error: errRejeicao } = await supabase.from('solicitacoes_reembolso').update({
         status: 'rejeitado',
         aprovado_por_nome: usuario_nome,
         aprovado_por_email: usuario_email,
         justificativa_rejeicao: justificativa,
         updated_at: new Date().toISOString(),
       }).eq('id', id)
+      if (errRejeicao) return NextResponse.json({ error: errRejeicao.message }, { status: 500 })
 
       await supabase.from('ocorrencias_prontuario').insert({
         sale_id: s.sale_id,
