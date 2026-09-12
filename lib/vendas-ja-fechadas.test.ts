@@ -160,3 +160,49 @@ test('data_hora vazia ou invalida nao quebra nem vira "ja fechada"', () => {
     assert.equal(fechamentoQueContou({ id: 'x', produto: 'X', data_hora: dh, valor_liquido: 1 } as never, [fechamento]), null, JSON.stringify(dh))
   }
 })
+
+// ── Fronteiras da janela, achadas pelo teste de mutacao em 12/09/2026 ───────
+//
+// O modulo marcava 57%, o mais baixo dos de dinheiro - e e ele que impede
+// contar a mesma receita duas vezes. Tres mutantes sobreviviam, todos em
+// limites que nenhum teste exercitava.
+
+// Sem `as never` para poder espalhar: espalhar `never` nao compila.
+const FECH_JANELA = {
+  id: 'cj', data_confirmacao: '2026-09-01T12:00:00+00:00',
+  periodo: { inicio: '2026-08-01', fim: '2026-08-31' },
+  produtos_incluidos: ['P'],
+} as unknown as Closing
+
+const vendaEm = (dia: string) => ({ id: 'v', produto: 'P', data_hora: `${dia}T10:00:00`, valor_liquido: 100 }) as never
+
+test('o PRIMEIRO dia da janela entra; o anterior nao', () => {
+  // `d < janela.inicio` virando `<=` fazia o primeiro dia ficar de fora.
+  assert.ok(fechamentoQueContou(vendaEm('2026-08-01'), [FECH_JANELA]), '01/08 e o primeiro dia: entra')
+  assert.equal(fechamentoQueContou(vendaEm('2026-07-31'), [FECH_JANELA]), null, '31/07 esta fora')
+})
+
+test('o ULTIMO dia da janela entra; o seguinte nao', () => {
+  assert.ok(fechamentoQueContou(vendaEm('2026-08-31'), [FECH_JANELA]), '31/08 e o ultimo dia: entra')
+  assert.equal(fechamentoQueContou(vendaEm('2026-09-01'), [FECH_JANELA]), null, '01/09 esta fora')
+})
+
+test('janela com APENAS o inicio ou APENAS o fim e ignorada', () => {
+  // `!janela.inicio || !janela.fim` virando `&&` fazia uma janela meio
+  // preenchida ser aceita, e a comparacao com `undefined` sempre dar falso -
+  // toda venda entraria.
+  const soInicio = { ...FECH_JANELA, periodo: { inicio: '2026-08-01', fim: '' } } as unknown as Closing
+  const soFim = { ...FECH_JANELA, periodo: { inicio: '', fim: '2026-08-31' } } as unknown as Closing
+  assert.equal(fechamentoQueContou(vendaEm('2026-08-15'), [soInicio]), null, 'sem fim, nao conta')
+  assert.equal(fechamentoQueContou(vendaEm('2026-08-15'), [soFim]), null, 'sem inicio, nao conta')
+})
+
+test('data da venda invalida OU data do fechamento invalida: nao conta', () => {
+  // `tVenda === null || Number.isNaN(tFechamento)` virando `&&` exigia as DUAS
+  // invalidas para recusar - com uma so, a comparacao seguia com NaN e dava
+  // falso, marcando a venda como nova quando deveria ser ignorada.
+  const fechSemData = { ...FECH_JANELA, data_confirmacao: 'nao-e-data' } as unknown as Closing
+  assert.equal(fechamentoQueContou(vendaEm('2026-08-15'), [fechSemData]), null, 'fechamento com data invalida')
+  const vendaSemData = { id: 'v', produto: 'P', data_hora: '', valor_liquido: 100 } as never
+  assert.equal(fechamentoQueContou(vendaSemData, [FECH_JANELA]), null, 'venda com data invalida')
+})

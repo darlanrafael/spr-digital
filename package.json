@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test lib/*.test.ts",
-    "preflight": "tsx scripts/preflight.ts"
+    "preflight": "tsx scripts/preflight.ts",
+    "mutacao": "tsx scripts/mutacao.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",

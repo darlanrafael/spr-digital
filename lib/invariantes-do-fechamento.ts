@@ -27,8 +27,19 @@ export type Invariante = {
   diferenca: number
 }
 
-/** Centavo. Diferenca menor que isso e arredondamento, nao erro. */
-const TOLERANCIA = 0.011
+/**
+ * A conta e feita em CENTAVOS INTEIROS, e a tolerancia e UM centavo.
+ *
+ * Em ponto flutuante nao existe "exatamente na tolerancia": `9770 - (9770 +
+ * 0.011)` da `-0.011000000000422`, que e maior que 0.011. Qualquer limite
+ * escrito em reais e furado pela representacao, e o teste de fronteira que eu
+ * escrevi depois do teste de mutacao bateu exatamente nisso, em 12/09/2026.
+ *
+ * Em centavos inteiros o limite e exato: um centavo de diferenca e
+ * arredondamento e passa calado; dois ja e divergencia e aparece.
+ */
+const TOLERANCIA_EM_CENTAVOS = 1
+const centavos = (n: number) => Math.round(n * 100)
 const cent = (n: number) => Math.round(n * 100) / 100
 
 export type DadosDoFechamento = {
@@ -51,8 +62,17 @@ export type DadosDoFechamento = {
 export function invariantesDoFechamento(d: DadosDoFechamento): Invariante[] {
   const falhas: Invariante[] = []
   const confere = (id: string, titulo: string, esperado: number, encontrado: number, detalhe: string) => {
-    const diferenca = cent(encontrado - esperado)
-    if (Math.abs(diferenca) > TOLERANCIA) falhas.push({ id, titulo, detalhe, esperado: cent(esperado), encontrado: cent(encontrado), diferenca })
+    // Compara a diferenca CRUA com a tolerancia, e arredonda so para MOSTRAR.
+    //
+    // A primeira versao arredondava antes de comparar, e ai o limite efetivo
+    // virava um centavo e meio em vez de um centavo e um milesimo - a constante
+    // TOLERANCIA mentia sobre o proprio valor. Achado em 12/09/2026 por um
+    // teste de fronteira escrito depois que o teste de mutacao mostrou que
+    // nenhum caso exercitava o limite.
+    const difEmCentavos = centavos(encontrado) - centavos(esperado)
+    if (Math.abs(difEmCentavos) > TOLERANCIA_EM_CENTAVOS) {
+      falhas.push({ id, titulo, detalhe, esperado: cent(esperado), encontrado: cent(encontrado), diferenca: difEmCentavos / 100 })
+    }
   }
 
   // I1 — o que sai do bolso dos socios e o que os socios absorvem.
@@ -95,7 +115,7 @@ export function invariantesDoFechamento(d: DadosDoFechamento): Invariante[] {
   // Defeito real: a mesma venda deduzida duas vezes (parcial + integral),
   // R$ 4.318,70 sobre uma venda de R$ 2.758,70.
   const totalEstornos = d.alertasSelecionados.reduce((a, x) => a + x.valor, 0)
-  if (d.deducaoDosSocios > 0 && cent(d.deducaoDosSocios) - cent(totalEstornos) > TOLERANCIA) {
+  if (d.deducaoDosSocios > 0 && centavos(d.deducaoDosSocios) - centavos(totalEstornos) > TOLERANCIA_EM_CENTAVOS) {
     falhas.push({ id: 'I4', titulo: 'Dedução maior que o total dos estornos',
       detalhe: 'Está sendo descontado dos sócios mais do que a soma dos estornos marcados. Algum estorno pode estar contado duas vezes.',
       esperado: cent(totalEstornos), encontrado: cent(d.deducaoDosSocios), diferenca: cent(d.deducaoDosSocios - totalEstornos) })

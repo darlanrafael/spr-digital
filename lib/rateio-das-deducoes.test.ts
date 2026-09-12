@@ -139,7 +139,13 @@ test('o lancamento no caixa diz com todas as letras que a EMPRESA pagou', () => 
   })
   assert.match(texto, /A EMPRESA ESTA PAGANDO/)
   assert.match(texto, /NAO foi descontado do repasse dos socios/)
-  assert.match(texto, /2.297,45/, 'o total nao aparece')
+  // Ancorado no "R$ " e sem sinal: o teste anterior era /2.297,45/, que casa
+  // tambem com "-2.297,45". O mutante que trocava a soma do total por
+  // subtracao SOBREVIVIA, porque o valor virava negativo e a regex continuava
+  // casando. Achado pelo teste de mutacao em 12/09/2026.
+  assert.match(texto, /R\$ 2\.297,45/, 'o total nao aparece, ou aparece com sinal errado')
+  assert.ok(!texto.includes('-R$ 2.297,45') && !texto.includes('R$ -2.297,45'),
+    'o total nao pode sair negativo')
   assert.match(texto, /Miguel Pires/)
   assert.match(texto, /Mentoria Particular - Pedro Roncada/)
   assert.match(texto, /02\/09\/2026/)
@@ -218,4 +224,32 @@ test('divisao que nao soma 100 nao inventa nem perde dinheiro', () => {
   // E o total que a tela mostra tem que ser ZERO tambem, nao os R$ 1.000:
   // ninguem absorveu, entao nada pode sair do repasse.
   assert.equal(t['SPR DIGITAL LTDA'] + t['Pedro Roncada'], 0)
+})
+
+
+test('dois fechamentos com a MESMA data: a escolha e estavel e nao quebra', () => {
+  // Mutante sobrevivente achado em 12/09/2026: `quando(c) > quando(mais)`
+  // virava `>=` e nenhum teste notava - nao havia caso de empate. Com empate,
+  // qual fechamento vale era indefinido.
+  const SPR2 = 'SPR DIGITAL LTDA'
+  const PEDRO2 = 'Pedro Roncada'
+  const mesmaData = '2026-08-03T12:00:00Z'
+  const a = {
+    id: 'primeiro', data_confirmacao: mesmaData,
+    socios: [{ nome: SPR2, percentual: 50, valor: 0 }, { nome: PEDRO2, percentual: 50, valor: 0 }],
+    compradores: [{ id: 'venda-x', nome: 'x', email: '', cpf: '', produto: 'P', valor: 0 }],
+  }
+  const b = {
+    id: 'segundo', data_confirmacao: mesmaData,
+    socios: [{ nome: SPR2, percentual: 35, valor: 0 }, { nome: PEDRO2, percentual: 65, valor: 0 }],
+    compradores: [{ id: 'venda-x', nome: 'x', email: '', cpf: '', produto: 'P', valor: 0 }],
+  }
+  // Com `>`, o PRIMEIRO da lista ganha o empate; com `>=`, o ULTIMO. A escolha
+  // precisa ser uma so e sempre a mesma, senao o rateio muda entre duas
+  // renderizacoes com o mesmo dado.
+  const r1 = divisaoOriginalDoAlerta({ saleId: 'venda-x' }, [a, b] as never[])
+  const r2 = divisaoOriginalDoAlerta({ saleId: 'venda-x' }, [a, b] as never[])
+  assert.equal(r1?.closingId, r2?.closingId, 'a escolha tem que ser estavel')
+  assert.equal(r1?.closingId, 'primeiro', 'no empate vale o primeiro da lista')
+  assert.equal(r1?.divisao[SPR2], 50)
 })
