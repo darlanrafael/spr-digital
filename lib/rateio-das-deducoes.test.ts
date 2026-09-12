@@ -171,3 +171,51 @@ test('o repasse final nao pinta numero negativo de verde', () => {
   )
   assert.ok(ate.includes('>= 0'), 'a cor do repasse final nao depende do sinal')
 })
+
+test('quem PAGOU o estorno fica gravado, e no jsonb que persiste', () => {
+  // Defeito achado na segunda revisao de 11/09/2026: a primeira versao gravava
+  // `prejuizoAbsorvidoPelaEmpresa` no objeto Closing, e o mapeamento de
+  // `addClosing` em lib/services.ts e LISTA EXPLICITA de colunas - o campo era
+  // descartado em silencio. A tela prometia "fica registrado no fechamento" e
+  // nada era registrado.
+  const tipos = readFileSync(new URL('../types/index.ts', import.meta.url), 'utf8')
+  assert.ok(/absorvidoPelaEmpresa\?: boolean/.test(tipos), 'o alerta nao tem a marca de quem pagou')
+  // Checa a DECLARACAO, nao qualquer mencao: o comentario que explica por que o
+  // campo morreu cita o nome dele, e esse comentario vale manter.
+  assert.ok(
+    !/^\s*prejuizoAbsorvidoPelaEmpresa\?:/m.test(tipos),
+    'o campo morto foi redeclarado - ele e descartado em silencio por addClosing',
+  )
+
+  const services = readFileSync(new URL('../lib/services.ts', import.meta.url), 'utf8')
+  assert.ok(/alertas:\s*closing\.alertas/.test(services), '`alertas` precisa continuar sendo persistido')
+
+  const tela = readFileSync(new URL('../app/fechamentos/page.tsx', import.meta.url), 'utf8')
+  assert.ok(tela.includes('absorvidoPelaEmpresa: true'), 'a tela nao marca os alertas absorvidos')
+  assert.ok(tela.includes('absorvido pela empresa'), 'o historico nao mostra quem absorveu')
+})
+
+test('o total deduzido vem da SOMA POR SOCIO, nao do total dos alertas', () => {
+  // Se vier de `alertasTotal`, basta a divisao de um alerta nao somar 100 entre
+  // os socios para o rodape da tabela dizer um total que as linhas nao somam.
+  const tela = readFileSync(new URL('../app/fechamentos/page.tsx', import.meta.url), 'utf8')
+  const linha = tela.split('\n').find(l => l.includes('const deducaoDosSocios'))
+  assert.ok(linha, 'nao achei deducaoDosSocios')
+  assert.ok(!/const deducaoDosSocios = empresaAbsorve \? 0 : alertasTotal/.test(tela),
+    'voltou a usar alertasTotal, e o rodape pode divergir das linhas')
+  assert.ok(tela.includes('deducoesSocio[n] ?? 0'), 'o total nao soma as deducoes por socio')
+})
+
+test('divisao que nao soma 100 nao inventa nem perde dinheiro', () => {
+  // O caso que motivou o invariante: socio do fechamento de origem com nome que
+  // nao casa com o do fechamento atual.
+  const t = deducoesPorSocio(
+    [{ chave: 'x', valor: 1000, divisao: { 'Nome Que Nao Existe': 100 } }],
+    ['SPR DIGITAL LTDA', 'Pedro Roncada'],
+  )
+  assert.equal(t['SPR DIGITAL LTDA'], 0)
+  assert.equal(t['Pedro Roncada'], 0)
+  // E o total que a tela mostra tem que ser ZERO tambem, nao os R$ 1.000:
+  // ninguem absorveu, entao nada pode sair do repasse.
+  assert.equal(t['SPR DIGITAL LTDA'] + t['Pedro Roncada'], 0)
+})

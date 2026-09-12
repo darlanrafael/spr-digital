@@ -115,3 +115,40 @@ test('o bloco novo PAGINA, senao terapeuta sem fechamento derruba a tela', () =>
   )
   assert.ok(tela.includes('setDesdeUltimoPage(1)'), 'a pagina nao volta para 1 ao trocar de terapeuta')
 })
+
+test('o corte compara por EPOCA, nao por string', () => {
+  // Achado na segunda revisao de 11/09/2026. Os formatos reais do banco:
+  //   data_confirmacao  2026-08-14T18:00:18.948+00:00   (com fracao)
+  //   data_entrega      2026-07-20T15:20:00+00:00       (sem)
+  // No segundo exato em que coincidem, '+' (0x2B) < '.' (0x2E) e a comparacao
+  // de texto exclui a sessao.
+  const corteReal = '2026-08-14T18:00:18.948+00:00'
+  const noMesmoSegundo = '2026-08-14T18:00:18+00:00'
+  assert.ok(noMesmoSegundo < corteReal, 'confirma que a comparacao de TEXTO erraria')
+
+  const r = entreguesDesdeOFechamento({
+    sessoes: [{ id: 'x', comissao_valor: 100, comissao_paga: false, data_entrega: '2026-08-14T18:00:19+00:00' }],
+    fechamentos: [{ id: 'f', data_confirmacao: corteReal, sessoes: [] }],
+  })
+  assert.equal(r.sessoes.length, 1, 'um segundo DEPOIS do corte tem que entrar')
+})
+
+test('fuso diferente de +00:00 nao engana o corte', () => {
+  // A mesma hora escrita em BRT. Por texto, "2026-08-14T15:30:00-03:00" e menor
+  // que "2026-08-14T18:00:18.948+00:00" e seria excluida - mas 15:30 BRT e
+  // 18:30 UTC, DEPOIS do corte.
+  const r = entreguesDesdeOFechamento({
+    sessoes: [{ id: 'brt', comissao_valor: 100, comissao_paga: false, data_entrega: '2026-08-14T15:30:00-03:00' }],
+    fechamentos: [{ id: 'f', data_confirmacao: '2026-08-14T18:00:18.948+00:00', sessoes: [] }],
+  })
+  assert.equal(r.sessoes.length, 1, '15:30 BRT e 18:30 UTC: entra')
+})
+
+test('data invalida no fechamento nao vira corte', () => {
+  const r = entreguesDesdeOFechamento({
+    sessoes: [{ id: 'x', comissao_valor: 10, comissao_paga: false, data_entrega: '2026-01-01T00:00:00Z' }],
+    fechamentos: [{ id: 'ruim', data_confirmacao: 'nao-e-data', sessoes: [] }],
+  })
+  assert.equal(r.corte, null, 'fechamento com data invalida e ignorado')
+  assert.equal(r.sessoes.length, 1)
+})

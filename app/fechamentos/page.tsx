@@ -622,8 +622,19 @@ function FechamentosContent() {
 
   /** Quanto ESTE socio absorve. Zero quando a empresa esta pagando. */
   const deducaoDoSocio = (nome: string) => empresaAbsorve ? 0 : (deducoesSocio[nome] ?? 0)
-  /** O que sai do repasse dos socios no total. Zero quando a empresa paga. */
-  const deducaoDosSocios = empresaAbsorve ? 0 : alertasTotal
+  /**
+   * O que sai do repasse dos socios no total.
+   *
+   * Vem da SOMA POR SOCIO, nao de `alertasTotal`. A primeira versao usava
+   * `alertasTotal`, e ai bastava a divisao de um alerta nao somar 100 entre os
+   * socios (nome de socio que nao casa com o do fechamento de origem, por
+   * exemplo) para o rodape da tabela dizer um total que as linhas nao somam.
+   * Assim o invariante vale por construcao: o que sai do bolso dos socios e
+   * exatamente o que os socios absorvem.
+   */
+  const deducaoDosSocios = empresaAbsorve
+    ? 0
+    : Math.round(SOCIO_NAMES.reduce((a, n) => a + (deducoesSocio[n] ?? 0), 0) * 100) / 100
   /** O numero que REALMENTE vai ser dividido entre os socios. */
   const lucroAposDeducoes = lucroReal - deducaoDosSocios
 
@@ -730,15 +741,15 @@ function FechamentosContent() {
       lucroBruto,
       reservaCaixa,
       lucroReal,
-      // Quem pagou os reembolsos deste fechamento. Sem isto o historico nao
-      // distingue "nao havia reembolso" de "a empresa absorveu".
-      prejuizoAbsorvidoPelaEmpresa: empresaAbsorve && alertasTotal > 0 ? alertasTotal : undefined,
       repasseTerapeutasTotal,
       socios: sociosData,
       compradores: buyers,
       etiqueta: etiqueta.trim() || undefined,
       etiqueta_cor: etiqueta.trim() ? etiquetaCor : undefined,
-      alertas: alertasSelecionados,
+      // Marca QUEM PAGOU cada estorno. Sem isto o historico nao distingue "os
+      // socios absorveram" de "a empresa absorveu", e a tela promete o
+      // contrario ao usuario no painel de escolha.
+      alertas: alertasSelecionados.map(a => empresaAbsorve ? { ...a, absorvidoPelaEmpresa: true } : a),
       byProduct: byProduct.map(p => ({
         nome: p.nome,
         plataforma: p.plataforma,
@@ -2330,11 +2341,27 @@ function ClosingCard({ closing }: { closing: Closing }) {
                   + etiqueta
                 </button>
               )}
-              {closing.alertas.length > 0 && (
-                <span className="inline-flex items-center gap-1 bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
-                  {closing.alertas.length} devolução{closing.alertas.length !== 1 ? 'es' : ''} deduzida{closing.alertas.length !== 1 ? 's' : ''}
-                </span>
-              )}
+              {closing.alertas.length > 0 && (() => {
+                // Quem absorveu muda o que a etiqueta pode dizer: "deduzida"
+                // significa tirada dos socios, e quando a empresa paga isso e
+                // falso. Sem esta distincao o historico mente.
+                const daEmpresa = closing.alertas.filter(a => a.absorvidoPelaEmpresa)
+                const dosSocios = closing.alertas.filter(a => !a.absorvidoPelaEmpresa)
+                return (
+                  <>
+                    {dosSocios.length > 0 && (
+                      <span className="inline-flex items-center gap-1 bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                        {dosSocios.length} devolução{dosSocios.length !== 1 ? 'es' : ''} deduzida{dosSocios.length !== 1 ? 's' : ''} dos sócios
+                      </span>
+                    )}
+                    {daEmpresa.length > 0 && (
+                      <span className="inline-flex items-center gap-1 bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                        {formatCurrency(daEmpresa.reduce((t, a) => t + a.valor, 0))} absorvido pela empresa
+                      </span>
+                    )}
+                  </>
+                )
+              })()}
             </div>
             <div className="flex items-center gap-2 flex-wrap mb-3">
               <span className="text-xs text-gray-500">Confirmado em {confirmedAt}</span>
@@ -2729,7 +2756,12 @@ function ClosingCard({ closing }: { closing: Closing }) {
                             {a.tipo === 'chargeback' ? 'Chargeback' : a.tipo === 'reembolso_parcial' ? 'Parcial' : 'Reembolso'}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-right text-gray-400 hidden lg:table-cell">{formatDate(a.data)}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-400 hidden lg:table-cell">
+                          {formatDate(a.data)}
+                          {a.absorvidoPelaEmpresa && (
+                            <span className="block text-[10px] text-purple-300 font-semibold">pago pela empresa</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

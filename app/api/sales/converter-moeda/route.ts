@@ -55,16 +55,28 @@ export async function POST(req: NextRequest) {
   // `moeda: null` na MESMA gravação dos valores: é o que torna a rota
   // idempotente. Separado em dois updates, uma falha no meio deixaria a venda
   // convertida e ainda marcada como estrangeira, pronta para converter de novo.
-  const { error: e2 } = await client.from('sales').update({
+  //
+  // E o `.not('moeda', 'is', null)` faz disto um compare-and-swap: a checagem
+  // acima olha o estado LIDO, e entre a leitura e a gravação cabe outra
+  // requisição. Dois cliques ao mesmo tempo com câmbios diferentes se
+  // sobrescreviam em silêncio; agora o segundo não casa nenhuma linha e é
+  // recusado. `select` é o que permite SABER que não casou - `update` sozinho
+  // devolve sucesso mesmo afetando zero linhas.
+  const { data: gravadas, error: e2 } = await client.from('sales').update({
     ...depois,
     moeda: null,
     cambio_aplicado: taxa,
     // Guarda os valores da linha junto do que o webhook já tinha: dá pra
     // refazer a conta com outro câmbio sem depender do payload original.
     valores_originais: { ...(venda.valores_originais as Record<string, unknown> ?? {}), moeda: venda.moeda, valores: antes },
-  }).eq('id', sale_id)
+  }).eq('id', sale_id).not('moeda', 'is', null).select('id')
 
   if (e2) return NextResponse.json({ error: e2.message }, { status: 500 })
+  if (!gravadas || gravadas.length === 0) {
+    return NextResponse.json({
+      error: 'Esta venda já foi convertida por outra ação agora mesmo. Recarregue a tela para ver o valor atual.',
+    }, { status: 409 })
+  }
 
   return NextResponse.json({ success: true, nome: venda.nome, moeda: venda.moeda, cambio: taxa, antes, depois })
 }

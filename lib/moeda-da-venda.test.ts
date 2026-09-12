@@ -201,3 +201,15 @@ test('a conversao RECUSA linha que pode estar em moedas misturadas', () => {
   assert.ok(rota.includes('normalizado === false'), 'a rota nao recusa linha nao normalizada')
   assert.ok(rota.includes('moedas diferentes na mesma linha'), 'a rota nao explica ao usuario')
 })
+
+test('a conversao e compare-and-swap, nao le-depois-grava', () => {
+  // Achado na segunda revisao de 11/09/2026: a checagem olha o estado LIDO, e
+  // entre a leitura e a gravacao cabe outra requisicao. Dois cliques ao mesmo
+  // tempo com cambios diferentes se sobrescreviam em silencio.
+  const rota = readFileSync(new URL('../app/api/sales/converter-moeda/route.ts', import.meta.url), 'utf8')
+  assert.ok(rota.includes(".not('moeda', 'is', null)"), 'o update nao condiciona a moeda ainda estar preenchida')
+  // `update` sozinho devolve sucesso mesmo afetando zero linhas - sem `select`
+  // nao ha como saber que nao casou.
+  assert.ok(/\.select\('id'\)/.test(rota), 'o update nao verifica se afetou linha')
+  assert.ok(rota.includes('já foi convertida por outra ação'), 'a rota nao avisa quem perdeu a corrida')
+})

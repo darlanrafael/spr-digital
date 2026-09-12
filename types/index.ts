@@ -134,6 +134,20 @@ export interface ClosingAlert {
    */
   solicitacaoId?: string
   compradorId?: string
+  /**
+   * A EMPRESA absorveu este estorno, em vez de descontar do repasse dos socios.
+   *
+   * Fica no proprio alerta e nao num campo do fechamento porque `alertas` ja e
+   * persistido como jsonb: um campo novo em `Closing` seria descartado em
+   * silencio pelo mapeamento de `addClosing`, que e lista explicita de colunas.
+   * Foi exatamente o que aconteceu com `prejuizoAbsorvidoPelaEmpresa`, na
+   * primeira versao disto - a tela prometia "fica registrado no fechamento" e
+   * nada era gravado.
+   *
+   * Por alerta e nao por fechamento tambem permite o caso misto no futuro:
+   * alguns estornos absorvidos pela empresa e outros descontados.
+   */
+  absorvidoPelaEmpresa?: boolean
   nome: string
   telefone?: string
   email?: string
@@ -197,12 +211,6 @@ export interface Closing {
   lucroReal: number
   socios: Socio[]
   compradores: ClosingBuyer[]
-  /**
-   * Quanto de reembolso a EMPRESA absorveu neste fechamento, em vez de
-   * descontar do repasse dos socios. Ausente = os socios absorveram (o padrao)
-   * ou nao havia reembolso a deduzir. Ver lib/rateio-das-deducoes.ts.
-   */
-  prejuizoAbsorvidoPelaEmpresa?: number
   alertas: ClosingAlert[]
   byProduct?: ClosingProductRow[]
   custos_trafego_total?: number

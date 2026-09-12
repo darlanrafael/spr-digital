@@ -69,8 +69,15 @@ export function divisaoOriginalDoAlerta(
   const candidatos = closings.filter(c => (c.compradores ?? []).some(b => b.id === alerta.saleId))
   if (candidatos.length === 0) return null
 
-  const escolhido = candidatos.reduce((mais, c) =>
-    String(c.data_confirmacao ?? c.data ?? '') > String(mais.data_confirmacao ?? mais.data ?? '') ? c : mais)
+  // Por EPOCA e nao por string: `data_confirmacao` e timestamp com fracao de
+  // segundo e `data` e so a data (`2026-08-14`). Comparando como texto, a data
+  // curta e prefixo da longa e perde sempre - e um fuso diferente erraria por
+  // horas.
+  const quando = (c: Closing) => {
+    const t = new Date(String(c.data_confirmacao ?? c.data ?? '')).getTime()
+    return Number.isNaN(t) ? 0 : t
+  }
+  const escolhido = candidatos.reduce((mais, c) => quando(c) > quando(mais) ? c : mais)
 
   const socios = escolhido.socios ?? []
   if (socios.length === 0) return null

@@ -58,13 +58,30 @@ export type ResumoEntregues<T> = {
  *
  * Sem fechamento anterior, nao ha corte: entram todas as entregues.
  */
+/**
+ * Milissegundos, ou null. Comparar timestamp como STRING e a armadilha desta
+ * funcao: `data_confirmacao` vem com fracao de segundo
+ * (`2026-08-14T18:00:18.948+00:00`) e `data_entrega` sem
+ * (`2026-07-20T15:20:00+00:00`). No segundo exato em que coincidem, '+' (0x2B)
+ * e menor que '.' (0x2E) e a sessao e excluida errado. E se um dia entrar
+ * timestamp com outro fuso, a comparacao erra por horas - mesmo tipo de defeito
+ * que o `slice(0, 10)` que este projeto ja teve.
+ */
+const ms = (iso?: string | null): number | null => {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  return Number.isNaN(t) ? null : t
+}
+
 export function entreguesDesdeOFechamento<T extends SessaoEntregue>(params: {
   sessoes: T[]
   fechamentos: FechamentoComSnapshot[]
 }): ResumoEntregues<T> {
-  const ordenados = [...params.fechamentos].sort((a, b) =>
-    String(b.data_confirmacao).localeCompare(String(a.data_confirmacao)))
+  const ordenados = [...params.fechamentos]
+    .filter(f => ms(f.data_confirmacao) !== null)
+    .sort((a, b) => (ms(b.data_confirmacao) ?? 0) - (ms(a.data_confirmacao) ?? 0))
   const corte = ordenados[0]?.data_confirmacao ?? null
+  const corteMs = ms(corte)
 
   // De qual fechamento veio cada sessao ja paga. Um mapa so, montado uma vez -
   // varrer os snapshots por sessao seria quadratico.
@@ -74,8 +91,12 @@ export function entreguesDesdeOFechamento<T extends SessaoEntregue>(params: {
   }
 
   const dentro = params.sessoes
-    .filter(s => !!s.data_entrega && (!corte || String(s.data_entrega) >= corte))
-    .sort((a, b) => String(a.data_entrega).localeCompare(String(b.data_entrega)))
+    .filter(s => {
+      const e = ms(s.data_entrega)
+      if (e === null) return false
+      return corteMs === null || e >= corteMs
+    })
+    .sort((a, b) => (ms(a.data_entrega) ?? 0) - (ms(b.data_entrega) ?? 0))
 
   let aPagar = 0
   let jaPago = 0
