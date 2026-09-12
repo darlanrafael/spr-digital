@@ -272,6 +272,18 @@ export async function addSale(sale: Sale): Promise<void> {
     utm_term: sale.utm_term || null,
     status: sale.status,
     data_reembolso: sale.data_reembolso ?? null,
+    // Os campos abaixo faltavam, e o pre-voo apontou em 12/09/2026. Nenhuma
+    // tela chama esta funcao hoje, entao nada foi perdido - mas era arma
+    // carregada: `oferta_nome` decide QUANTAS SESSOES o pacote tem e qual o
+    // formato do Diagnostico, e `valor_com_juros` e a base do imposto. Uma
+    // venda gravada por aqui entraria sem os dois, em silencio.
+    order_id: sale.order_id ?? null,
+    oferta_nome: sale.oferta_nome ?? null,
+    pacote_pai_id: sale.pacote_pai_id ?? null,
+    valor_com_juros: sale.valor_com_juros ?? null,
+    moeda: sale.moeda ?? null,
+    cambio_aplicado: sale.cambio_aplicado ?? null,
+    valores_originais: sale.valores_originais ?? null,
   })
   if (error) throw error
 }

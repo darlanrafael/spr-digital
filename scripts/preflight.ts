@@ -125,10 +125,17 @@ for (const arq of PASTAS.flatMap(d => arquivos(d))) {
     // procura comparacao de ORDEM de verdade.
     {
       const CAMPO = String.raw`[\w.?]*(?:data_\w+|created_at|updated_at)`
+      const CAMPO_NOME = String.raw`data_\w+|created_at|updated_at`
       const semConversao = !/new Date\(|\.getTime\(\)|Date\.parse/.test(l)
-      // a) localeCompare entre campos DIFERENTES
-      const lc = l.match(new RegExp(String.raw`(${CAMPO})[^)]{0,40}\.localeCompare\(\s*[^)]{0,40}(${CAMPO})`))
-      if (lc && lc[1].replace(/^[\w]*\.?/, '') !== lc[2].replace(/^[\w]*\.?/, '')) {
+      // a) localeCompare entre campos DIFERENTES.
+      //
+      // Ordenar UMA coluna por texto e seguro: todos os valores vem do mesmo
+      // campo, com o mesmo formato. O perigo e comparar campos diferentes. A
+      // primeira versao deste trecho pegava `b.data_hora.localeCompare(
+      // a.data_hora)` porque o regex ganancioso atravessava o `=>` e capturava
+      // pedacos de expressoes distintas - quatro falsos positivos.
+      const lc = l.match(new RegExp(String.raw`\b(?:\w+\.)?(${CAMPO_NOME})\b[^)]{0,20}\.localeCompare\([^)]{0,30}?\b(?:\w+\.)?(${CAMPO_NOME})\b`))
+      if (lc && lc[1] !== lc[2]) {
         add({ arquivo: arq, linha: n, trecho: t.slice(0, 110), check: 'C3 data comparada como texto',
           porque: 'campos de data diferentes tem formatos diferentes; comparar por epoca', grave: true })
       }
