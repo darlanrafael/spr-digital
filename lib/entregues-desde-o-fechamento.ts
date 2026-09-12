@@ -114,6 +114,15 @@ export function entreguesDesdeOFechamento<T extends SessaoEntregue>(params: {
     }
   })
 
+  // O TOTAL sai da soma das PARTES ja arredondadas, nao do arredondamento da
+  // soma crua. `cent(a) + cent(b)` pode diferir de `cent(a + b)` em um centavo,
+  // e a tela mostra os tres numeros juntos - "Total entregue X, a pagar Y, ja
+  // pago Z". Se Y + Z nao dao X, quem le perde a confianca nos tres.
+  //
+  // Achado pelo teste por propriedade em 12/09/2026, na rodada 11: R$ 32.963,60
+  // contra R$ 32.963,61. Um centavo, mas do tipo que aparece na tela.
   const cent = (n: number) => Math.round(n * 100) / 100
-  return { sessoes, corte, aPagar: cent(aPagar), jaPago: cent(jaPago), total: cent(aPagar + jaPago) }
+  const aPagarCent = cent(aPagar)
+  const jaPagoCent = cent(jaPago)
+  return { sessoes, corte, aPagar: aPagarCent, jaPago: jaPagoCent, total: cent(aPagarCent + jaPagoCent) }
 }

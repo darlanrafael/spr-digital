@@ -9,7 +9,7 @@ import SenhaModal from '@/components/SenhaModal'
 import Pagination from '@/components/Pagination'
 import { getSession } from '@/lib/auth'
 import { resumoDoFechamento } from '@/lib/resumo-do-fechamento-terapeuta'
-import { agruparPorProduto } from '@/lib/sessoes-por-produto'
+import { agruparPorProduto, totalDosGrupos } from '@/lib/sessoes-por-produto'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -368,8 +368,13 @@ export default function FechamentosTerapeutasPage() {
                 <h2 className="text-sm font-semibold text-white">
                   Sessões entregues pendentes de pagamento ({preview.sessoes.length})
                 </h2>
+                {/* O total sai da soma dos GRUPOS, nao do total cru da rota: os
+                    subtotais por produto sao arredondados, e `cent(a) + cent(b)`
+                    pode diferir de `cent(a + b)` em um centavo. O cabecalho tem
+                    que somar as linhas que estao logo abaixo dele. Achado pelo
+                    teste por propriedade em 12/09/2026. */}
                 {preview.sessoes.length > 0 && (
-                  <span className="text-sm font-bold text-yellow-400">{fmtBRL(preview.total)}</span>
+                  <span className="text-sm font-bold text-yellow-400">{fmtBRL(totalDosGrupos(agruparPorProduto(preview.sessoes)))}</span>
                 )}
               </div>
               {preview.sessoes.length === 0 ? (
