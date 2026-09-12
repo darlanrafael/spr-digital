@@ -172,3 +172,32 @@ test('a rota de conversao limpa a moeda na MESMA gravacao dos valores', () => {
   assert.ok(update.includes('moeda: null'), 'o update nao limpa a moeda junto')
   assert.ok(rota.includes('precisaConverter'), 'a rota nao recusa venda ja convertida')
 })
+
+test('moeda detectada com payload INCOMPLETO ainda marca a venda', () => {
+  // Defeito que a revisao pegou em 11/09/2026, poucas horas depois de eu
+  // publicar: o webhook gravava `valoresEmMoeda ? moeda : null`. Uma venda
+  // estrangeira com o bloco `settlement` incompleto passava com os valores em
+  // euro marcados como reais e SEM bandeira - o defeito original, em silencio,
+  // pelo caminho de excecao.
+  const incompleto = {
+    amount: { settlement: { currency: 'USD' }, totalCents: 31955, subtotalCents: 25980 },
+    receivers: [{ role: 'seller', currency: 'USD' }],
+  }
+  assert.equal(moedaDaHubla(incompleto as never), 'USD', 'a moeda E detectavel')
+  assert.equal(valoresInternacionaisDaHubla(incompleto as never), null, 'mas os valores nao')
+
+  const rota = readFileSync(new URL('../app/api/webhooks/hubla/route.ts', import.meta.url), 'utf8')
+  assert.ok(
+    !/moeda:\s*valoresEmMoeda \? moeda : null/.test(rota),
+    'o webhook voltou a so marcar quando conseguiu normalizar',
+  )
+  assert.ok(/moeda:\s*moeda,/.test(rota), 'o webhook nao marca a moeda sempre que detecta')
+  assert.ok(rota.includes('normalizado'), 'o webhook nao registra se a linha foi normalizada')
+})
+
+test('a conversao RECUSA linha que pode estar em moedas misturadas', () => {
+  // Um cambio unico numa linha mista da numero errado com cara de certo.
+  const rota = readFileSync(new URL('../app/api/sales/converter-moeda/route.ts', import.meta.url), 'utf8')
+  assert.ok(rota.includes('normalizado === false'), 'a rota nao recusa linha nao normalizada')
+  assert.ok(rota.includes('moedas diferentes na mesma linha'), 'a rota nao explica ao usuario')
+})

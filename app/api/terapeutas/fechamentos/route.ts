@@ -25,6 +25,32 @@ type SessaoPendente = {
 //
 // Em lotes de 100 de proposito: o `in()` do PostgREST tem teto de 1000 linhas,
 // ja confirmado ativo neste projeto, e a Denise sozinha tem 139 sessoes.
+// Pagina por cursor em vez de confiar no default do PostgREST, que corta em
+// 1000 linhas EM SILENCIO - teto confirmado ativo neste projeto. Hoje o Pedro
+// tem 474 sessoes e a Denise 139, entao nada e cortado; o problema aparece sem
+// aviso quando passar, e esta e a tela que decide quanto a terapeuta recebe.
+async function todasAsSessoes(
+  terapeutaId: string,
+  aplicar: (q: ReturnType<ReturnType<typeof getSupabaseAdmin>['from']>['select']) => unknown,
+): Promise<SessaoPendente[]> {
+  const supabase = getSupabaseAdmin()
+  const COLUNAS = 'id,sale_id,numero_sessao,total_sessoes,comissao_valor,comissao_paga,data_entrega,data_agendada,paciente_nome'
+  const acc: SessaoPendente[] = []
+  let cursor = ''
+  for (;;) {
+    let q = supabase.from('sessoes').select(COLUNAS).eq('terapeuta_id', terapeutaId).order('id').limit(999)
+    q = aplicar(q as never) as typeof q
+    if (cursor) q = q.gt('id', cursor)
+    const { data, error } = await q
+    if (error) throw new Error(error.message)
+    if (!data?.length) break
+    acc.push(...(data as SessaoPendente[]))
+    cursor = (data[data.length - 1] as { id: string }).id
+    if (data.length < 999) break
+  }
+  return acc
+}
+
 async function comProduto(sessoes: SessaoPendente[]): Promise<SessaoPendente[]> {
   const ids = [...new Set(sessoes.map(s => s.sale_id).filter(Boolean))]
   if (ids.length === 0) return sessoes
@@ -38,15 +64,11 @@ async function comProduto(sessoes: SessaoPendente[]): Promise<SessaoPendente[]> 
 }
 
 async function buscarPendentes(terapeutaId: string): Promise<{ sessoes: SessaoPendente[]; total: number }> {
-  const supabase = getSupabaseAdmin()
-  const { data } = await supabase
-    .from('sessoes')
-    .select('id,sale_id,numero_sessao,total_sessoes,comissao_valor,data_entrega,data_agendada,paciente_nome')
-    .eq('terapeuta_id', terapeutaId)
-    .eq('status', 'entregue')
-    .eq('comissao_paga', false)
-    .order('data_entrega', { ascending: true })
-  const sessoes = await comProduto((data ?? []) as SessaoPendente[])
+  const cruas = await todasAsSessoes(terapeutaId, q =>
+    (q as never as { eq: (c: string, v: unknown) => unknown }).eq('status', 'entregue'))
+  const sessoes = await comProduto(
+    cruas.filter(s => !s.comissao_paga)
+      .sort((a, b) => String(a.data_entrega ?? '').localeCompare(String(b.data_entrega ?? ''))))
   const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
   return { sessoes, total }
 }
@@ -54,15 +76,11 @@ async function buscarPendentes(terapeutaId: string): Promise<{ sessoes: SessaoPe
 // Sessões vendidas mas ainda não entregues — só entram no fechamento se o
 // admin escolher explicitamente antecipar o pagamento (nem sempre quer).
 async function buscarFuturas(terapeutaId: string): Promise<{ sessoes: SessaoPendente[]; total: number }> {
-  const supabase = getSupabaseAdmin()
-  const { data } = await supabase
-    .from('sessoes')
-    .select('id,sale_id,numero_sessao,total_sessoes,comissao_valor,data_entrega,data_agendada,paciente_nome')
-    .eq('terapeuta_id', terapeutaId)
-    .in('status', ['agendada', 'pendente'])
-    .eq('comissao_paga', false)
-    .order('data_agendada', { ascending: true, nullsFirst: false })
-  const sessoes = await comProduto((data ?? []) as SessaoPendente[])
+  const cruas = await todasAsSessoes(terapeutaId, q =>
+    (q as never as { in: (c: string, v: unknown[]) => unknown }).in('status', ['agendada', 'pendente']))
+  const sessoes = await comProduto(
+    cruas.filter(s => !s.comissao_paga)
+      .sort((a, b) => String(a.data_agendada ?? '').localeCompare(String(b.data_agendada ?? ''))))
   const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
   return { sessoes, total }
 }
@@ -72,14 +90,10 @@ async function buscarFuturas(terapeutaId: string): Promise<{ sessoes: SessaoPend
 // por antecipacao sumia - e foi isso que fez o usuario contar 13 atendimentos
 // onde a tela mostrava 10, em 11/09/2026.
 async function buscarEntregues(terapeutaId: string): Promise<SessaoPendente[]> {
-  const supabase = getSupabaseAdmin()
-  const { data } = await supabase
-    .from('sessoes')
-    .select('id,sale_id,numero_sessao,total_sessoes,comissao_valor,comissao_paga,data_entrega,data_agendada,paciente_nome')
-    .eq('terapeuta_id', terapeutaId)
-    .eq('status', 'entregue')
-    .order('data_entrega', { ascending: true })
-  return comProduto((data ?? []) as SessaoPendente[])
+  const cruas = await todasAsSessoes(terapeutaId, q =>
+    (q as never as { eq: (c: string, v: unknown) => unknown }).eq('status', 'entregue'))
+  return comProduto(cruas.sort((a, b) =>
+    String(a.data_entrega ?? '').localeCompare(String(b.data_entrega ?? ''))))
 }
 
 // ─── GET — preview (sessões pendentes de pagamento) + histórico ───────────────

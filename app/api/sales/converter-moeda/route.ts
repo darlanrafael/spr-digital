@@ -32,6 +32,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Esta venda já está em ${MOEDA_DA_CASA}. Nada a converter.` }, { status: 409 })
   }
 
+  // Linha que o webhook nao conseguiu normalizar pode estar em moedas
+  // MISTURADAS - foi exatamente o estado da venda da Rosana antes da correcao
+  // (tres campos em euro, um em dolar). Um cambio unico ali da numero errado
+  // com cara de certo. Melhor recusar e mandar conferir.
+  const orig = venda.valores_originais as { normalizado?: boolean } | null
+  if (orig && orig.normalizado === false) {
+    return NextResponse.json({
+      error: 'Esta venda veio da plataforma com os valores em moedas diferentes na mesma linha, '
+        + 'e não dá para converter tudo com um câmbio só. Confira o pedido na plataforma antes.',
+    }, { status: 409 })
+  }
+
   const antes = {
     preco_base:         Number(venda.preco_base),
     valor_pago_cliente: Number(venda.valor_pago_cliente),

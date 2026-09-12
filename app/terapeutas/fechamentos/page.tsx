@@ -61,13 +61,18 @@ function fmtDt(iso: string | null) {
 // por grupo com linha de cabecalho no lugar certo. A pagina continua cortando
 // em 12 linhas e o cabecalho reaparece no topo da pagina seguinte se o grupo
 // continuar. Ver lib/sessoes-por-produto.ts.
-type LinhaAgrupada<T> = { tipo: 'cabecalho'; produto: string; qtd: number; total: number; valorPorSessao: number | null }
+type LinhaAgrupada<T> = { tipo: 'cabecalho'; produto: string; qtd: number; total: number; valorPorSessao: number | null; ids: string[] }
   | { tipo: 'sessao'; sessao: T; produto: string }
 
 function linhasAgrupadas<T extends { id: string; sale_id: string; produto?: string | null; comissao_valor: number }>(sessoes: T[]): LinhaAgrupada<T>[] {
   const linhas: LinhaAgrupada<T>[] = []
   for (const g of agruparPorProduto(sessoes)) {
-    linhas.push({ tipo: 'cabecalho', produto: g.produto, qtd: g.sessoes.length, total: g.total, valorPorSessao: g.valorPorSessao })
+    // Os ids vao no cabecalho de proposito. A primeira versao refazia a conta de
+    // quem pertence ao grupo na tela, comparando `x.produto` cru com o titulo -
+    // e produto com espaco em volta, ou vazio (que o agrupador rotula como "Sem
+    // produto identificado"), ficava de fora da selecao em silencio. Quem sabe
+    // o grupo e quem agrupou.
+    linhas.push({ tipo: 'cabecalho', produto: g.produto, qtd: g.sessoes.length, total: g.total, valorPorSessao: g.valorPorSessao, ids: g.sessoes.map(x => x.id) })
     for (const sessao of g.sessoes) linhas.push({ tipo: 'sessao', sessao, produto: g.produto })
   }
   return linhas
@@ -112,6 +117,10 @@ export default function FechamentosTerapeutasPage() {
     corte: string | null; aPagar: number; jaPago: number; total: number
   }>({ sessoes: [], corte: null, aPagar: 0, jaPago: 0, total: 0 })
   const [desdeUltimoAberto, setDesdeUltimoAberto] = useState(false)
+  // Pagina como as outras listas. Sem isto o bloco renderiza TODAS as entregues
+  // de uma vez, e para terapeuta sem fechamento anterior nao ha corte: o Pedro
+  // tem 357 entregues e sairiam 357 linhas numa tela so.
+  const [desdeUltimoPage, setDesdeUltimoPage] = useState(1)
   const [futurasAberto, setFuturasAberto] = useState(false)
   const [futurasSelecionadas, setFuturasSelecionadas] = useState<Set<string>>(new Set())
   const [historico, setHistorico] = useState<FechamentoHistorico[]>([])
@@ -185,6 +194,7 @@ export default function FechamentosTerapeutasPage() {
       setFuturas(json.futuras ?? { sessoes: [], total: 0 })
       setHistorico(json.historico ?? [])
       setDesdeUltimo(json.desdeUltimo ?? { sessoes: [], corte: null, aPagar: 0, jaPago: 0, total: 0 })
+      setDesdeUltimoPage(1)
       setPreviewPage(1); setFuturasPage(1)
       setFuturasSelecionadas(new Set())
     } catch (e) {
@@ -317,7 +327,9 @@ export default function FechamentosTerapeutasPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {desdeUltimo.sessoes.map(l => (
+                          {desdeUltimo.sessoes
+                            .slice((desdeUltimoPage - 1) * SESSOES_PAGE_SIZE, desdeUltimoPage * SESSOES_PAGE_SIZE)
+                            .map(l => (
                             <tr key={l.sessao.id} className="border-b border-white/5">
                               <td className="px-4 py-3 text-white">{l.sessao.paciente_nome}</td>
                               <td className="px-4 py-3 text-gray-300">{l.sessao.numero_sessao} de {l.sessao.total_sessoes}</td>
@@ -337,6 +349,14 @@ export default function FechamentosTerapeutasPage() {
                         </tbody>
                       </table>
                     </div>
+                    {desdeUltimo.sessoes.length > SESSOES_PAGE_SIZE && (
+                      <Pagination
+                        currentPage={desdeUltimoPage}
+                        totalPages={Math.ceil(desdeUltimo.sessoes.length / SESSOES_PAGE_SIZE)}
+                        onPrevious={() => setDesdeUltimoPage(p => Math.max(1, p - 1))}
+                        onNext={() => setDesdeUltimoPage(p => Math.min(Math.ceil(desdeUltimo.sessoes.length / SESSOES_PAGE_SIZE), p + 1))}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -458,12 +478,11 @@ export default function FechamentosTerapeutasPage() {
                                       implicito de separar por produto. */}
                                   <input
                                     type="checkbox"
-                                    checked={futuras.sessoes.filter(x => (x.produto ?? '') === (l.produto === 'Sem produto identificado' ? '' : l.produto)).every(x => futurasSelecionadas.has(x.id))}
+                                    checked={l.ids.length > 0 && l.ids.every(id => futurasSelecionadas.has(id))}
                                     onChange={e => {
-                                      const doGrupo = futuras.sessoes.filter(x => (x.produto ?? '') === (l.produto === 'Sem produto identificado' ? '' : l.produto)).map(x => x.id)
                                       setFuturasSelecionadas(prev => {
                                         const novo = new Set(prev)
-                                        for (const id of doGrupo) { if (e.target.checked) novo.add(id); else novo.delete(id) }
+                                        for (const id of l.ids) { if (e.target.checked) novo.add(id); else novo.delete(id) }
                                         return novo
                                       })
                                     }}

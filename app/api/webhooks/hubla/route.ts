@@ -121,8 +121,20 @@ export async function POST(req: NextRequest) {
         valor_com_juros:    valoresEmMoeda?.valor_com_juros    ?? ((amount?.totalCents as number) ?? 0) / 100,
         valor_liquido:      valoresEmMoeda?.valor_liquido      ?? Math.round(sellerTotalCents) / 100,
         // NULL = real. Enquanto preenchida, a venda nao entra em fechamento.
-        moeda:              valoresEmMoeda ? moeda : null,
-        valores_originais:  valoresEmMoeda ? { moeda, amount, receivers } : null,
+        //
+        // MARCA SEMPRE QUE A MOEDA FOR DETECTADA, mesmo quando os valores nao
+        // puderam ser normalizados. A primeira versao disto gravava
+        // `valoresEmMoeda ? moeda : null`, e ai uma venda estrangeira com o
+        // bloco `settlement` incompleto passava com os valores em euro
+        // marcados como reais e SEM bandeira nenhuma - o defeito original, em
+        // silencio, pelo caminho de excecao.
+        //
+        // `normalizado: false` diz que a linha pode estar em moedas MISTURADAS.
+        // A rota de conversao recusa converter nesse estado: um cambio unico
+        // numa linha mista produz numero errado, e errado com cara de certo e
+        // pior que travado.
+        moeda:              moeda,
+        valores_originais:  moeda ? { moeda, normalizado: !!valoresEmMoeda, amount, receivers } : null,
         utm_source:         (utm?.source as string) ?? '',
         utm_medium:         (utm?.medium as string) ?? '',
         utm_campaign:       (utm?.campaign as string) ?? '',

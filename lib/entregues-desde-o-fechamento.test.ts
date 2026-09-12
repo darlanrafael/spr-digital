@@ -101,3 +101,17 @@ test('a tela mostra o bloco e a etiqueta', () => {
   const rota = readFileSync(new URL('../app/api/terapeutas/fechamentos/route.ts', import.meta.url), 'utf8')
   assert.ok(rota.includes('entreguesDesdeOFechamento'), 'a rota nao calcula as entregues desde o fechamento')
 })
+
+test('o bloco novo PAGINA, senao terapeuta sem fechamento derruba a tela', () => {
+  // Achado na revisao de 11/09/2026: sem fechamento anterior nao ha corte,
+  // entao entram TODAS as entregues. O Pedro tem 357 e sairiam 357 linhas numa
+  // tela so. A Denise tem 14 porque tem fechamento - o caso que eu testei
+  // durante a construcao escondeu o problema.
+  const tela = readFileSync(new URL('../app/terapeutas/fechamentos/page.tsx', import.meta.url), 'utf8')
+  assert.ok(tela.includes('desdeUltimoPage'), 'o bloco nao tem estado de pagina')
+  assert.ok(
+    /desdeUltimo\.sessoes[\s\S]{0,120}\.slice\(\(desdeUltimoPage - 1\)/.test(tela),
+    'o bloco nao corta a lista pela pagina',
+  )
+  assert.ok(tela.includes('setDesdeUltimoPage(1)'), 'a pagina nao volta para 1 ao trocar de terapeuta')
+})
