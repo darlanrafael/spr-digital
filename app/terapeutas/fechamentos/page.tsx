@@ -9,6 +9,7 @@ import SenhaModal from '@/components/SenhaModal'
 import Pagination from '@/components/Pagination'
 import { getSession } from '@/lib/auth'
 import { resumoDoFechamento } from '@/lib/resumo-do-fechamento-terapeuta'
+import { agruparPorProduto } from '@/lib/sessoes-por-produto'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -25,6 +26,8 @@ type SessaoPendente = {
   data_entrega: string | null
   data_agendada: string | null
   paciente_nome: string
+  /** Vem de `sales`, nao de `sessoes`. A tela agrupa por ele. */
+  produto?: string | null
 }
 
 const SESSOES_PAGE_SIZE = 12
@@ -49,6 +52,25 @@ function fmtDt(iso: string | null) {
 // Só a data, para a faixa de período do histórico de fechamento. Fuso
 // explícito: o banco guarda UTC, e uma entrega das 21h30 BRT cai no dia
 // seguinte se a conversão for deixada para o navegador.
+// A lista em ordem de GRUPO, com um cabecalho de produto antes da primeira
+// sessao de cada um.
+//
+// Agrupa sem abrir mao da paginacao: em vez de N tabelas, e uma lista ordenada
+// por grupo com linha de cabecalho no lugar certo. A pagina continua cortando
+// em 12 linhas e o cabecalho reaparece no topo da pagina seguinte se o grupo
+// continuar. Ver lib/sessoes-por-produto.ts.
+type LinhaAgrupada<T> = { tipo: 'cabecalho'; produto: string; qtd: number; total: number; valorPorSessao: number | null }
+  | { tipo: 'sessao'; sessao: T; produto: string }
+
+function linhasAgrupadas<T extends { id: string; sale_id: string; produto?: string | null; comissao_valor: number }>(sessoes: T[]): LinhaAgrupada<T>[] {
+  const linhas: LinhaAgrupada<T>[] = []
+  for (const g of agruparPorProduto(sessoes)) {
+    linhas.push({ tipo: 'cabecalho', produto: g.produto, qtd: g.sessoes.length, total: g.total, valorPorSessao: g.valorPorSessao })
+    for (const sessao of g.sessoes) linhas.push({ tipo: 'sessao', sessao, produto: g.produto })
+  }
+  return linhas
+}
+
 function fmtData(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Sao_Paulo' })
@@ -265,25 +287,38 @@ export default function FechamentosTerapeutasPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {preview.sessoes
+                        {linhasAgrupadas(preview.sessoes)
                           .slice((previewPage - 1) * SESSOES_PAGE_SIZE, previewPage * SESSOES_PAGE_SIZE)
-                          .map(s => (
-                          <tr key={s.id} className="border-b border-white/5">
-                            <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
-                            <td className="px-4 py-3 text-gray-300">{s.numero_sessao} de {s.total_sessoes}</td>
-                            <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(s.data_entrega)}</td>
-                            <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(s.comissao_valor)}</td>
+                          .map((l, i) => l.tipo === 'cabecalho' ? (
+                            <tr key={`h-${l.produto}-${i}`} className="bg-white/[0.03] border-b border-white/5">
+                              <td colSpan={4} className="px-4 py-2">
+                                <span className="text-xs font-semibold text-indigo-300">{l.produto}</span>
+                                <span className="text-[11px] text-gray-500">
+                                  {' · '}{l.qtd} sessão(ões) · {fmtBRL(l.total)}
+                                  {l.valorPorSessao !== null && ` · ${fmtBRL(l.valorPorSessao)} por sessão`}
+                                </span>
+                              </td>
+                            </tr>
+                          ) : (
+                          <tr key={l.sessao.id} className="border-b border-white/5">
+                            <td className="px-4 py-3 text-white">{l.sessao.paciente_nome}</td>
+                            <td className="px-4 py-3 text-gray-300">{l.sessao.numero_sessao} de {l.sessao.total_sessoes}</td>
+                            <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(l.sessao.data_entrega)}</td>
+                            <td className="px-4 py-3 text-green-500 whitespace-nowrap">{fmtBRL(l.sessao.comissao_valor)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  {preview.sessoes.length > SESSOES_PAGE_SIZE && (
+                  {/* Conta as LINHAS e nao as sessoes: os cabecalhos de grupo
+                      ocupam linha, e paginar pelas sessoes deixaria a ultima
+                      pagina faltando itens. */}
+                  {linhasAgrupadas(preview.sessoes).length > SESSOES_PAGE_SIZE && (
                     <Pagination
                       currentPage={previewPage}
-                      totalPages={Math.ceil(preview.sessoes.length / SESSOES_PAGE_SIZE)}
+                      totalPages={Math.ceil(linhasAgrupadas(preview.sessoes).length / SESSOES_PAGE_SIZE)}
                       onPrevious={() => setPreviewPage(p => Math.max(1, p - 1))}
-                      onNext={() => setPreviewPage(p => Math.min(Math.ceil(preview.sessoes.length / SESSOES_PAGE_SIZE), p + 1))}
+                      onNext={() => setPreviewPage(p => Math.min(Math.ceil(linhasAgrupadas(preview.sessoes).length / SESSOES_PAGE_SIZE), p + 1))}
                     />
                   )}
                 </>
@@ -334,30 +369,60 @@ export default function FechamentosTerapeutasPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {futuras.sessoes
+                          {linhasAgrupadas(futuras.sessoes)
                             .slice((futurasPage - 1) * SESSOES_PAGE_SIZE, futurasPage * SESSOES_PAGE_SIZE)
-                            .map(s => (
-                            <tr key={s.id} className="border-b border-white/5 cursor-pointer hover:bg-white/2 transition-colors" onClick={() => toggleFuturaSelecionada(s.id)}>
+                            .map((l, i) => l.tipo === 'cabecalho' ? (
+                              <tr key={`hf-${l.produto}-${i}`} className="bg-white/[0.03] border-b border-white/5">
+                                <td className="px-4 py-2">
+                                  {/* Marca o GRUPO inteiro. Antecipar o Diagnostico
+                                      inteiro sem clicar em 64 caixas era o pedido
+                                      implicito de separar por produto. */}
+                                  <input
+                                    type="checkbox"
+                                    checked={futuras.sessoes.filter(x => (x.produto ?? '') === (l.produto === 'Sem produto identificado' ? '' : l.produto)).every(x => futurasSelecionadas.has(x.id))}
+                                    onChange={e => {
+                                      const doGrupo = futuras.sessoes.filter(x => (x.produto ?? '') === (l.produto === 'Sem produto identificado' ? '' : l.produto)).map(x => x.id)
+                                      setFuturasSelecionadas(prev => {
+                                        const novo = new Set(prev)
+                                        for (const id of doGrupo) { if (e.target.checked) novo.add(id); else novo.delete(id) }
+                                        return novo
+                                      })
+                                    }}
+                                    onClick={ev => ev.stopPropagation()}
+                                    className="w-4 h-4 rounded accent-purple-600"
+                                    aria-label={`Antecipar todas as sessões de ${l.produto}`}
+                                  />
+                                </td>
+                                <td colSpan={4} className="px-4 py-2">
+                                  <span className="text-xs font-semibold text-indigo-300">{l.produto}</span>
+                                  <span className="text-[11px] text-gray-500">
+                                    {' · '}{l.qtd} sessão(ões) · {fmtBRL(l.total)}
+                                    {l.valorPorSessao !== null && ` · ${fmtBRL(l.valorPorSessao)} por sessão`}
+                                  </span>
+                                </td>
+                              </tr>
+                            ) : (
+                            <tr key={l.sessao.id} className="border-b border-white/5 cursor-pointer hover:bg-white/2 transition-colors" onClick={() => toggleFuturaSelecionada(l.sessao.id)}>
                               <td className="px-4 py-3">
-                                <input type="checkbox" checked={futurasSelecionadas.has(s.id)} onChange={() => toggleFuturaSelecionada(s.id)}
+                                <input type="checkbox" checked={futurasSelecionadas.has(l.sessao.id)} onChange={() => toggleFuturaSelecionada(l.sessao.id)}
                                   onClick={e => e.stopPropagation()}
                                   className="w-4 h-4 rounded accent-purple-600" />
                               </td>
-                              <td className="px-4 py-3 text-white">{s.paciente_nome}</td>
-                              <td className="px-4 py-3 text-gray-300">{s.numero_sessao} de {s.total_sessoes}</td>
-                              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(s.data_agendada)}</td>
-                              <td className="px-4 py-3 text-purple-400 whitespace-nowrap">{fmtBRL(s.comissao_valor)}</td>
+                              <td className="px-4 py-3 text-white">{l.sessao.paciente_nome}</td>
+                              <td className="px-4 py-3 text-gray-300">{l.sessao.numero_sessao} de {l.sessao.total_sessoes}</td>
+                              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(l.sessao.data_agendada)}</td>
+                              <td className="px-4 py-3 text-purple-400 whitespace-nowrap">{fmtBRL(l.sessao.comissao_valor)}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                    {futuras.sessoes.length > SESSOES_PAGE_SIZE && (
+                    {linhasAgrupadas(futuras.sessoes).length > SESSOES_PAGE_SIZE && (
                       <Pagination
                         currentPage={futurasPage}
-                        totalPages={Math.ceil(futuras.sessoes.length / SESSOES_PAGE_SIZE)}
+                        totalPages={Math.ceil(linhasAgrupadas(futuras.sessoes).length / SESSOES_PAGE_SIZE)}
                         onPrevious={() => setFuturasPage(p => Math.max(1, p - 1))}
-                        onNext={() => setFuturasPage(p => Math.min(Math.ceil(futuras.sessoes.length / SESSOES_PAGE_SIZE), p + 1))}
+                        onNext={() => setFuturasPage(p => Math.min(Math.ceil(linhasAgrupadas(futuras.sessoes).length / SESSOES_PAGE_SIZE), p + 1))}
                       />
                     )}
                   </div>

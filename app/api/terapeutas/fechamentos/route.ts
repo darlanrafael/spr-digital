@@ -12,6 +12,26 @@ type SessaoPendente = {
   data_entrega: string | null
   data_agendada: string | null
   paciente_nome: string
+  /** Vem de `sales`, nao de `sessoes`. A tela agrupa por ele. */
+  produto?: string | null
+}
+
+// O produto nao esta em `sessoes` - ele vive em `sales`. A tela agrupa as
+// sessoes por produto (pedido do usuario em 11/09/2026), e sem este campo tudo
+// cairia num grupo so. Ver lib/sessoes-por-produto.ts.
+//
+// Em lotes de 100 de proposito: o `in()` do PostgREST tem teto de 1000 linhas,
+// ja confirmado ativo neste projeto, e a Denise sozinha tem 139 sessoes.
+async function comProduto(sessoes: SessaoPendente[]): Promise<SessaoPendente[]> {
+  const ids = [...new Set(sessoes.map(s => s.sale_id).filter(Boolean))]
+  if (ids.length === 0) return sessoes
+  const supabase = getSupabaseAdmin()
+  const produto = new Map<string, string>()
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await supabase.from('sales').select('id,produto').in('id', ids.slice(i, i + 100))
+    for (const v of data ?? []) produto.set(v.id as string, String(v.produto ?? ''))
+  }
+  return sessoes.map(s => ({ ...s, produto: produto.get(s.sale_id) ?? null }))
 }
 
 async function buscarPendentes(terapeutaId: string): Promise<{ sessoes: SessaoPendente[]; total: number }> {
@@ -23,7 +43,7 @@ async function buscarPendentes(terapeutaId: string): Promise<{ sessoes: SessaoPe
     .eq('status', 'entregue')
     .eq('comissao_paga', false)
     .order('data_entrega', { ascending: true })
-  const sessoes = (data ?? []) as SessaoPendente[]
+  const sessoes = await comProduto((data ?? []) as SessaoPendente[])
   const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
   return { sessoes, total }
 }
@@ -39,7 +59,7 @@ async function buscarFuturas(terapeutaId: string): Promise<{ sessoes: SessaoPend
     .in('status', ['agendada', 'pendente'])
     .eq('comissao_paga', false)
     .order('data_agendada', { ascending: true, nullsFirst: false })
-  const sessoes = (data ?? []) as SessaoPendente[]
+  const sessoes = await comProduto((data ?? []) as SessaoPendente[])
   const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
   return { sessoes, total }
 }

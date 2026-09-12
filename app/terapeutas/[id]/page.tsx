@@ -115,6 +115,8 @@ type FechamentoSessao = {
   comissao_valor: number
   data_entrega: string | null
   paciente_nome: string
+  /** Vem de `sales`, nao de `sessoes`. A tela agrupa por ele. */
+  produto?: string | null
 }
 
 type FechamentoHistorico = {
