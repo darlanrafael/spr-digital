@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
+import { entreguesDesdeOFechamento } from '@/lib/entregues-desde-o-fechamento'
 
 type SessaoPendente = {
   id: string
@@ -14,6 +15,8 @@ type SessaoPendente = {
   paciente_nome: string
   /** Vem de `sales`, nao de `sessoes`. A tela agrupa por ele. */
   produto?: string | null
+  /** So vem preenchido na busca de ENTREGUES, que inclui as ja pagas. */
+  comissao_paga?: boolean | null
 }
 
 // O produto nao esta em `sessoes` - ele vive em `sales`. A tela agrupa as
@@ -64,6 +67,21 @@ async function buscarFuturas(terapeutaId: string): Promise<{ sessoes: SessaoPend
   return { sessoes, total }
 }
 
+// TODAS as entregues, pagas ou nao. E a base do bloco "entregues desde o ultimo
+// fechamento": a tela de pagamento mostra so o pendente, entao sessao ja paga
+// por antecipacao sumia - e foi isso que fez o usuario contar 13 atendimentos
+// onde a tela mostrava 10, em 11/09/2026.
+async function buscarEntregues(terapeutaId: string): Promise<SessaoPendente[]> {
+  const supabase = getSupabaseAdmin()
+  const { data } = await supabase
+    .from('sessoes')
+    .select('id,sale_id,numero_sessao,total_sessoes,comissao_valor,comissao_paga,data_entrega,data_agendada,paciente_nome')
+    .eq('terapeuta_id', terapeutaId)
+    .eq('status', 'entregue')
+    .order('data_entrega', { ascending: true })
+  return comProduto((data ?? []) as SessaoPendente[])
+}
+
 // ─── GET — preview (sessões pendentes de pagamento) + histórico ───────────────
 export async function GET(req: NextRequest) {
   try {
@@ -72,7 +90,7 @@ export async function GET(req: NextRequest) {
     if (!terapeutaId) return NextResponse.json({ error: 'terapeutaId é obrigatório' }, { status: 400 })
 
     const supabase = getSupabaseAdmin()
-    const [{ sessoes, total }, futurasResp, historicoResp] = await Promise.all([
+    const [{ sessoes, total }, futurasResp, historicoResp, entregues] = await Promise.all([
       buscarPendentes(terapeutaId),
       buscarFuturas(terapeutaId),
       supabase
@@ -80,12 +98,21 @@ export async function GET(req: NextRequest) {
         .select('*')
         .eq('terapeuta_id', terapeutaId)
         .order('data_confirmacao', { ascending: false }),
+      buscarEntregues(terapeutaId),
     ])
+
+    const historico = historicoResp.data ?? []
 
     return NextResponse.json({
       preview: { sessoes, total },
       futuras: futurasResp,
-      historico: historicoResp.data ?? [],
+      historico,
+      // Entregues desde o ultimo fechamento, INCLUINDO as ja pagas - com a
+      // etiqueta dizendo qual fechamento pagou cada uma.
+      desdeUltimo: entreguesDesdeOFechamento({
+        sessoes: entregues,
+        fechamentos: historico as { id: string; data_confirmacao: string; sessoes?: { id?: string }[] }[],
+      }),
     })
   } catch (err) {
     console.error('[terapeutas/fechamentos GET]', err)

@@ -28,6 +28,8 @@ type SessaoPendente = {
   paciente_nome: string
   /** Vem de `sales`, nao de `sessoes`. A tela agrupa por ele. */
   produto?: string | null
+  /** So vem preenchido no bloco de ENTREGUES, que inclui as ja pagas. */
+  comissao_paga?: boolean | null
 }
 
 const SESSOES_PAGE_SIZE = 12
@@ -102,6 +104,14 @@ export default function FechamentosTerapeutasPage() {
 
   const [preview, setPreview] = useState<{ sessoes: SessaoPendente[]; total: number }>({ sessoes: [], total: 0 })
   const [futuras, setFuturas] = useState<{ sessoes: SessaoPendente[]; total: number }>({ sessoes: [], total: 0 })
+  // Entregues desde o ultimo fechamento, INCLUINDO as ja pagas. A tela de
+  // pagamento mostra so o pendente, e sessao paga por antecipacao sumia - foi
+  // isso que fez o usuario contar 13 atendimentos onde a tela mostrava 10.
+  const [desdeUltimo, setDesdeUltimo] = useState<{
+    sessoes: { sessao: SessaoPendente; pagoEm: string | null; fechamentoId: string | null }[]
+    corte: string | null; aPagar: number; jaPago: number; total: number
+  }>({ sessoes: [], corte: null, aPagar: 0, jaPago: 0, total: 0 })
+  const [desdeUltimoAberto, setDesdeUltimoAberto] = useState(false)
   const [futurasAberto, setFuturasAberto] = useState(false)
   const [futurasSelecionadas, setFuturasSelecionadas] = useState<Set<string>>(new Set())
   const [historico, setHistorico] = useState<FechamentoHistorico[]>([])
@@ -174,6 +184,7 @@ export default function FechamentosTerapeutasPage() {
       setPreview(json.preview ?? { sessoes: [], total: 0 })
       setFuturas(json.futuras ?? { sessoes: [], total: 0 })
       setHistorico(json.historico ?? [])
+      setDesdeUltimo(json.desdeUltimo ?? { sessoes: [], corte: null, aPagar: 0, jaPago: 0, total: 0 })
       setPreviewPage(1); setFuturasPage(1)
       setFuturasSelecionadas(new Set())
     } catch (e) {
@@ -263,6 +274,74 @@ export default function FechamentosTerapeutasPage() {
           </div>
         ) : (
           <>
+            {/* Entregues desde o último fechamento — pagas E pendentes.
+                Existe porque a lista de pendentes esconde o que já foi pago por
+                antecipação, e sem isso não dá pra conferir com a agenda da
+                terapeuta. Ver lib/entregues-desde-o-fechamento.ts. */}
+            {desdeUltimo.sessoes.length > 0 && (
+              <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden mb-4">
+                <button onClick={() => setDesdeUltimoAberto(v => !v)}
+                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/2 transition-colors">
+                  <div className="text-left">
+                    <h2 className="text-sm font-semibold text-white">
+                      Sessões entregues desde o último fechamento ({desdeUltimo.sessoes.length})
+                    </h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {desdeUltimo.corte
+                        ? <>Entregues a partir de {fmtData(desdeUltimo.corte)}. Inclui as que já foram pagas, para conferir com a agenda dela.</>
+                        : 'Nenhum fechamento anterior — todas as sessões entregues.'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-green-500">{fmtBRL(desdeUltimo.aPagar)}</p>
+                      <p className="text-[11px] text-gray-500">a pagar</p>
+                    </div>
+                    {desdeUltimoAberto ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+                  </div>
+                </button>
+                {desdeUltimoAberto && (
+                  <div className="border-t border-white/10">
+                    <div className="px-4 py-2.5 flex flex-wrap gap-x-6 gap-y-1 bg-gray-800/30 border-b border-white/5 text-[11px]">
+                      <span className="text-gray-400">Total entregue: <strong className="text-white">{fmtBRL(desdeUltimo.total)}</strong> em {desdeUltimo.sessoes.length} sessão(ões)</span>
+                      <span className="text-gray-400">A pagar: <strong className="text-green-500">{fmtBRL(desdeUltimo.aPagar)}</strong> em {desdeUltimo.sessoes.filter(s => !s.pagoEm && !s.sessao.comissao_paga).length}</span>
+                      <span className="text-gray-400">Já pago: <strong className="text-amber-400">{fmtBRL(desdeUltimo.jaPago)}</strong> em {desdeUltimo.sessoes.filter(s => s.sessao.comissao_paga).length}</span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/5">
+                            {['Paciente', 'Sessão', 'Data entrega', 'Comissão', ''].map((h, i) => (
+                              <th key={i} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {desdeUltimo.sessoes.map(l => (
+                            <tr key={l.sessao.id} className="border-b border-white/5">
+                              <td className="px-4 py-3 text-white">{l.sessao.paciente_nome}</td>
+                              <td className="px-4 py-3 text-gray-300">{l.sessao.numero_sessao} de {l.sessao.total_sessoes}</td>
+                              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(l.sessao.data_entrega)}</td>
+                              <td className={`px-4 py-3 whitespace-nowrap ${l.sessao.comissao_paga ? 'text-gray-500' : 'text-green-500'}`}>
+                                {fmtBRL(l.sessao.comissao_valor)}
+                              </td>
+                              <td className="px-4 py-3">
+                                {l.sessao.comissao_paga && (
+                                  <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-500/15 text-amber-400 border-amber-500/30 whitespace-nowrap">
+                                    {l.pagoEm ? `Pago no fechamento de ${fmtData(l.pagoEm)}` : 'Já pago'}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Preview de sessões pendentes de pagamento */}
             <div className="bg-gray-900 border border-white/10 rounded-xl overflow-hidden mb-4">
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
