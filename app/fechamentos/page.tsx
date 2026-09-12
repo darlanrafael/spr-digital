@@ -22,6 +22,7 @@ import { precisaConverter } from '@/lib/moeda-da-venda'
 import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
+import { invariantesDoFechamento } from '@/lib/invariantes-do-fechamento'
 import { PAGAMENTO_DENISE_POR_SESSAO } from '@/lib/diagnostico-guiado'
 import { ehDiagnosticoGuiado } from '@/lib/vendas-por-situacao'
 
@@ -637,6 +638,30 @@ function FechamentosContent() {
     : Math.round(SOCIO_NAMES.reduce((a, n) => a + (deducoesSocio[n] ?? 0), 0) * 100) / 100
   /** O numero que REALMENTE vai ser dividido entre os socios. */
   const lucroAposDeducoes = lucroReal - deducaoDosSocios
+
+  // As contas que TEM que fechar, conferidas na propria tela.
+  //
+  // Teste pega o caso que eu imaginei; pre-voo pega o padrao que eu ja errei.
+  // Nenhum dos dois pega conta que nao fecha num dado que eu nunca vi - e e
+  // nesse que o dinheiro sai errado. Ver lib/invariantes-do-fechamento.ts.
+  //
+  // NAO trava o fechamento de proposito: invariante que trava vira invariante
+  // que alguem desliga. Avisa, com os dois numeros, e quem fecha decide.
+  const invariantes = useMemo(() => invariantesDoFechamento({
+    byProduct: byProduct.map(p => ({
+      nome: p.nome, qtd: p.qtd, bruto: p.bruto, taxas: p.taxas,
+      imposto: p.imposto, liquido: p.liquido, repasse_terapeuta: p.repasse_terapeuta,
+    })),
+    faturamentoBruto,
+    taxasPlataforma: taxasPlat,
+    impostoTotal,
+    faturamentoLiquido,
+    alertasSelecionados: alertasSelecionados.map(a => ({ valor: a.valor })),
+    deducaoPorSocio: SOCIO_NAMES.map(n => deducaoDoSocio(n)),
+    deducaoDosSocios,
+    compradores: periodSales.map(s => ({ id: s.id })),
+  }), [byProduct, faturamentoBruto, taxasPlat, impostoTotal, faturamentoLiquido,
+       alertasSelecionados, deducoesSocio, empresaAbsorve, deducaoDosSocios, periodSales])
 
   function toggleAlerta(chave?: string) {
     if (!chave) return
@@ -1298,6 +1323,39 @@ function FechamentosContent() {
                     </div>
                   )}
                 </div>
+
+                {/* As contas que não fecham. Fica ACIMA da Conferência porque
+                    conferência é "confira com a plataforma" e isto é "o número
+                    desta tela está inconsistente com ele mesmo". */}
+                {invariantes.length > 0 && (
+                  <div className="bg-red-500/10 border-2 border-red-500/50 rounded-xl mb-4 overflow-hidden">
+                    <div className="p-4 border-b border-red-500/20">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                        <h3 className="text-sm font-semibold text-red-300">
+                          As contas deste fechamento não fecham ({invariantes.length})
+                        </h3>
+                      </div>
+                      <p className="text-[11px] text-red-200/70 mt-1">
+                        Não é diferença com a plataforma: são números <strong>desta tela</strong> que
+                        discordam entre si. Cada linha mostra o que era esperado e o que apareceu.
+                      </p>
+                    </div>
+                    {invariantes.map((inv, i) => (
+                      <div key={`${inv.id}-${i}`} className="px-4 py-3 border-b border-red-500/10 last:border-0">
+                        <p className="text-xs font-semibold text-white">
+                          <span className="text-red-400">{inv.id}</span> {inv.titulo}
+                        </p>
+                        <p className="text-[11px] text-gray-400 mt-1">{inv.detalhe}</p>
+                        <div className="flex flex-wrap gap-x-5 gap-y-1 mt-1.5 text-[11px]">
+                          <span className="text-gray-500">esperado: <strong className="text-gray-300">{formatCurrency(inv.esperado)}</strong></span>
+                          <span className="text-gray-500">encontrado: <strong className="text-gray-300">{formatCurrency(inv.encontrado)}</strong></span>
+                          <span className="text-red-400">diferença: <strong>{formatCurrency(inv.diferenca)}</strong></span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Conferência — some sozinha quando o período está limpo */}
                 {temConferencia && (
