@@ -13,7 +13,7 @@
 
 ---
 
-## 0. Estado atual e pendências - atualizado 02/09/2026
+## 0. Estado atual e pendências - atualizado 15/09/2026
 
 > **O relato completo e detalhado de 01 e 02/09/2026 esta na secao 0.1**, com
 > a cronologia dos 4 deploys, o bug do lancamento manual, os achados de cada
@@ -23,6 +23,37 @@
 > Esta secao 0 continua sendo o resumo operacional.
 
 > **Leia esta seção antes de qualquer coisa.** Ela resume o que as sessões de 13-14/08, 17/08, 21/08 e 01/09 resolveram e o que ficou aberto.
+
+### O que entrou entre 11/09 e 15/09 (itens 62 a 78 do historico)
+
+> Sequencia longa, com dinheiro real envolvido. O resumo, em uma linha cada:
+
+**Dinheiro corrigido:**
+- **R$ 3.181,85** de receita presos, porque venda feita depois do fechamento era dada como ja contada (item 67). A maior sozinha: Marcio Adriano, R$ 2.827,65, que **nunca foi contada em lugar nenhum**
+- **R$ 6.175,00** de repasse do Diagnostico Guiado que nao estavam provisionados no fechamento (item 63)
+
+**Incidente de producao, com causa raiz fechada:**
+- O aviso de WhatsApp parou de sair na noite de 13 para 14/09. **Causa raiz: erro 525 da Cloudflare, falha de handshake SSL no caminho Vercel para Supabase, atingindo cerca de 5% de TODAS as chamadas ao banco** (item 73). **Nenhum paciente ficou sem aviso** - a execucao seguinte, 30 minutos depois, cobriu os 6. O alerta nao disparou porque **estava depois do ponto que falhava**
+
+**Seguranca:**
+- A rota que converte moeda **gravava dinheiro sem verificar quem chamava** (item 76). Corrigida
+
+**Como o sistema se defende agora:**
+- **Invariantes** - a tela de fechamento confere as proprias contas e mostra o que nao fecha (item 69)
+- **Pre-voo** - `npm run preflight`, 8 checagens estaticas, cada uma nascida de um defeito real (item 70)
+- **Teste por propriedade** - milhares de entradas geradas, com semente fixa (item 71)
+- **Teste de mutacao** - `npm run mutacao`, mede se a suite pegaria um defeito de proposito (item 72)
+- **Repeticao automatica** em falha de conexao com o banco, `lib/fetch-com-retry.ts` (item 73)
+
+**Pendencias abertas em 15/09:**
+- **21 rotas** de API devolvem o erro cru do banco ao cliente; **7 escritas** sem conferir erro; **2 rotas GET** com chave de acesso total sem guarda (item 76.4)
+- Modulos com nota de mutacao baixa, a cobrir: `agenda-conflitos` 50%, `terapeutas-auth` 53% (o resto depende de banco), `criar-lancamento-manual` 56%, `aprovacao-reembolso` 75%, `datas-do-pacote` 77%. **`lib/services.ts`, com 524 linhas, ainda nao foi medido**
+- Abrir chamado no Supabase sobre os erros 525 (evidencias prontas: codigo, horarios, datacenter Ashburn)
+- `lib/produtos-do-lancamento-manual.ts` existe e esta testado, mas **nao esta ligado** no formulario, que segue em texto livre
+- **Decisao do usuario pendente:** o Diagnostico Guiado fica de fora da reserva de 30% do caixa? Impacto de **R$ 13.343,52**
+- Tres prontuarios com o nome de quem COMPROU, nao de quem e atendido (Billimaicon -> Raquel, Marcio -> Lebian, Amanda -> Julia). Denise ja confirmou os tres; falta passar pelo fluxo de aprovacao
+- Marcar "Abater aqui" para os R$ 1.560 do Miguel no proximo fechamento
+
 
 ### Gestor de Projetos (ClickUp) — documentado à parte
 
@@ -4295,3 +4326,312 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     Eu escrevi que `mentoria pedro` daria **4** resultados. Sao **5** - esqueci o `Mentoria Particular - Pedro | Denise`. **O codigo estava certo; a minha contagem e que estava errada.** Corrigi o teste, nao o codigo.
 
     E o segundo erro de contagem meu nesta sessao pego por teste. Vale a nota: quando eu escrevo o numero esperado de cabeca numa lista de 31 itens, eu erro.
+
+---
+
+62. **11/09/2026 - o periodo apurado voltou para a faixa do historico de fechamento da terapeuta.** Commit `c1961e0`. Pedido do usuario: *"o historico aparece assim para mim como consta no print.. verifica o MD pois lembro que precisava aparecer meio que parecido como mostra para mim nos fechamentos"*. Ele estava certo: o MD registrava a faixa com o periodo, e a tela da terapeuta tinha ficado so com a data do pagamento. Sem o periodo, duas linhas de historico com o mesmo valor sao indistinguiveis.
+
+---
+
+63. **11/09/2026 - O DIAGNOSTICO GUIADO NAO DESCONTAVA O REPASSE DA DENISE. R$ 6.175,00 fora da conta.** Commits `676a42b` e `8cb89a6`.
+
+    ## 63.1. O que estava errado
+
+    O Diagnostico Guiado nao paga percentual: paga **R$ 95,00 fixos por sessao** (`PAGAMENTO_DENISE_POR_SESSAO = 95`). O fechamento da empresa calculava o repasse das terapeutas **so pelo percentual**, entao o Diagnostico entrava com repasse **R$ 0,00**.
+
+    O lucro do fechamento aparecia maior do que e, porque uma despesa real - o pagamento da Denise pelas sessoes do Diagnostico - simplesmente **nao existia na conta**.
+
+    ## 63.2. O tamanho
+
+    **R$ 6.175,00** de repasse que nao estavam provisionados. Sao 65 sessoes vendidas a R$ 95,00.
+
+    ## 63.3. Conta por SESSAO VENDIDA, nao por sessao entregue
+
+    Decisao importante e contra-intuitiva: o repasse e provisionado pelas sessoes **vendidas**, na hora da venda, nao conforme as sessoes vao sendo entregues.
+
+    **Por que:** o dinheiro do cliente entrou inteiro no periodo da venda. Se a despesa correspondente so aparecesse meses depois, conforme a entrega, o fechamento do mes da venda mostraria lucro inflado e o fechamento do mes da entrega mostraria prejuizo artificial. O regime tem que casar receita e despesa **no mesmo periodo**.
+
+    ## 63.4. A linha na tela explica de onde vem o numero
+
+    `lib/repasse-do-diagnostico.ts` devolve `{ total, porVenda, semFormato }`. O `semFormato` e a lista de vendas em que **nao deu para ler o numero de sessoes do nome da oferta** - essas ficam visiveis, nao somem em silencio.
+
+    ---
+
+64. **11/09/2026 - o painel da terapeuta passou a agrupar as sessoes POR PRODUTO.** Commit `2ce0759`. Pedido do usuario: *"E importante termos uma organizacao no painel da Denise. Separar sessoes de acordo com os produtos, entende?"*.
+
+    Motivo real: Denise atende **Mentoria** (percentual) e **Diagnostico Guiado** (R$ 95 fixos por sessao) na mesma tela. Misturadas, nao da para conferir o pagamento - as duas metades seguem regras de calculo diferentes e **nao podem ser somadas de cabeca**.
+
+    ---
+
+65. **11/09/2026 - "sessoes entregues desde o ultimo fechamento", com etiqueta para as ja pagas.** Commit `a29dc7d`. Pedido do usuario: *"acho que seria legal no fechamento da sessoes mostrar... sessoes entregue desde o ultimo fechamento.. ai no relatorio.. para as sessoes que foram entregue mas que foi feito a antecipacao de pagamento colocar uma tag"*.
+
+    A etiqueta existe por causa da **antecipacao**: sessao que foi paga adiantado continua aparecendo na lista de entregues do periodo, mas **nao pode ser paga de novo**. Sem a etiqueta, o risco e pagar duas vezes a mesma sessao.
+
+    ---
+
+66. **11/09/2026 (noite) - as duas revisoes do proprio trabalho do dia: SETE defeitos, TRES de dinheiro.** Commits `0ab8fcd` e `e1adff3`. O usuario pediu: *"faca uma trilha revisao nos minimos detalhes"*, e depois *"REVISA NOVAMENTE COM 100X MAIS ATENCAO DO QUE A ULTIMA VARREDURA"* - foi a segunda varredura que achou os tres de dinheiro. **A primeira varredura passou por eles.**
+
+    Licao que fica: *revisar uma vez nao e revisar*. O mesmo codigo, lido de novo com outra pergunta na cabeca, entrega defeitos que a primeira leitura nao viu.
+
+    ---
+
+67. **12/09/2026 - R$ 3.181,85 DE RECEITA PRESOS: venda feita DEPOIS do fechamento era dada como ja contada.** Commit `47dc16a`. **O maior achado de dinheiro da sequencia.**
+
+    ## 67.1. O defeito
+
+    `lib/vendas-ja-fechadas.ts` decidia se uma venda ja tinha entrado em algum fechamento comparando **datas como TEXTO**.
+
+    O problema: `data_confirmacao` vem do banco em **UTC com fracao de segundo e sufixo `+00:00`**, e a data do fechamento vem em **hora de Brasilia sem fuso nenhum**. Comparar essas duas strings erra por **exatamente 3 horas** - e o sinal do erro depende do formato, nao do horario real.
+
+    ## 67.2. A consequencia em dinheiro
+
+    Vendas confirmadas **depois** do fechamento eram classificadas como **ja fechadas**. Elas sumiam do proximo fechamento: nao estavam no anterior (foram depois dele) e nao entravam no seguinte (o sistema achava que ja tinham entrado).
+
+    **R$ 3.181,85 no total. A maior sozinha: Marcio Adriano, R$ 2.827,65, que nunca foi contada em lugar nenhum.**
+
+    ## 67.3. A correcao
+
+    ```ts
+    const instanteBRT = (data_hora: string): number | null => {
+      if (!data_hora) return null
+      const comFuso = /[+-]\d{2}:\d{2}$|Z$/.test(data_hora) ? data_hora : `${data_hora}-03:00`
+      const t = new Date(comFuso).getTime()
+      return Number.isNaN(t) ? null : t
+    }
+    ```
+
+    **Compara INSTANTE (epoch), nunca texto.** Data sem fuso e assumida como Brasilia, que e o que o sistema grava.
+
+    ## 67.4. A REGRA que fica
+
+    **Nunca comparar duas datas como string neste sistema.** Ha dois formatos circulando (UTC com fuso, e Brasilia sem fuso), e a comparacao de texto entre eles erra por tres horas sem reclamar de nada. O pre-voo (item 70) hoje tem uma checagem estatica so para isso.
+
+    ---
+
+68. **12/09/2026 - `addSale` carregava MENOS campos do que o tipo `Sale` declara.** Commit `41d9fc6`.
+
+    Uma venda recem-criada voltava para a tela sem parte dos campos. O tipo dizia que estavam la; o objeto real nao tinha. **TypeScript nao pega isso**, porque o dado vem do banco por um caminho que o compilador nao ve.
+
+    No mesmo commit: a checagem C3 do pre-voo tinha **regex ganancioso** e apontava linhas que estavam corretas. Ferramenta de varredura que grita errado e pior do que nao ter: treina a pessoa a ignorar o alarme.
+
+    ---
+
+69. **12/09/2026 - A TELA DE FECHAMENTO CONFERE AS PROPRIAS CONTAS.** Commit `fc70dfd`. Arquivo `lib/invariantes-do-fechamento.ts`.
+
+    ## 69.1. Por que isto existe
+
+    Pedido explicito do usuario, dito varias vezes: *"meu fechamento nao pode ter margem de falha nenhuma"*.
+
+    Teste pega defeito no codigo que o teste conhece. **Invariante pega defeito que ninguem previu**, porque roda sobre os numeros REAIS, na tela, toda vez.
+
+    ## 69.2. As cinco invariantes
+
+    - **I1** - a soma das partes dos socios bate com o total distribuido
+    - **I2** - receita menos deducoes menos repasses bate com o lucro mostrado
+    - **I3** - nenhum repasse e maior que a receita da propria venda
+    - **I4** - a reserva de caixa e exatamente o percentual configurado sobre a base
+    - **I5** - a soma das deducoes por socio bate com o total de deducoes
+
+    ## 69.3. Dinheiro se compara em CENTAVOS INTEIROS
+
+    Detalhe que custou duas correcoes ate ficar certo:
+
+    ```ts
+    const TOLERANCIA_EM_CENTAVOS = 1
+    const centavos = (n: number) => Math.round(n * 100)
+    const difEmCentavos = centavos(encontrado) - centavos(esperado)
+    if (Math.abs(difEmCentavos) > TOLERANCIA_EM_CENTAVOS) { ... }
+    ```
+
+    **Primeira tentativa:** comparei depois de arredondar para duas casas - a tolerancia virava fixa e escondia erro de verdade. **Segunda tentativa:** comparei em ponto flutuante - `0.1 + 0.2` nao da `0.3`, entao a tolerancia **nunca era exatamente a tolerancia**. So a terceira, em centavos inteiros, esta certa.
+
+    ## 69.4. Validado contra OITO fechamentos reais
+
+    As invariantes foram rodadas contra os **8 fechamentos que ja existem no banco**: **zero alarme falso**. Isso importa - invariante que grita em fechamento correto seria desligada na primeira semana.
+
+    ---
+
+70. **12/09/2026 - o PRE-VOO: oito checagens estaticas, `npm run preflight`.** Arquivo `scripts/preflight.ts`.
+
+    Cada checagem nasceu de um defeito **que ja aconteceu de verdade neste sistema**:
+
+    - **C1** - consulta sem paginacao (o limite silencioso de 1000 linhas do PostgREST)
+    - **C2** - `slice` em campo de data/hora (corta o fuso e o resto quebra)
+    - **C3** - data comparada como texto (o defeito do item 67, R$ 3.181,85)
+    - **C4** - travessao em arquivo alterado (regra do usuario)
+    - **C5** - `update` sem conferir o erro
+    - **C6** - campo calculado que nao chega a ser gravado
+    - **C7** - funcao testada mas nao ligada em lugar nenhum
+    - **C8** - codigo morto
+
+    ## 70.1. O ponto cego do proprio pre-voo
+
+    A primeira versao varria **so `app` e `lib`**. Resultado: acusou `avisoDaLinha` de nao estar ligada em lugar nenhum - **e estava, em `components/`, que sao 1.240 linhas que a ferramenta nao lia**.
+
+    Hoje varre `app`, `lib`, `components`, `contexts`, `types` e `hooks`. **A ferramenta de varredura tambem precisa ser varrida.**
+
+    ---
+
+71. **12/09/2026 - TESTE POR PROPRIEDADE nos modulos de dinheiro, e dois centavos que ele achou.** Commit `e9462a0`.
+
+    Em vez de escrever casos um por um, o teste gera **milhares de entradas aleatorias** (com semente fixa, `mulberry32`, para poder repetir a falha) e verifica **propriedades que tem que valer sempre**: a soma das partes da o total, nenhum valor fica negativo, o rateio nao cria nem destroi dinheiro.
+
+    **Achou dois defeitos reais** do mesmo tipo: `centavos(a) + centavos(b)` nem sempre e igual a `centavos(a + b)`. Aconteceu em `entregues-desde-o-fechamento` e no cabecalho da tela. Sao dois centavos - **e dois centavos que nao fecham param um fechamento inteiro enquanto alguem procura de onde vieram**.
+
+    ---
+
+72. **12/09/2026 - TESTE DE MUTACAO: motor proprio, `npm run mutacao`.** Commit `1d71d00`. Arquivo `scripts/mutacao.ts`.
+
+    ## 72.1. O que e, e por que importa
+
+    Teste de mutacao responde a pergunta que nenhuma outra ferramenta responde: **"se eu estragasse o codigo de proposito, algum teste reclamaria?"**
+
+    O motor **introduz um defeito por vez** (troca `>=` por `>`, `&&` por `||`, `+` por `-`), roda a suite inteira e anota: se a suite continuou verde, aquele defeito **passaria para producao sem ninguem notar**. Cobertura diz que a linha foi executada; mutacao diz se ela foi **verificada**.
+
+    ## 72.2. Cuidados do motor (aprendidos na marra)
+
+    - muda **uma ocorrencia por vez**, nunca duas juntas
+    - **nao mexe dentro de strings** (trocar sinal num texto nao e defeito, e ruido)
+    - grava um **arquivo-marcador** `.mutacao-em-andamento` antes de mutar
+    - se achar marcador velho ao iniciar, **restaura sozinho** com `git checkout --`
+
+    **O motivo do marcador:** em 15/09 o lote foi morto por tempo limite no meio de `lib/reagendamento-total.ts` e **o arquivo ficou mutado no repositorio**. Um `pkill -TERM` atinge o `npx`, nao o node que esta rodando. **Arquivo mutado esquecido e um defeito plantado.** O marcador e a restauracao automatica existem por causa disso.
+
+    ## 72.3. As notas medidas (15/09/2026)
+
+    **100%:** `rateio-das-deducoes`, `repasse-do-diagnostico`, `dinheiro-do-pacote`, `vendas-ja-fechadas`, `resumo-do-fechamento-terapeuta`, `vendas-por-situacao`
+    **90 a 96%:** `invariantes-do-fechamento` 96, `alertas-reembolso-parcial` 93, `diagnostico-guiado` 92, `estorno-com-sessao` 92, `moeda-da-venda` 90, `sessoes-por-produto` 90
+    **80 a 89%:** `ligacao-de-pacote` 89, `entregues-desde-o-fechamento` 87, `telefone` 86, `conferencia-de-pacote` 86, `decisao-de-agendamento` 84, `sessoes-da-oferta` 82, `alertas-reembolso` 80
+    **abaixo de 80%:** `datas-do-pacote` 77, `aprovacao-reembolso` 75, `criar-lancamento-manual` 56 (era 34), `terapeutas-auth` 53 (era 40), `agenda-conflitos` 50
+
+    ---
+
+73. **14/09/2026 - O INCIDENTE: o aviso de WhatsApp parou de ser enviado a noite. CAUSA RAIZ ENCONTRADA.** Commit `103207a`. Arquivo novo `lib/fetch-com-retry.ts`.
+
+    Relato do usuario, de manha: *"o disparo de aviso parou de ser enviado a noite"*. E depois, a exigencia que guiou a investigacao: *"Sim autorizo.. mas quero que descubra a causa raiz disso"*.
+
+    ## 73.1. A CAUSA RAIZ
+
+    **Erro 525 da Cloudflare - falha de handshake SSL no caminho Vercel -> Supabase.**
+
+    Nao e a internet do usuario. Nao e o n8n. Nao e a Z-API. E a conexao TLS entre o servidor da Vercel e o Supabase falhando no aperto de maos, **em cerca de 5% de TODAS as chamadas ao banco**.
+
+    ## 73.2. Como ficou provado
+
+    - **17 falhas** do fluxo SPR em **4 dias**
+    - **todas as 17 identicas**, todas no mesmo passo: `Buscar Pendentes`
+    - `Enviar Z-API` e `Marcar Enviado`: **zero falhas** no mesmo periodo
+    - a resposta nao era JSON: era **pagina HTML da Cloudflare**, com `error code 525` e datacenter Ashburn
+
+    Se fosse a Z-API, a falha estaria no passo de enviar. Se fosse o n8n, estaria espalhada. **Estava concentrada no unico passo que fala com o banco.**
+
+    ## 73.3. POR QUE O ALERTA NAO DISPAROU
+
+    Esta e a parte que mais importa. O usuario perguntou: *"nao haviamos configurado um alerta pra quando falhar me avisar?"*.
+
+    O alerta existia - **e estava no lugar errado**. Ficava **depois** do no `Sucesso?`, e o `Buscar Pendentes` estava com `onError = stopWorkflow`. O fluxo **morria antes de chegar no alerta**.
+
+    **Alerta colocado depois do ponto que falha nunca dispara.** Corrigido: `Buscar Pendentes` passou a ter `retryOnFail` e `onError = continueErrorOutput`, e o alerta foi ligado na saida de erro.
+
+    ## 73.4. NENHUM PACIENTE FICOU SEM AVISO
+
+    Confirmado um por um: os **6 pacientes** do periodo receberam o lembrete. O fluxo roda de 30 em 30 minutos, e **a execucao seguinte cobriu todos**. A falha foi de disponibilidade, nao de entrega.
+
+    ## 73.5. A correcao no codigo: `lib/fetch-com-retry.ts`
+
+    ```ts
+    const ESPERAS_MS = [150, 500, 1200]
+    ```
+
+    Tenta de novo **so** em falha de conexao (`fetch failed`, `econnreset`, `handshake`) e em **pagina de erro da Cloudflare** (resposta 5xx que vem como `text/html` com `error code 5xx`).
+
+    **O que ele NAO repete, de proposito:** erro do banco. Um `insert` recusado nao melhora repetindo - repetir ali gravaria duas vezes.
+
+    Ligado **nos DOIS clientes Supabase** (o publico e o de servico). Um so nao adiantaria: o fluxo do WhatsApp usa o de servico.
+
+    ## 73.6. Pendencia
+
+    Abrir chamado no Supabase sobre os 525, com as evidencias ja levantadas: codigo 525, horarios, datacenter Ashburn.
+
+    ---
+
+74. **14/09/2026 - `marcar-enviado` virou IDEMPOTENTE.** Commit `efb9528`.
+
+    Consequencia direta do item 73: se o passo agora tenta de novo, a marcacao pode chegar **duas vezes**. Antes, a segunda chamada **sobrescrevia o horario do primeiro envio** - o registro passava a mentir sobre quando o paciente foi avisado.
+
+    ```ts
+    .is(coluna, null).select('id')
+    ```
+
+    So marca se ainda estiver vazio. Devolve `marcou: true|false` com `aviso`, e **sempre 200** - porque "ja estava marcada" nao e erro, e devolver erro faria o n8n tentar de novo em looping.
+
+    ---
+
+75. **14/09/2026 - `lib/formatters.ts` tinha ZERO testes, e decide o dinheiro de todo fechamento.** Commit `060fb19`.
+
+    O arquivo que formata **todo valor em reais que aparece na tela** nao tinha um unico teste. Nao e cosmetico: numero formatado errado e numero lido errado, e e por ele que o usuario confere o fechamento.
+
+    ---
+
+76. **15/09/2026 - A ROTA QUE CONVERTE MOEDA GRAVAVA DINHEIRO SEM VERIFICAR QUEM CHAMAVA.** Commit `4a4e7e2`. **Achado de seguranca, em codigo escrito por mim mesmo nesta sequencia.**
+
+    ## 76.1. O que estava aberto
+
+    `app/api/sales/converter-moeda/route.ts` - a rota que converte uma venda em moeda estrangeira para reais - **nao verificava nada**. Sem autenticacao, sem `try/catch`, com `req.json()` desprotegido.
+
+    **Qualquer um que soubesse o endereco podia alterar o valor de qualquer venda.**
+
+    ## 76.2. Como apareceu
+
+    Numa auditoria das **35 rotas de API** por cinco angulos que nenhum teste cobre: chave de acesso total sem guarda, ausencia de tratamento de erro, erro cru do banco devolvido ao cliente, escrita sem conferir erro, e `req.json()` desprotegido.
+
+    **Nenhum teste acharia isso** - a rota funcionava perfeitamente para quem tinha permissao. O defeito era o que ela **deixava de perguntar**.
+
+    ## 76.3. A correcao
+
+    - `usuario_email` conferido contra `usuarios_sistema`, com `ativo` verificado
+    - `try/catch` em volta de tudo
+    - `req.json()` protegido
+    - **comparacao-e-troca** na escrita: `.eq('id', sale_id).not('moeda', 'is', null).select('id')` - se outra pessoa converteu a mesma venda no meio do caminho, a segunda conversao **nao acontece** (senao converteria duas vezes e dividiria o valor de novo)
+
+    ## 76.4. Pendencias da mesma auditoria
+
+    - **21 rotas** devolvem o erro cru do banco ao cliente (vaza estrutura interna)
+    - **7 escritas** sem conferir o erro do `update`/`insert`
+    - **2 rotas GET** usam a chave de acesso total sem guarda
+
+    ---
+
+77. **15/09/2026 - a montagem das sessoes do lancamento manual saiu de dentro do banco.** Commit `c9d86e9`.
+
+    `montarSessoesDoLancamento` e `fimDaSessaoISO` estavam **dentro** de `criarLancamentoManual`, que precisa de banco para rodar. Resultado: **nenhum teste alcancava essa parte** - o modulo pegava 34% dos defeitos.
+
+    Entre os defeitos que passavam estava a **numeracao das sessoes** (`i + 1` e `entregues.length + i + 1`). Numerar errado **nao quebra nada na hora**: a venda e criada, as sessoes aparecem, e so muito depois alguem repara que o pacote tem duas sessoes "1" ou pula da 2 para a 4.
+
+    Depois da extracao e dos testes: **56%**.
+
+    ---
+
+78. **15/09/2026 - `lib/terapeutas-auth.ts` nao tinha arquivo de teste. 40% -> 53%.** Commit `592aa8a`.
+
+    O modulo que guarda `calcularComissao`, `inferirNumeroSessoes` e `calcularReembolso` - **as funcoes que decidem quanto a terapeuta recebe** - nao tinha um unico teste. De 43 defeitos introduzidos, **26 passavam**.
+
+    ## 78.1. Os defeitos que agora sao pegos
+
+    - **o sal do hash das senhas.** Trocar o sal **quebra o login de todo mundo de uma vez**
+    - **`8 sess` OU `8sess`.** Com E no lugar do OU, **pacote de 8 virava pacote de 1, em silencio**
+    - a ordem 8 > 4 > 2 na leitura do nome do produto
+    - **imposto descontado ANTES do percentual** (conferido com numero real da Denise: R$ 1.349,65 liquido, 30%, 4 sessoes -> R$ 88,22 por sessao, que e o valor que esta no banco)
+    - a fronteira `sessoes_feitas >= sessoes_total` no reembolso
+    - a tabela de precos certa por terapeuta (Pedro e Denise sao **diferentes**)
+
+    ## 78.2. Um teste MEU que era ruim, e como apareceu
+
+    A primeira versao do teste de fuso de `isHojeBrasilia` usava so tres instantes: agora, agora menos 26h, agora mais 26h. **Dependia da hora em que a suite rodasse** - o defeito de sinal no fuso era pego em parte do dia e passava no resto.
+
+    Reescrito: varre **97 horas** em volta de agora e compara cada uma com a conta feita no proprio teste, com o sinal certo. **Teste que passa dependendo do relogio nao e teste, e sorte.**
+
+    ## 78.3. Um sobrevivente que NAO e defeito
+
+    A troca de `>=` por `>` em `calcularReembolso` sobrevive mesmo com teste escrito para ela. Investigado: e **mutante equivalente**. Com 4 de 4 sessoes feitas, o caminho proporcional chega ao mesmo zero por outra conta. **Nao ha defeito para pegar ali.**
+
