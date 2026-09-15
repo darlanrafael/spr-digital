@@ -197,7 +197,17 @@ Esperado: FALHA com "Cannot find module './cracha'".
 
 ```ts
 // lib/cracha.ts
-import * as crypto from 'crypto'
+//
+// SEM `import from 'crypto'`. Isto NAO e preferencia de estilo.
+//
+// Provado rodando em 15/09/2026: com `import * as crypto from 'crypto'`, o
+// `npm run build` PASSA e o servidor devolve **HTTP 500 em toda rota de API**,
+// com "The edge runtime does not support Node.js 'crypto' module". O middleware
+// roda no runtime Edge, que nao tem os modulos do Node - e como o build nao
+// executa o middleware, ele nao avisa nada.
+//
+// `globalThis.crypto.getRandomValues` e Web Crypto: existe no Edge E no Node
+// 18+. Testado nos dois, com o mesmo resultado de 64 caracteres hexadecimais.
 
 // A validade do cracha, e quando renova-la.
 //
@@ -212,11 +222,18 @@ export const RENOVAR_QUANDO_FALTAR_DIAS = 15
 
 const DIA_MS = 24 * 60 * 60 * 1000
 
+/** A data em que um cracha emitido agora vence. Usada tambem na renovacao. */
+export function novaValidade(agoraMs: number = Date.now()): string {
+  return new Date(agoraMs + DIAS_DE_VALIDADE * DIA_MS).toISOString()
+}
+
 /** `agoraMs` existe para o teste poder fixar o instante. Ninguem passa. */
 export function gerarCracha(agoraMs: number = Date.now()): { token: string; expiraEm: string } {
+  const bytes = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(bytes)
   return {
-    token: crypto.randomBytes(32).toString('hex'),
-    expiraEm: new Date(agoraMs + DIAS_DE_VALIDADE * DIA_MS).toISOString(),
+    token: Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''),
+    expiraEm: novaValidade(agoraMs),
   }
 }
 
@@ -255,6 +272,57 @@ Esperado: 0 falhas, 0 achado grave.
 ```bash
 git add lib/cracha.ts lib/cracha.test.ts
 git commit -m "feat: lib/cracha.ts com as regras de validade do cracha"
+```
+
+---
+
+### Tarefa 2A: `lib/cabecalhos-da-identidade.ts`, os nomes dos cabeçalhos
+
+**Arquivos:**
+- Criar: `lib/cabecalhos-da-identidade.ts`
+
+**Interfaces:**
+- Produz: `CABECALHO_DO_CRACHA = 'x-spr-cracha'` e `CABECALHOS_DA_IDENTIDADE`.
+
+**Por que um módulo só para isto.** Os mesmos nomes são usados no navegador
+(`lib/cracha-no-fetch.ts`), no middleware (runtime Edge) e nas rotas (runtime
+Node). Se morarem dentro do módulo do navegador, o middleware precisa importar
+código de navegador - e foi importando o módulo errado que o middleware quebrou
+no teste desta revisão. Um módulo sem nenhuma dependência não quebra em runtime
+nenhum.
+
+- [ ] **Passo 1: criar o arquivo**
+
+```ts
+// lib/cabecalhos-da-identidade.ts
+//
+// Os nomes dos cabecalhos, e nada mais. Sem import nenhum, de proposito: este
+// arquivo e lido pelo navegador, pelo middleware (Edge) e pelas rotas (Node).
+// Qualquer dependencia aqui vira dependencia nos tres.
+
+/** Onde o navegador manda o cracha. */
+export const CABECALHO_DO_CRACHA = 'x-spr-cracha'
+
+/**
+ * Onde o middleware escreve QUEM esta chamando.
+ *
+ * O middleware APAGA estes cabecalhos antes de escrever. Sem isso, quem chama
+ * mandaria `x-spr-quem-tipo: dashboard:admin` na mao e viraria admin.
+ */
+export const CABECALHOS_DA_IDENTIDADE = {
+  tipo: 'x-spr-quem-tipo',
+  id: 'x-spr-quem-id',
+  terapeutaId: 'x-spr-quem-terapeuta-id',
+  email: 'x-spr-quem-email',
+} as const
+```
+
+- [ ] **Passo 2: rodar tudo e commitar**
+
+```bash
+npx tsc --noEmit && npm test && npm run preflight
+git add lib/cabecalhos-da-identidade.ts
+git commit -m "feat: os nomes dos cabecalhos num modulo sem dependencia"
 ```
 
 ---
@@ -466,7 +534,9 @@ Esperado: FALHA com "Cannot find module './cracha-no-fetch'".
 // apareceria como tela quebrada depois que o middleware passasse a exigir.
 // Mesmo padrao de `lib/fetch-com-retry.ts`, que ja embrulha o fetch do Supabase.
 
-export const CABECALHO_DO_CRACHA = 'x-spr-cracha'
+import { CABECALHO_DO_CRACHA } from './cabecalhos-da-identidade'
+export { CABECALHO_DO_CRACHA }
+
 const CHAVE_DRE = 'spr_session'
 const CHAVE_TERAPEUTAS = 'terapeutas_session'
 
@@ -544,9 +614,36 @@ import { instalarCrachaNoFetch } from '@/lib/cracha-no-fetch'
 
 - [ ] **Passo 6: guardar o crachá no login das duas áreas**
 
-Em `app/login/page.tsx`, onde a resposta do login vira sessão, incluir o `token`
-no objeto gravado no `localStorage`. O módulo de terapeutas já grava `token` em
-`terapeutas_session` - conferir e não mexer se já estiver lá.
+**NÃO é na tela de login.** Verificado em 15/09/2026: a sessão do DRE é gravada
+em `lib/auth.ts:44`, dentro de `persistSession`, e quem chama é
+`loginDashboardUser` (`lib/auth.ts:67`), que faz:
+
+```ts
+  const user = await res.json() as User
+  persistSession(user)
+```
+
+Como `persistSession` grava o objeto inteiro, **basta o `token` existir no tipo
+`User`** e ele passa a ser gravado sozinho. Em `types/index.ts`:
+
+```ts
+export interface User {
+  email: string
+  name: string
+  role: UserRole
+  projetoId?: string
+  /** O cracha emitido no login. Opcional porque sessao antiga, de antes desta
+   *  mudanca, nao tem - e quem cair nesse caso e mandado para o login pela
+   *  Tarefa 5A. */
+  token?: string | null
+}
+```
+
+Nenhuma linha de `app/login/page.tsx` muda.
+
+O módulo de terapeutas já grava `token` em `terapeutas_session`
+(`app/api/terapeutas/login/route.ts:70` devolve, e a tela guarda) - conferir e
+não mexer se já estiver lá.
 
 - [ ] **Passo 7: provar rodando que a chamada sai com o crachá**
 
@@ -560,7 +657,7 @@ as chamadas para `/api/` levam o cabeçalho `x-spr-cracha`.
 
 ```bash
 npx tsc --noEmit && npm test && npm run preflight
-git add lib/cracha-no-fetch.ts lib/cracha-no-fetch.test.ts contexts/AppContext.tsx app/login/page.tsx
+git add lib/cracha-no-fetch.ts lib/cracha-no-fetch.test.ts contexts/AppContext.tsx types/index.ts
 git commit -m "feat: as telas passam a mandar o cracha em toda chamada de API"
 ```
 
@@ -858,8 +955,9 @@ git commit -m "feat: a lista das sete rotas que nao exigem cracha"
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { ehRotaAberta } from '@/lib/rotas-abertas'
-import { CABECALHO_DO_CRACHA } from '@/lib/cracha-no-fetch'
-import { crachaVencido, precisaRenovar, gerarCracha, DIAS_DE_VALIDADE } from '@/lib/cracha'
+import { CABECALHO_DO_CRACHA } from '@/lib/cabecalhos-da-identidade'
+import { crachaVencido, precisaRenovar, novaValidade } from '@/lib/cracha'
+import { CABECALHOS_DA_IDENTIDADE } from '@/lib/cabecalhos-da-identidade'
 
 // A porta de entrada de TODA rota de API.
 //
@@ -870,13 +968,6 @@ import { crachaVencido, precisaRenovar, gerarCracha, DIAS_DE_VALIDADE } from '@/
 // O que ele entrega para a rota: QUEM esta chamando, em cabecalhos que o proprio
 // middleware escreve. A rota passa a usar isso no lugar do que o navegador
 // mandou.
-
-export const CABECALHOS_DA_IDENTIDADE = {
-  tipo: 'x-spr-quem-tipo',
-  id: 'x-spr-quem-id',
-  terapeutaId: 'x-spr-quem-terapeuta-id',
-  email: 'x-spr-quem-email',
-} as const
 
 function recusar(motivo: 'sem_cracha' | 'vencido') {
   return NextResponse.json({
@@ -920,7 +1011,7 @@ export async function middleware(req: NextRequest) {
   // Janela deslizante: enquanto a pessoa usa, o cracha nao vence.
   if (precisaRenovar(expiraEm)) {
     const tabela = doSistema ? 'usuarios_sistema' : 'usuarios_dashboard'
-    const { expiraEm: nova } = gerarCracha()
+    const nova = novaValidade()
     const { error } = await client.from(tabela)
       .update({ session_token_expira_em: nova }).eq('session_token', cracha)
     // Falha aqui NAO invalida a chamada: a pessoa ja esta autenticada.
@@ -1153,8 +1244,19 @@ import {
   type Identidade,
 } from './identidade-da-chamada'
 
+import { CABECALHOS_DA_IDENTIDADE } from './cabecalhos-da-identidade'
+
 const req = (cabecalhos: Record<string, string>) =>
   new Request('https://x/api/y', { headers: cabecalhos })
+
+test('o teste usa os MESMOS nomes de cabecalho que o middleware escreve', () => {
+  // Trava a ligacao entre os dois lados. Sem isto, o teste poderia passar com
+  // um nome que o middleware nao escreve, e a identidade sumiria em producao.
+  assert.equal(CABECALHOS_DA_IDENTIDADE.tipo, 'x-spr-quem-tipo')
+  assert.equal(CABECALHOS_DA_IDENTIDADE.id, 'x-spr-quem-id')
+  assert.equal(CABECALHOS_DA_IDENTIDADE.email, 'x-spr-quem-email')
+  assert.equal(CABECALHOS_DA_IDENTIDADE.terapeutaId, 'x-spr-quem-terapeuta-id')
+})
 
 const ID_DENISE = 'c3d598b0-2e43-4376-9492-9176169befe5'
 const ID_PEDRO = 'f5b18738-fe04-43e0-a6ac-d15768cf196c'
@@ -1242,6 +1344,8 @@ Esperado: FALHA com "Cannot find module './identidade-da-chamada'".
 // As regras vivem aqui, puras e com teste proprio, e nao espalhadas nas rotas:
 // espalhadas, cada rota vira uma chance de escrever a regra um pouco diferente.
 
+import { CABECALHOS_DA_IDENTIDADE } from './cabecalhos-da-identidade'
+
 export type Identidade = {
   /** `sistema` = modulo de terapeutas; `dashboard` = DRE financeiro. */
   area: 'sistema' | 'dashboard'
@@ -1254,8 +1358,11 @@ export type Identidade = {
 }
 
 export function lerIdentidade(req: Request): Identidade | null {
-  const tipo = req.headers.get('x-spr-quem-tipo')
-  const id = req.headers.get('x-spr-quem-id')
+  // Os nomes vem da constante, nunca escritos a mao aqui: o middleware escreve
+  // e esta funcao le, e se os dois textos divergirem a identidade some sem
+  // erro nenhum - toda rota passaria a recusar, ou pior, a nao restringir.
+  const tipo = req.headers.get(CABECALHOS_DA_IDENTIDADE.tipo)
+  const id = req.headers.get(CABECALHOS_DA_IDENTIDADE.id)
   if (!tipo || !id) return null
   const [area, papel] = tipo.split(':')
   if (area !== 'sistema' && area !== 'dashboard') return null
@@ -1264,8 +1371,8 @@ export function lerIdentidade(req: Request): Identidade | null {
     area,
     papel,
     id,
-    email: req.headers.get('x-spr-quem-email') ?? '',
-    terapeutaId: req.headers.get('x-spr-quem-terapeuta-id'),
+    email: req.headers.get(CABECALHOS_DA_IDENTIDADE.email) ?? '',
+    terapeutaId: req.headers.get(CABECALHOS_DA_IDENTIDADE.terapeutaId),
   }
 }
 
@@ -1513,10 +1620,23 @@ git commit -m "fix: a divisao entre socios some da resposta para o socio, nao so
 **Interfaces:**
 - Consome: `lerIdentidade` e `podeAdministrar` de `lib/identidade-da-chamada.ts`.
 
-- [ ] **Passo 1: acrescentar a guarda nos três arquivos**
+- [ ] **Passo 1: dar `req` aos `GET`, que hoje não recebem**
 
-Em CADA método exportado (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) dos três
-arquivos, como primeira coisa dentro da função:
+Verificado em 15/09/2026: nos três arquivos o `GET` é
+`export async function GET()`, **sem parâmetro**. Usar `lerIdentidade(req)` ali
+não compila. Antes de qualquer outra coisa, trocar as três assinaturas:
+
+```ts
+export async function GET(req: NextRequest) {
+```
+
+Conferir que `NextRequest` já está importado no topo de cada arquivo (os outros
+métodos já usam).
+
+- [ ] **Passo 2: acrescentar a guarda nos três arquivos**
+
+Em CADA método exportado (`GET`, `POST`, `PUT`, `PATCH`) dos três arquivos, como
+primeira coisa dentro da função:
 
 ```ts
   // Criar usuario, trocar senha e mudar percentual de comissao sao coisas de
@@ -1535,7 +1655,7 @@ com o import no topo de cada um:
 import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 ```
 
-- [ ] **Passo 2: acrescentar as provas ao `scripts/provar-acesso.ts`**
+- [ ] **Passo 3: acrescentar as provas ao `scripts/provar-acesso.ts`**
 
 Antes do `console.log` final:
 
@@ -1557,7 +1677,7 @@ Antes do `console.log` final:
   }
 ```
 
-- [ ] **Passo 3: rodar a prova completa**
+- [ ] **Passo 4: rodar a prova completa**
 
 ```bash
 npm run dev > /tmp/dev.log 2>&1 &
@@ -1567,7 +1687,7 @@ npm run provar-acesso
 
 Esperado: `TUDO PROVADO`, sem nenhuma falha.
 
-- [ ] **Passo 4: a conferência final, obrigatória antes de publicar**
+- [ ] **Passo 5: a conferência final, obrigatória antes de publicar**
 
 As duas restrições globais, provadas:
 
@@ -1579,12 +1699,297 @@ npm run provar-acesso | grep -A 6 "ROTAS ABERTAS"
 #    nada mudou de aparencia, e que a Divisao entre Socios continua escondida.
 ```
 
-- [ ] **Passo 5: rodar tudo e commitar**
+- [ ] **Passo 6: rodar tudo e commitar**
 
 ```bash
 npx tsc --noEmit && npm test && npm run preflight && npm run build
 git add app/api/terapeutas/admin/usuarios/route.ts app/api/terapeutas/admin/terapeutas/route.ts app/api/dashboard-usuarios/route.ts scripts/provar-acesso.ts
 git commit -m "fix: as rotas de administracao passam a exigir admin"
+```
+
+---
+
+### Tarefa 12: as rotas de dinheiro do DRE exigem quem pode editar
+
+**Achado na segunda passada da revisão.** A spec diz, na tabela da seção 5, que
+o sócio *"não edita caixa, DRE nem fechamento"* - e nenhuma tarefa fazia isso
+valer. Sem esta tarefa, ele continua podendo criar fechamento e apagar custo
+chamando a rota, mesmo com todo o resto pronto.
+
+**Arquivos:**
+- Modificar: `lib/identidade-da-chamada.ts` e `lib/identidade-da-chamada.test.ts`
+- Modificar: `app/api/closings/route.ts` (POST)
+- Modificar: `app/api/costs/route.ts` (POST, PUT, DELETE)
+- Modificar: `app/api/cashflow/route.ts` (POST)
+
+**Interfaces:**
+- Produz: `podeEditarFechamento(id)`, `podeEditarCaixa(id)`, `podeEditarCustos(id)`.
+
+- [ ] **Passo 1: escrever o teste que falha**
+
+Acrescentar em `lib/identidade-da-chamada.test.ts`:
+
+```ts
+import { podeEditarFechamento, podeEditarCaixa, podeEditarCustos } from './identidade-da-chamada'
+
+const financeiro: Identidade = { area: 'dashboard', papel: 'financeiro', id: 'u6', email: 'a@b.c', terapeutaId: null }
+
+test('as regras de edicao copiam EXATAMENTE o que a tela ja faz hoje', () => {
+  // app/fechamentos/page.tsx:237 e app/caixa/page.tsx:55 -> canEdit = admin
+  assert.equal(podeEditarFechamento(adminDre), true)
+  assert.equal(podeEditarFechamento(socio), false)
+  assert.equal(podeEditarCaixa(adminDre), true)
+  assert.equal(podeEditarCaixa(socio), false)
+  assert.equal(podeEditarCaixa(financeiro), false, 'a tela do caixa so libera admin')
+
+  // app/dre/page.tsx:61 -> canEdit = admin || financeiro
+  assert.equal(podeEditarCustos(adminDre), true)
+  assert.equal(podeEditarCustos(financeiro), true)
+  assert.equal(podeEditarCustos(socio), false)
+})
+
+test('usuario do modulo de terapeutas nao edita dinheiro do DRE', () => {
+  // Sao duas areas separadas. Comercial nao mexe em fechamento da empresa.
+  assert.equal(podeEditarFechamento(comercial), false)
+  assert.equal(podeEditarCaixa(comercial), false)
+  assert.equal(podeEditarCustos(terapeuta(ID_DENISE)), false)
+})
+```
+
+- [ ] **Passo 2: rodar e ver falhar**
+
+Rodar: `npx tsx --test lib/identidade-da-chamada.test.ts`
+Esperado: FALHA, as três funções não existem.
+
+- [ ] **Passo 3: escrever as regras**
+
+Acrescentar em `lib/identidade-da-chamada.ts`:
+
+```ts
+/**
+ * As tres regras abaixo COPIAM o que as telas ja fazem, sem inventar nada:
+ *
+ *   app/fechamentos/page.tsx:237  canEdit = role === 'admin'
+ *   app/caixa/page.tsx:55         canEdit = role === 'admin'
+ *   app/dre/page.tsx:61           canEdit = role === 'admin' || 'financeiro'
+ *
+ * Todas exigem area `dashboard`: o DRE e o modulo de terapeutas sao sistemas
+ * separados, e comercial nao mexe em dinheiro da empresa.
+ */
+const ehDoDre = (id: Identidade) => id.area === 'dashboard'
+
+export function podeEditarFechamento(id: Identidade): boolean {
+  return ehDoDre(id) && id.papel === 'admin'
+}
+
+export function podeEditarCaixa(id: Identidade): boolean {
+  return ehDoDre(id) && id.papel === 'admin'
+}
+
+export function podeEditarCustos(id: Identidade): boolean {
+  return ehDoDre(id) && (id.papel === 'admin' || id.papel === 'financeiro')
+}
+```
+
+- [ ] **Passo 4: rodar e ver passar**
+
+Rodar: `npx tsx --test lib/identidade-da-chamada.test.ts`
+Esperado: PASSA.
+
+- [ ] **Passo 5: ligar nas quatro rotas**
+
+Em cada método de escrita, como primeira coisa dentro da função. Exemplo do
+`POST` de `app/api/closings/route.ts`:
+
+```ts
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeEditarFechamento(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para confirmar fechamento.' }, { status: 403 })
+  }
+```
+
+Trocando a função e a frase conforme a rota: `podeEditarCaixa` em
+`cashflow` POST ("lançar no caixa"), e `podeEditarCustos` em `costs`
+POST/PUT/DELETE ("alterar custos").
+
+**Conferir a assinatura de cada método antes:** se algum não receber `req`,
+acrescentar `req: NextRequest` como na Tarefa 11.
+
+- [ ] **Passo 6: acrescentar a prova**
+
+Em `scripts/provar-acesso.ts`, antes do `console.log` final:
+
+```ts
+  console.log('\n=== COM CRACHA DE SOCIO: le tudo, nao edita dinheiro ===')
+  const { data: soc } = await c.from('usuarios_dashboard')
+    .select('session_token').eq('role', 'socio').not('session_token', 'is', null).maybeSingle()
+  const crachaSocio = (soc as { session_token: string | null } | null)?.session_token
+  if (!crachaSocio) {
+    console.log('PULADO | o socio precisa ter entrado uma vez')
+  } else {
+    conferir('socio LE fechamentos', await status('/api/closings?projectId=proj_1', crachaSocio), 200)
+    conferir('socio NAO cria fechamento',
+      await status('/api/closings', crachaSocio, 'POST', '{}'), 403)
+    conferir('socio NAO lanca no caixa',
+      await status('/api/cashflow', crachaSocio, 'POST', '{}'), 403)
+    conferir('socio NAO apaga custo',
+      await status('/api/costs', crachaSocio, 'DELETE', '{}'), 403)
+  }
+```
+
+- [ ] **Passo 7: rodar tudo e commitar**
+
+```bash
+npx tsc --noEmit && npm test && npm run preflight
+git add lib/identidade-da-chamada.ts lib/identidade-da-chamada.test.ts app/api/closings/route.ts app/api/costs/route.ts app/api/cashflow/route.ts scripts/provar-acesso.ts
+git commit -m "fix: as rotas de dinheiro do DRE exigem quem pode editar"
+```
+
+---
+
+### Tarefa 13: a terapeuta só age nas próprias sessões
+
+**Achado na segunda passada da revisão.** A spec diz que a terapeuta fica no
+próprio `terapeuta_id` *"para ver e para agir"*. A Tarefa 9 resolveu o ver. O
+agir não tinha tarefa nenhuma: a Denise, com o crachá dela, ainda conseguiria
+remarcar ou concluir uma sessão do Pedro chamando a rota com o `sessao_id` dele.
+
+**Arquivos:**
+- Criar: `lib/sessao-do-terapeuta.ts`
+- Criar: `lib/sessao-do-terapeuta.test.ts`
+- Modificar: `app/api/terapeutas/sessoes/remarcar/route.ts`,
+  `app/api/terapeutas/sessoes/confirmar/route.ts`,
+  `app/api/terapeutas/sessoes/route.ts` (PATCH)
+
+**Interfaces:**
+- Produz: `podeAgirNaSessao(quem: Identidade, terapeutaIdDaSessao: string | null): boolean`.
+
+- [ ] **Passo 1: escrever o teste que falha**
+
+```ts
+// lib/sessao-do-terapeuta.test.ts
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { podeAgirNaSessao } from './sessao-do-terapeuta'
+import type { Identidade } from './identidade-da-chamada'
+
+const ID_DENISE = 'c3d598b0-2e43-4376-9492-9176169befe5'
+const ID_PEDRO = 'f5b18738-fe04-43e0-a6ac-d15768cf196c'
+
+const denise: Identidade = { area: 'sistema', papel: 'terapeuta', id: 'u1', email: 'd@x.com', terapeutaId: ID_DENISE }
+const comercial: Identidade = { area: 'sistema', papel: 'comercial', id: 'u2', email: 'c@x.com', terapeutaId: null }
+const adminSistema: Identidade = { area: 'sistema', papel: 'admin', id: 'u3', email: 'a@x.com', terapeutaId: null }
+const socio: Identidade = { area: 'dashboard', papel: 'socio', id: 'u5', email: 's@x.com', terapeutaId: null }
+
+test('a terapeuta age na PROPRIA sessao', () => {
+  assert.equal(podeAgirNaSessao(denise, ID_DENISE), true)
+})
+
+test('CRITICO: a terapeuta NAO age na sessao de outra', () => {
+  assert.equal(podeAgirNaSessao(denise, ID_PEDRO), false)
+})
+
+test('comercial e admin agem em qualquer sessao', () => {
+  // O comercial agenda e remarca para as duas: e o trabalho dele.
+  assert.equal(podeAgirNaSessao(comercial, ID_PEDRO), true)
+  assert.equal(podeAgirNaSessao(adminSistema, ID_DENISE), true)
+})
+
+test('o socio do DRE nao e restringido - fica como hoje', () => {
+  assert.equal(podeAgirNaSessao(socio, ID_PEDRO), true)
+})
+
+test('sessao sem terapeuta definido NAO e liberada para terapeuta', () => {
+  // Dado incompleto nao pode virar porta: na duvida, recusa.
+  assert.equal(podeAgirNaSessao(denise, null), false)
+  assert.equal(podeAgirNaSessao(comercial, null), true, 'para o comercial segue liberado')
+})
+```
+
+- [ ] **Passo 2: rodar e ver falhar**
+
+Rodar: `npx tsx --test lib/sessao-do-terapeuta.test.ts`
+Esperado: FALHA com "Cannot find module './sessao-do-terapeuta'".
+
+- [ ] **Passo 3: escrever a implementação**
+
+```ts
+// lib/sessao-do-terapeuta.ts
+import type { Identidade } from './identidade-da-chamada'
+
+/**
+ * Esta pessoa pode agir NESTA sessao?
+ *
+ * So restringe TERAPEUTA. Comercial e admin agendam e remarcam para as duas -
+ * e o trabalho deles - e o socio do DRE fica com o acesso de hoje, por decisao
+ * do usuario.
+ *
+ * Sessao sem `terapeuta_id` definido NAO libera terapeuta: dado incompleto nao
+ * pode virar porta.
+ */
+export function podeAgirNaSessao(quem: Identidade, terapeutaIdDaSessao: string | null): boolean {
+  if (quem.area !== 'sistema' || quem.papel !== 'terapeuta') return true
+  if (!quem.terapeutaId || !terapeutaIdDaSessao) return false
+  return quem.terapeutaId === terapeutaIdDaSessao
+}
+```
+
+- [ ] **Passo 4: rodar e ver passar**
+
+Rodar: `npx tsx --test lib/sessao-do-terapeuta.test.ts`
+Esperado: PASSA, 5 testes.
+
+- [ ] **Passo 5: ligar nas três rotas de ação**
+
+Em cada uma, depois de a rota já ter buscado a sessão no banco (todas buscam,
+para validar) e antes de qualquer escrita:
+
+```ts
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAgirNaSessao(quem, (sessao as { terapeuta_id: string | null }).terapeuta_id)) {
+    return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
+  }
+```
+
+**Conferir, em cada rota, que o `select` da sessão traz `terapeuta_id`.** Se não
+trouxer, acrescentar ao `select` - sem o campo, a guarda recebe `undefined` e
+recusa toda ação da terapeuta.
+
+- [ ] **Passo 6: provar rodando**
+
+Em `scripts/provar-acesso.ts`, antes do `console.log` final:
+
+```ts
+  console.log('\n=== COM CRACHA DE TERAPEUTA: nao age na sessao de outra ===')
+  if (!crachaDenise) {
+    console.log('PULADO | a Denise precisa ter entrado uma vez')
+  } else {
+    const { data: doPedro } = await c.from('sessoes')
+      .select('id,terapeuta_id').neq('terapeuta_id', (denise as { terapeuta_id: string }).terapeuta_id)
+      .limit(1).maybeSingle()
+    const idDoPedro = (doPedro as { id: string } | null)?.id
+    if (!idDoPedro) {
+      console.log('PULADO | nenhuma sessao de outro terapeuta no banco')
+    } else {
+      conferir('Denise NAO confirma sessao do Pedro',
+        await status('/api/terapeutas/sessoes/confirmar', crachaDenise, 'POST',
+          JSON.stringify({ sessao_id: idDoPedro })), 403)
+    }
+  }
+```
+
+**Esta prova não altera nada:** a recusa acontece antes de qualquer escrita. Se
+vier 200 em vez de 403, a guarda não está no lugar certo - **e nesse caso uma
+sessão real foi alterada**, o que precisa ser desfeito na hora.
+
+- [ ] **Passo 7: rodar tudo e commitar**
+
+```bash
+npx tsc --noEmit && npm test && npm run preflight && npm run build
+git add lib/sessao-do-terapeuta.ts lib/sessao-do-terapeuta.test.ts app/api/terapeutas/sessoes/remarcar/route.ts app/api/terapeutas/sessoes/confirmar/route.ts app/api/terapeutas/sessoes/route.ts scripts/provar-acesso.ts
+git commit -m "fix: a terapeuta so age nas proprias sessoes"
 ```
 
 ---
