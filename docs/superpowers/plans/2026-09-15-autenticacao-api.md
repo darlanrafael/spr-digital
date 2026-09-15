@@ -190,6 +190,15 @@ test('precisaRenovar so quando falta menos de 15 dias', () => {
   assert.equal(precisaRenovar(new Date(agora + 15 * DIA + 1000).toISOString(), agora), false, 'faltando mais de 15 dias, nao renova')
 })
 
+test('FRONTEIRA de renovacao: faltando EXATAMENTE 15 dias ainda NAO renova', () => {
+  // Trava a diferenca entre `<` e `<=` no limiar. Teste de mutacao de 15/09/2026
+  // mostrou que sem isto trocar `<` por `<=` passava despercebido - um dia a
+  // mais de escrita no banco por usuario, em silencio.
+  const agora = new Date('2026-09-16T12:00:00.000Z').getTime()
+  assert.equal(precisaRenovar(new Date(agora + 15 * DIA).toISOString(), agora), false, 'exatamente 15 dias: ainda nao')
+  assert.equal(precisaRenovar(new Date(agora + 15 * DIA - 1000).toISOString(), agora), true, 'um segundo abaixo de 15 dias: renova')
+})
+
 test('cracha ja vencido NAO pede renovacao - pede login', () => {
   const agora = new Date('2026-09-16T12:00:00.000Z').getTime()
   assert.equal(precisaRenovar(new Date(agora - DIA).toISOString(), agora), false)
