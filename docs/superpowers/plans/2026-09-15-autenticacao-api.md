@@ -463,7 +463,7 @@ test('anexa o cracha em chamada para /api/', async () => {
   assert.equal(vista!.get(CABECALHO_DO_CRACHA), 'abc123')
 })
 
-test('NAO anexa o cracha em endereco de FORA - o cracha nao pode vazar', () => {
+test('NAO anexa o cracha em endereco de FORA - o cracha nao pode vazar', async () => {
   // Uma chamada para outro site levaria a credencial junto.
   const testar = async (url: string) => {
     let vista: Headers | null = null
@@ -473,10 +473,13 @@ test('NAO anexa o cracha em endereco de FORA - o cracha nao pode vazar', () => {
     await fetchComCracha(falso as typeof fetch, () => 'abc123')(url)
     return vista!.get(CABECALHO_DO_CRACHA)
   }
-  return Promise.all([
-    testar('https://outro-site.com/api/x').then(v => assert.equal(v, null)),
-    testar('https://graph.facebook.com/v21.0/me').then(v => assert.equal(v, null)),
-  ])
+  // `await` num teste `async`, e NAO `return Promise.all`: o callback do
+  // node:test tem de devolver void|Promise<void>, e `return Promise.all([...])`
+  // devolve Promise<[void,void]>, que reprova no `tsc --noEmit` (portao de
+  // commit deste plano). Provado em 15/09/2026.
+  for (const url of ['https://outro-site.com/api/x', 'https://graph.facebook.com/v21.0/me']) {
+    assert.equal(await testar(url), null)
+  }
 })
 
 test('sem cracha guardado, a chamada sai igual a hoje', async () => {
@@ -520,7 +523,20 @@ test('aceita endereco como URL e como Request, nao so texto', async () => {
     vista = new Headers(init?.headers); return respostaVazia()
   }
   const f = fetchComCracha(falso as typeof fetch, () => 'abc')
-  await f(new URL('http://localhost:3000/api/x'))
+  // URL objeto com a MESMA origem que a funcao usa quando nao ha window
+  // (`http://localhost`). Fixar outra porta aqui testaria o ambiente, nao o
+  // embrulho. No navegador de verdade a origem e a window.location.origin.
+  await f(new URL('http://localhost/api/x'))
+  assert.equal(vista!.get(CABECALHO_DO_CRACHA), 'abc')
+})
+
+test('endereco absoluto do PROPRIO site tambem leva o cracha', async () => {
+  // Algumas das 55 chamadas podem ser absolutas. Com a mesma origem, entram.
+  let vista: Headers | null = null
+  const falso = async (_e: RequestInfo | URL, init?: RequestInit) => {
+    vista = new Headers(init?.headers); return respostaVazia()
+  }
+  await fetchComCracha(falso as typeof fetch, () => 'abc')('http://localhost/api/sales')
   assert.equal(vista!.get(CABECALHO_DO_CRACHA), 'abc')
 })
 ```
@@ -562,16 +578,27 @@ export function crachaGuardado(): string | null {
   return null
 }
 
-/** So chamada para o proprio sistema leva o cracha junto. */
+/**
+ * So chamada para /api/ do PROPRIO sistema leva o cracha junto.
+ *
+ * Resolve tanto endereco relativo (`/api/x`) quanto absoluto do proprio site
+ * (`http://localhost:3000/api/x`) e objeto URL, contra a origem do site. Um
+ * endereco de fora (Facebook, outro dominio) fica de fora: o cracha e
+ * credencial e nao pode vazar para terceiro.
+ *
+ * A origem vem de `window.location.origin` no navegador; em teste (sem window)
+ * usa uma origem local, e por isso a deteccao NAO depende de `window` existir -
+ * a primeira versao dependia, e o teste de URL absoluta falhava com o cracha
+ * nao anexado. Provado em 15/09/2026.
+ */
 function ehChamadaDaCasa(entrada: RequestInfo | URL): boolean {
   const url = typeof entrada === 'string' ? entrada
     : entrada instanceof URL ? entrada.href
     : entrada.url
-  if (url.startsWith('/api/')) return true
-  if (typeof window === 'undefined') return false
+  const origem = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
   try {
-    return new URL(url, window.location.origin).origin === window.location.origin
-      && new URL(url, window.location.origin).pathname.startsWith('/api/')
+    const u = new URL(url, origem)
+    return u.origin === origem && u.pathname.startsWith('/api/')
   } catch { return false }
 }
 
@@ -1576,7 +1603,14 @@ test('semDivisaoDeSocios tira os valores e mantem o resto do fechamento', () => 
 })
 
 test('semDivisaoDeSocios nao quebra com fechamento sem socios', () => {
-  assert.deepEqual(semDivisaoDeSocios([{ id: 'x' }]), [{ id: 'x', socios: [] }])
+  // `socios: undefined` e nao `{ id: 'x' }` puro: o generico e
+  // `T extends { socios?: unknown[] }`, e no modo estrito um objeto sem a chave
+  // `socios` nao casa com o tipo - reprova no `tsc --noEmit`, que e portao de
+  // commit. Com a chave presente (mesmo undefined), casa. Provado em 15/09/2026.
+  assert.deepEqual(
+    semDivisaoDeSocios([{ id: 'x', socios: undefined }]),
+    [{ id: 'x', socios: [] }],
+  )
 })
 
 test('semDivisaoDeSocios NAO altera o original', () => {
