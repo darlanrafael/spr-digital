@@ -19,8 +19,15 @@ export function brasiliaLocalToISO(datetimeLocal: string): string {
 // Verifica se uma data cai no dia de hoje em Brasília (UTC-3, fixo) — usado
 // pra detectar "venda de encaixe" (sessão marcada pro mesmo dia, sem tempo
 // do fluxo normal de véspera pegar).
-export function isHojeBrasilia(dataISO: string): boolean {
-  const hojeBR = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
+//
+// `agoraMs` existe SO para o teste poder fixar o instante, e por isso tem valor
+// padrao - nenhum chamador passa. Sem ele o defeito de sinal no lado do "hoje"
+// era indetectavel: com o relogio parado num unico instante, somar ou subtrair
+// tres horas cai no MESMO dia em 18 das 24 horas. O teste de mutacao de
+// 15/09/2026 pegou isso - o mutante sobrevivia mesmo depois de eu ter reescrito
+// o teste para varrer 97 horas, porque as 97 horas eram todas do lado do ALVO.
+export function isHojeBrasilia(dataISO: string, agoraMs: number = Date.now()): boolean {
+  const hojeBR = new Date(agoraMs - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const dataBR = new Date(new Date(dataISO).getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
   return hojeBR === dataBR
 }

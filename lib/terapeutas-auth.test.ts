@@ -184,3 +184,33 @@ test('o reembolso nunca passa do que o paciente pagou', () => {
     assert.ok(r.valor_reembolso >= 0, `${feitas} sessoes devolveu valor negativo`)
   }
 })
+
+test('isHojeBrasilia: o lado do HOJE tambem usa Brasilia, nao UTC', () => {
+  // O teste acima varre 97 horas, mas todas do lado do ALVO - com o relogio
+  // parado, um sinal trocado no lado do "hoje" cai no mesmo dia em 18 das 24
+  // horas e passa despercebido. Aqui o instante e FIXADO no unico trecho do dia
+  // em que os dois sinais discordam: entre 21h e 00h de Brasilia, onde o dia
+  // BRT e o dia UTC ja sao diferentes.
+  //
+  // 2026-09-16T01:30:00Z = 15/09 as 22:30 em Brasilia.
+  const agora = new Date('2026-09-16T01:30:00.000Z').getTime()
+
+  // Uma hora antes: 15/09 21:30 BRT, o MESMO dia em Brasilia.
+  assert.equal(isHojeBrasilia('2026-09-16T00:30:00.000Z', agora), true, '21:30 BRT do mesmo dia e hoje')
+
+  // Tres horas depois: 16/09 01:30 BRT, o dia SEGUINTE em Brasilia.
+  assert.equal(isHojeBrasilia('2026-09-16T04:30:00.000Z', agora), false, 'ja passou da meia-noite em Brasilia')
+
+  // A armadilha: 16/09 00:30 UTC e ainda 15/09 em Brasilia. Quem comparar em
+  // UTC dos dois lados erra este.
+  assert.equal(isHojeBrasilia('2026-09-16T02:59:59.000Z', agora), true, '23:59 BRT ainda e hoje')
+  assert.equal(isHojeBrasilia('2026-09-16T03:00:01.000Z', agora), false, '00:00 BRT ja e amanha')
+})
+
+test('CASO REAL: venda de encaixe as 22h nao pode ser lida como amanha', () => {
+  // E o motivo de a funcao existir: sessao marcada para o MESMO dia, sem tempo
+  // do lembrete de vespera pegar. Lida como "amanha", o paciente fica sem
+  // aviso nenhum.
+  const agora = new Date('2026-09-16T01:00:00.000Z').getTime()  // 15/09 22:00 BRT
+  assert.equal(isHojeBrasilia('2026-09-16T01:45:00.000Z', agora), true, 'sessao as 22:45 do mesmo dia')
+})
