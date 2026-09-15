@@ -2046,35 +2046,139 @@ git commit -m "fix: a terapeuta so age nas proprias sessoes"
 
 ---
 
-## EM ABERTO - decisão que o plano NÃO toma sozinho
+### Tarefa 14: terapeuta não faz fechamento financeiro nem confirma nada
 
-**Achado no sexto ângulo da revisão.** Depois das 15 tarefas, estas cinco rotas
-passam a exigir **crachá**, mas nenhuma regra de papel:
+**DECISÃO DO USUÁRIO, 15/09/2026:** *"A denise nao pode fazer fechamento
+financeiro e nem confirmar nada."*
 
-| rota | o que faz | quem consegue, depois do plano |
-|---|---|---|
-| `PATCH /api/sales` | altera venda | qualquer pessoa logada, inclusive terapeuta |
-| `POST /api/sales/converter-moeda` | converte venda em moeda estrangeira | idem |
-| `POST /api/terapeutas/fechamentos` | confirma o pagamento da terapeuta | idem |
-| `PATCH /api/terapeutas/aprovacoes` | aprova e rejeita reembolso | hoje já exige senha |
-| `PATCH /api/terapeutas/aprovacoes/lancamento-manual` e `.../edicao-paciente` | aprova lançamento e troca de paciente | hoje aceitam o crachá |
+Sem esta tarefa, a Denise - logada, com o crachá dela - confirmaria o próprio
+pagamento chamando `POST /api/terapeutas/fechamentos`. A tela de Fechamentos já
+não aparece no menu dela (`components/Header.tsx:142`, só `role === 'admin'`),
+mas a rota aceita a chamada.
 
-Ou seja: a Denise, logada, conseguiria confirmar o próprio pagamento chamando
-`POST /api/terapeutas/fechamentos`.
+**O que ela CONTINUA fazendo, e não pode ser tocado:**
+- o painel dela, a agenda dela e as sessões dela;
+- marcar sessão como entregue, que a tela faz por `PATCH /api/terapeutas/sessoes`
+  (`app/terapeutas/[id]/page.tsx:1228`) - **não** é a rota de fechamento;
+- ver o histórico de pagamento dela, que é a aba "Fechamentos" dentro da página
+  dela, só de leitura.
 
-**Por que o plano não resolve isso sozinho:** a spec não define a regra destas
-cinco, e inventá-la seria decidir no lugar do usuário. Há uma regra escrita em
-`lib/terapeutas-auth.ts` que aponta o caminho:
+**Arquivos:**
+- Modificar: `lib/identidade-da-chamada.ts` e `lib/identidade-da-chamada.test.ts`
+- Modificar: `app/api/terapeutas/fechamentos/route.ts` (POST)
+- Modificar: `app/api/sales/route.ts` (PATCH)
+- Modificar: `app/api/sales/converter-moeda/route.ts` (POST)
+- Modificar: `app/api/terapeutas/aprovacoes/route.ts`,
+  `app/api/terapeutas/aprovacoes/lancamento-manual/route.ts`,
+  `app/api/terapeutas/aprovacoes/edicao-paciente/route.ts` (PATCH de cada uma)
 
-> *"os endpoints que mexem em dinheiro NÃO usam `verificarAcesso` - continuam
-> chamando `verificarSenhaUsuario` direto. É de propósito: assim é impossível um
-> token virar credencial financeira por descuido numa refatoração futura."*
+**Interfaces:**
+- Produz: `podeDecidirDinheiro(id: Identidade): boolean`.
 
-**Recomendação:** as cinco exigem senha na hora, e só de `tipo='admin'`. Custo
-para o usuário: passa a digitar senha ao aprovar lançamento manual e troca de
-dados de paciente, que hoje passam com o crachá.
+- [ ] **Passo 1: escrever o teste que falha**
 
-**Isto precisa da decisão dele antes de virar tarefa.**
+Acrescentar em `lib/identidade-da-chamada.test.ts`:
+
+```ts
+import { podeDecidirDinheiro } from './identidade-da-chamada'
+
+test('DECISAO DO USUARIO: terapeuta nao decide nada de dinheiro', () => {
+  // "A denise nao pode fazer fechamento financeiro e nem confirmar nada."
+  assert.equal(podeDecidirDinheiro(terapeuta(ID_DENISE)), false)
+})
+
+test('comercial tambem nao decide dinheiro', () => {
+  // Ele PEDE (lancamento manual, troca de paciente); quem decide e o CEO.
+  assert.equal(podeDecidirDinheiro(comercial), false)
+})
+
+test('so admin decide dinheiro, nas duas areas', () => {
+  assert.equal(podeDecidirDinheiro(adminSistema), true)
+  assert.equal(podeDecidirDinheiro(adminDre), true)
+})
+
+test('o socio NAO decide dinheiro - ele ja nao edita fechamento hoje', () => {
+  assert.equal(podeDecidirDinheiro(socio), false)
+})
+```
+
+- [ ] **Passo 2: rodar e ver falhar**
+
+Rodar: `npx tsx --test lib/identidade-da-chamada.test.ts`
+Esperado: FALHA, `podeDecidirDinheiro` não existe.
+
+- [ ] **Passo 3: escrever a regra**
+
+Acrescentar em `lib/identidade-da-chamada.ts`:
+
+```ts
+/**
+ * Decide dinheiro: confirmar pagamento de terapeuta, alterar venda, converter
+ * moeda, aprovar reembolso, aprovar lancamento manual, aprovar troca de
+ * paciente.
+ *
+ * Decisao do usuario em 15/09/2026: *"A denise nao pode fazer fechamento
+ * financeiro e nem confirmar nada."* Terapeuta e comercial ficam de fora; o
+ * comercial PEDE, e quem decide e o CEO.
+ *
+ * Isto NAO afeta marcar sessao como entregue, que e outra rota
+ * (`PATCH /api/terapeutas/sessoes`) e continua sendo trabalho dela.
+ */
+export function podeDecidirDinheiro(id: Identidade): boolean {
+  return id.papel === 'admin'
+}
+```
+
+- [ ] **Passo 4: rodar e ver passar**
+
+Rodar: `npx tsx --test lib/identidade-da-chamada.test.ts`
+Esperado: PASSA.
+
+- [ ] **Passo 5: ligar nas seis rotas**
+
+Em cada método listado nos arquivos acima, como primeira coisa dentro da função:
+
+```ts
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeDecidirDinheiro(quem)) {
+    return NextResponse.json({ error: 'Só um administrador pode fazer isso.' }, { status: 403 })
+  }
+```
+
+**Conferir a assinatura de cada método antes:** se algum não receber `req`,
+acrescentar `req: NextRequest`.
+
+**Não tocar** em `app/api/terapeutas/sessoes/route.ts` (PATCH) nem nas rotas de
+agenda: é o trabalho diário dela.
+
+- [ ] **Passo 6: provar rodando**
+
+Em `scripts/provar-acesso.ts`, antes do `console.log` final:
+
+```ts
+  console.log('\n=== COM CRACHA DE TERAPEUTA: nao decide dinheiro ===')
+  if (!crachaDenise) {
+    pular('Denise nao decide dinheiro', 'a Denise precisa ter entrado uma vez')
+  } else {
+    conferir('Denise NAO confirma fechamento dela',
+      await status('/api/terapeutas/fechamentos', crachaDenise, 'POST', '{}'), 403)
+    conferir('Denise NAO altera venda',
+      await status('/api/sales', crachaDenise, 'PATCH', '{}'), 403)
+    conferir('Denise NAO aprova reembolso',
+      await status('/api/terapeutas/aprovacoes', crachaDenise, 'PATCH', '{}'), 403)
+    conferir('mas CONTINUA vendo o historico dela',
+      await status('/api/terapeutas/fechamentos?terapeutaId=' + (denise as { terapeuta_id: string }).terapeuta_id, crachaDenise), 200)
+  }
+```
+
+- [ ] **Passo 7: rodar tudo e commitar**
+
+```bash
+npx tsc --noEmit && npm test && npm run preflight && npm run build
+git add lib/identidade-da-chamada.ts lib/identidade-da-chamada.test.ts app/api/terapeutas/fechamentos/route.ts app/api/sales/route.ts app/api/sales/converter-moeda/route.ts app/api/terapeutas/aprovacoes/route.ts app/api/terapeutas/aprovacoes/lancamento-manual/route.ts app/api/terapeutas/aprovacoes/edicao-paciente/route.ts scripts/provar-acesso.ts
+git commit -m "fix: terapeuta nao faz fechamento financeiro nem confirma nada"
+```
 
 ---
 
