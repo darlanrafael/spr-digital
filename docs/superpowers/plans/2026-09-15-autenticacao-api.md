@@ -15,8 +15,8 @@ chamada, por um embrulho único em cima do `fetch`. Um `middleware.ts` confere o
 crachá antes de qualquer rota de API e entrega a identidade para a rota. As
 regras de quem pode o quê ficam em um módulo puro, com teste próprio.
 
-**Base:** spec aprovada em
-`docs/superpowers/specs/2026-09-15-autenticacao-api-design.md`.
+**Spec:** `docs/superpowers/specs/2026-09-15-autenticacao-api-design.md`
+(spec aprovada; a autoridade que resolve qualquer conflito deste plano).
 
 **Stack:** Next.js 16.2.7, React 19, TypeScript, Supabase, testes com
 `node:test` via `tsx --test lib/*.test.ts`.
