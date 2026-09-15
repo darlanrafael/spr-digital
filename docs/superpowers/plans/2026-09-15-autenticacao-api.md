@@ -44,7 +44,15 @@ Valem para TODAS as tarefas.
    têm de passar.
 7. **Nada de `git add -A` com o teste de mutação rodando.** O gancho de
    pré-commit recusa; não force.
-8. **Rodar local NÃO isola os dados.** O `.env.local` aponta para o Supabase de
+8. **Nunca publicar a fase 3 antes de a fase 2 estar no ar.** A ordem é a
+   proteção: se as rotas passarem a exigir antes de as telas mandarem, todo mundo
+   fica de fora ao mesmo tempo. Conferir na Vercel que o deploy da fase 2 está
+   ativo antes de publicar a 3.
+9. **Um crachá por pessoa: entrar num segundo aparelho derruba o primeiro.** A
+   coluna é uma só. É como o módulo de terapeutas já funciona hoje (Pedro), mas
+   para quem usa o DRE é mudança de comportamento: entrar no celular desconecta
+   o computador. **Avisar o usuário antes de publicar a fase 3.**
+10. **Rodar local NÃO isola os dados.** O `.env.local` aponta para o Supabase de
    PRODUÇÃO. Ler local é ler o banco real; escrever local é escrever no banco
    real. Por isso as provas de rota de escrita mandam corpo inválido de
    propósito: a rota recusa na validação e nada é gravado. **Nenhum passo deste
@@ -693,6 +701,16 @@ frase que explica. Sem isto, o 401 vira "erro" genérico no meio da tela.
 Acrescentar em `lib/cracha-no-fetch.test.ts`:
 
 ```ts
+test('CRITICO: 401 de SENHA ERRADA nao desloga a pessoa', () => {
+  // Cinco rotas devolvem 401 para senha errada. Se isto disparasse o logout,
+  // um erro de digitacao tiraria a pessoa do sistema. So o 401 do middleware
+  // manda `motivo` - e so ele conta.
+  let chamou = false
+  const falso = async () => new Response(JSON.stringify({ error: 'Senha incorreta' }), { status: 401 })
+  return fetchComCracha(falso as unknown as typeof fetch, () => 'abc', () => { chamou = true })('/api/terapeutas/sessoes')
+    .then(() => assert.equal(chamou, false, '401 sem `motivo` nao e sessao perdida'))
+})
+
 test('resposta 401 avisa que a sessao acabou', async () => {
   // Quem esta logado desde ANTES do cracha existir cai exatamente aqui: sem
   // este aviso, a tela mostra "erro" e a pessoa nao sabe que e so entrar de novo.
@@ -743,13 +761,20 @@ export function fetchComCracha(
     if (cracha) cabecalhos.set(CABECALHO_DO_CRACHA, cracha)
     const r = await fetchOriginal(entrada, { ...init, headers: cabecalhos })
 
-    // 401 do PROPRIO sistema significa sessao perdida. Quem estava logado desde
-    // antes do cracha existir cai aqui, e precisa ser mandado para o login com
-    // uma frase que explique - nao para uma tela de erro generica.
+    // 401 do middleware significa sessao perdida. Quem estava logado desde antes
+    // do cracha existir cai aqui, e precisa ser mandado para o login com uma
+    // frase que explique - nao para uma tela de erro generica.
+    //
+    // MAS SO O DO MIDDLEWARE. Verificado em 15/09/2026: CINCO rotas devolvem 401
+    // para SENHA ERRADA (`verificarSenhaUsuario`). Se qualquer 401 disparasse
+    // isto, errar a senha numa acao apagaria a sessao e jogaria a pessoa para
+    // fora do sistema inteiro - um erro de digitacao virando logout.
+    //
+    // O que separa os dois: so o middleware manda o campo `motivo`.
     if (r.status === 401 && aoPerderSessao) {
-      let motivo = 'sem_cracha'
-      try { motivo = ((await r.clone().json()) as { motivo?: string }).motivo ?? motivo } catch { /* sem corpo */ }
-      aoPerderSessao(motivo)
+      let motivo: string | null = null
+      try { motivo = ((await r.clone().json()) as { motivo?: string }).motivo ?? null } catch { /* sem corpo */ }
+      if (motivo) aoPerderSessao(motivo)
     }
     return r
   }
@@ -792,6 +817,11 @@ Em `app/login/page.tsx` e `app/terapeutas/login/page.tsx`, quando a URL tiver
 ```
 
 - [ ] **Passo 5: provar rodando, simulando a sessão antiga**
+
+**Esta prova só roda DEPOIS da Tarefa 6.** O código desta tarefa vem antes
+porque o middleware não pode entrar sem ele - mas sem middleware não existe 401
+para provar. Ao chegar aqui: marcar o passo como pendente, seguir para a
+Tarefa 6, e voltar.
 
 Com o `npm run dev` rodando e o middleware já no lugar (Tarefa 6), no navegador:
 
@@ -1129,10 +1159,23 @@ const BASE = process.env.BASE_DA_PROVA ?? 'http://localhost:3000'
 const CABECALHO = 'x-spr-cracha'
 
 let falhas = 0
+let pulados = 0
+
 function conferir(nome: string, obtido: unknown, esperado: unknown) {
   const ok = obtido === esperado
   if (!ok) falhas++
   console.log(`${ok ? 'OK  ' : 'FALHA'} | ${nome} | esperado ${esperado}, obtido ${obtido}`)
+}
+
+/**
+ * Prova que nao pode rodar agora.
+ *
+ * Contada de proposito: sem isto, a saida diria "TUDO PROVADO" tendo pulado
+ * justamente a prova que importa, e o `exit 0` viraria um selo falso.
+ */
+function pular(nome: string, porque: string) {
+  pulados++
+  console.log(`PULADO | ${nome} | ${porque}`)
 }
 
 async function status(caminho: string, cracha?: string, metodo = 'GET', corpo?: string): Promise<number> {
@@ -1173,7 +1216,7 @@ async function main() {
     .ilike('nome', '%denise%').maybeSingle()
   const crachaDenise = (denise as { session_token: string | null } | null)?.session_token
   if (!crachaDenise) {
-    console.log('PULADO | a Denise precisa ter entrado uma vez para existir cracha dela')
+    pular('dashboard com cracha da Denise', 'a Denise precisa ter entrado uma vez')
   } else {
     const r = await fetch(`${BASE}/api/terapeutas/dashboard?datePreset=all&terapeutaId=all`,
       { headers: { [CABECALHO]: crachaDenise } })
@@ -1184,8 +1227,17 @@ async function main() {
     conferir('e o nome e o dela', (nomes[0] ?? '').toLowerCase().includes('denise'), true)
   }
 
-  console.log(`\n${falhas === 0 ? 'TUDO PROVADO' : `${falhas} FALHA(S)`}\n`)
-  process.exit(falhas === 0 ? 0 : 1)
+  if (falhas > 0) {
+    console.log(`\n${falhas} FALHA(S)\n`)
+    process.exit(1)
+  }
+  if (pulados > 0) {
+    console.log(`\nNADA FALHOU, MAS ${pulados} PROVA(S) FORAM PULADAS - isto NAO e "tudo provado".`)
+    console.log('Resolva o que falta (em geral: a pessoa precisa ter entrado uma vez) e rode de novo.\n')
+    process.exit(2)
+  }
+  console.log('\nTUDO PROVADO\n')
+  process.exit(0)
 }
 main()
 ```
@@ -1666,7 +1718,7 @@ Antes do `console.log` final:
     .not('session_token', 'is', null).limit(1).maybeSingle()
   const crachaComercial = (com as { session_token: string | null } | null)?.session_token
   if (!crachaComercial) {
-    console.log('PULADO | nenhum comercial entrou ainda, entao nao ha cracha para provar')
+    pular('administracao com cracha de comercial', 'nenhum comercial entrou ainda')
   } else {
     conferir('POST admin/usuarios com cracha de comercial',
       await status('/api/terapeutas/admin/usuarios', crachaComercial, 'POST', '{}'), 403)
@@ -1826,7 +1878,7 @@ Em `scripts/provar-acesso.ts`, antes do `console.log` final:
     .select('session_token').eq('role', 'socio').not('session_token', 'is', null).maybeSingle()
   const crachaSocio = (soc as { session_token: string | null } | null)?.session_token
   if (!crachaSocio) {
-    console.log('PULADO | o socio precisa ter entrado uma vez')
+    pular('socio le mas nao edita', 'o socio precisa ter entrado uma vez')
   } else {
     conferir('socio LE fechamentos', await status('/api/closings?projectId=proj_1', crachaSocio), 200)
     conferir('socio NAO cria fechamento',
@@ -1964,14 +2016,14 @@ Em `scripts/provar-acesso.ts`, antes do `console.log` final:
 ```ts
   console.log('\n=== COM CRACHA DE TERAPEUTA: nao age na sessao de outra ===')
   if (!crachaDenise) {
-    console.log('PULADO | a Denise precisa ter entrado uma vez')
+    pular('Denise nao age em sessao do Pedro', 'a Denise precisa ter entrado uma vez')
   } else {
     const { data: doPedro } = await c.from('sessoes')
       .select('id,terapeuta_id').neq('terapeuta_id', (denise as { terapeuta_id: string }).terapeuta_id)
       .limit(1).maybeSingle()
     const idDoPedro = (doPedro as { id: string } | null)?.id
     if (!idDoPedro) {
-      console.log('PULADO | nenhuma sessao de outro terapeuta no banco')
+      pular('Denise nao age em sessao do Pedro', 'nenhuma sessao de outro terapeuta no banco')
     } else {
       conferir('Denise NAO confirma sessao do Pedro',
         await status('/api/terapeutas/sessoes/confirmar', crachaDenise, 'POST',
@@ -1991,6 +2043,38 @@ npx tsc --noEmit && npm test && npm run preflight && npm run build
 git add lib/sessao-do-terapeuta.ts lib/sessao-do-terapeuta.test.ts app/api/terapeutas/sessoes/remarcar/route.ts app/api/terapeutas/sessoes/confirmar/route.ts app/api/terapeutas/sessoes/route.ts scripts/provar-acesso.ts
 git commit -m "fix: a terapeuta so age nas proprias sessoes"
 ```
+
+---
+
+## EM ABERTO - decisão que o plano NÃO toma sozinho
+
+**Achado no sexto ângulo da revisão.** Depois das 15 tarefas, estas cinco rotas
+passam a exigir **crachá**, mas nenhuma regra de papel:
+
+| rota | o que faz | quem consegue, depois do plano |
+|---|---|---|
+| `PATCH /api/sales` | altera venda | qualquer pessoa logada, inclusive terapeuta |
+| `POST /api/sales/converter-moeda` | converte venda em moeda estrangeira | idem |
+| `POST /api/terapeutas/fechamentos` | confirma o pagamento da terapeuta | idem |
+| `PATCH /api/terapeutas/aprovacoes` | aprova e rejeita reembolso | hoje já exige senha |
+| `PATCH /api/terapeutas/aprovacoes/lancamento-manual` e `.../edicao-paciente` | aprova lançamento e troca de paciente | hoje aceitam o crachá |
+
+Ou seja: a Denise, logada, conseguiria confirmar o próprio pagamento chamando
+`POST /api/terapeutas/fechamentos`.
+
+**Por que o plano não resolve isso sozinho:** a spec não define a regra destas
+cinco, e inventá-la seria decidir no lugar do usuário. Há uma regra escrita em
+`lib/terapeutas-auth.ts` que aponta o caminho:
+
+> *"os endpoints que mexem em dinheiro NÃO usam `verificarAcesso` - continuam
+> chamando `verificarSenhaUsuario` direto. É de propósito: assim é impossível um
+> token virar credencial financeira por descuido numa refatoração futura."*
+
+**Recomendação:** as cinco exigem senha na hora, e só de `tipo='admin'`. Custo
+para o usuário: passa a digitar senha ao aprovar lançamento manual e troca de
+dados de paciente, que hoje passam com o crachá.
+
+**Isto precisa da decisão dele antes de virar tarefa.**
 
 ---
 
