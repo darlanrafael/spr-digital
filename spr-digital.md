@@ -4635,3 +4635,91 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     A troca de `>=` por `>` em `calcularReembolso` sobrevive mesmo com teste escrito para ela. Investigado: e **mutante equivalente**. Com 4 de 4 sessoes feitas, o caminho proporcional chega ao mesmo zero por outra conta. **Nao ha defeito para pegar ali.**
 
+
+---
+
+79. **15/09/2026 - EU COMMITEI UM MUTANTE. Como aconteceu, o que faria, e a trava que fecha o caminho.** Commit da correcao: `2d5bb56`.
+
+    ## 79.1. O que foi parar no repositorio
+
+    O commit `f230681` era **de documentacao** - so o MD deveria estar nele. Levou junto `lib/pacote-de-vendas.ts` com uma linha trocada:
+
+    ```ts
+    if (o.id === venda.id) return true    // <- o mutante
+    if (o.id === venda.id) return false   // <- o certo, desde cbea8b1
+    ```
+
+    ## 79.2. Foram DOIS erros meus, em sequencia
+
+    1. **Rodei `git add -A` enquanto um lote de mutacao estava no meio desse arquivo.** O motor mutou o arquivo para medir, e o `add -A` levou o defeito junto com o MD.
+    2. **Depois, li o diff ao contrario.** O motor tinha restaurado o arquivo corretamente; como o HEAD agora tinha o mutante, o `git status` mostrava a restauracao como "modificacao". Rodei `git checkout --` para "limpar" e **apaguei a versao certa, gravando o mutante de vez**.
+
+    ## 79.3. O que o defeito faria se tivesse ido ao ar
+
+    Em `app/terapeutas/vendas/page.tsx`, a venda a agendar sai de `[...vendas_pendentes, ...vendas_ativos].find(...)` - e **a MESMA lista vai inteira como `outras`** para `candidataAoMesmoPacote`. Ou seja: **a venda esta sempre dentro da propria lista de candidatas**.
+
+    Com `return true`, ela e aceita. E a distancia dela para ela mesma e **ZERO**, entao ela vence a ordenacao por proximidade e:
+
+    - vira a propria candidata a formar pacote consigo mesma
+    - e, pior, **ESCONDE a irma de verdade**, que nunca chega a aparecer
+
+    **Consequencia em producao:** um pacote de 8 sessoes pago em duas compras seria agendado como **4**. O paciente perderia metade do que comprou.
+
+    ## 79.4. Nao chegou em producao
+
+    `origin/main` estava em `c9d86e9`, antes dos dois commits locais. Conferido commit a commit: **nenhum outro arquivo foi afetado**.
+
+    ## 79.5. A TRAVA
+
+    O motor sempre escreveu um arquivo-marcador `.mutacao-em-andamento` enquanto trabalha. **Faltava alguem olhar para ele na hora do commit.**
+
+    Agora `scripts/mutacao.ts` instala um gancho de pre-commit que **RECUSA o commit** enquanto o marcador existir. `.git/hooks/` nao e versionado, entao o gancho e reinstalado a cada rodada do motor - assim ele existe em qualquer clone que ja tenha medido alguma coisa.
+
+    ## 79.6. A licao, que vale para alem deste caso
+
+    **`git add -A` nao sabe o que voce estava fazendo.** Qualquer ferramenta que altere arquivos para trabalhar - mutacao, formatador, gerador de codigo - precisa de uma trava na hora do commit, nao so de um aviso no terminal.
+
+    E a segunda parte, que e a mais desconfortavel: **eu li um diff ao contrario e agi em cima da leitura errada**. O `git status` limpo depois do `checkout` me deu a sensacao de ter resolvido, quando eu tinha acabado de plantar o defeito. **Antes de descartar uma mudanca que voce nao lembra de ter feito, descubra de onde ela veio** - `git log -S` responde isso em um comando, e foi o que acabou revelando tudo.
+
+    ## 79.7. Os testes que agora travam a linha
+
+    Tres, reproduzindo **o que a tela faz de fato**, com a propria venda dentro de `outras`:
+
+    - a propria venda nunca e candidata a formar pacote consigo mesma
+    - com a propria venda na lista, **a irma de verdade ainda e encontrada**
+    - a ordem da lista nao muda o resultado (`[a, irma]` e `[irma, a]` dao o mesmo)
+
+    ---
+
+80. **15/09/2026 - a API NAO TEM AUTENTICACAO DE VERDADE. Achado estrutural, ainda NAO corrigido.**
+
+    ## 80.1. O que a auditoria mostrou
+
+    Varrendo as 35 rotas por angulos que nenhum teste cobre, tres apareceram usando a **chave de acesso total** (service role) sem guarda. Duas delas tem, sim, uma checagem - `usuario_email` conferido contra `usuarios_sistema`. Mas:
+
+    **O `usuario_email` vem do proprio navegador, e na tela de aprovacoes ele esta FIXO no codigo:**
+
+    ```ts
+    const [adminEmail, setAdminEmail] = useState('rafael@spr.com')
+    ```
+
+    Qualquer pessoa que saiba o endereco da rota manda esse mesmo texto e passa. **E obstaculo, nao tranca** - e o comentario da propria rota ja dizia isso ("Nao e autenticacao de verdade").
+
+    ## 80.2. A rota que nao tem nem o obstaculo
+
+    `app/api/terapeutas/dashboard/route.ts` **nao verifica nada**. Aceita `terapeutaId=all` e devolve, sem credencial nenhuma: **nome e e-mail de paciente, valor de comissao, faturamento por terapeuta**.
+
+    ## 80.3. Por que isso existe
+
+    Nao ha `middleware.ts` no projeto. O login (`usuarios_dashboard`, senha com hash conferida no servidor) protege **a tela**, guardando a sessao no `localStorage` - mas **nenhuma rota de API confere sessao**. Quem chamar a rota direto pula o login inteiro.
+
+    ## 80.4. Mais um ponto, no login antigo
+
+    `lib/auth.ts` le a senha de `NEXT_PUBLIC_USER2_PASSWORD`. **Variavel com prefixo `NEXT_PUBLIC_` e embutida no JavaScript enviado ao navegador** - ou seja, essa senha viaja para qualquer visitante. O arquivo ainda tem `'spr2026'` como valor padrao, no proprio codigo.
+
+    ## 80.5. Por que NAO corrigi sozinho
+
+    Colocar a mesma checagem de e-mail na rota do dashboard **daria sensacao de seguranca sem entregar nenhuma** - e ainda exigiria mexer em 4 pontos da tela. A correcao de verdade e um `middleware.ts` conferindo sessao assinada em toda rota de API, o que muda o login e todas as telas.
+
+    **E decisao do usuario**, e esta aqui para ele decidir.
+

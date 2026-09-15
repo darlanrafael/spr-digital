@@ -38,6 +38,35 @@ export function verificarSecretCron(req: Request): boolean {
   return !!secret && !!process.env.WHATSAPP_CRON_SECRET && secret === process.env.WHATSAPP_CRON_SECRET
 }
 
+/**
+ * A venda entra nos lembretes automáticos?
+ *
+ * Sessões de vendas anteriores ao corte configurado pro terapeuta
+ * (`vendas_a_partir_de` — dado retroativo, lançado em massa) não entram: é a
+ * mesma regra do resto do sistema (Agenda/Consultas). Sem ela, a automação
+ * manda mensagem REAL sobre paciente que nem deveria aparecer aqui.
+ *
+ * Estava embutida dentro de `buscarPendentes`, que precisa de banco para rodar,
+ * e por isso nenhum teste a alcançava. O teste de mutação de 15/09/2026 mostrou
+ * o módulo inteiro sem teste nenhum — e é o módulo do disparo que falhou em
+ * produção na noite de 13 para 14/09.
+ *
+ * Os dois `return true` são deliberados: SEM corte configurado, ou SEM data de
+ * venda conhecida, a venda entra. A automação existe para avisar; deixar de
+ * avisar por falta de configuração seria pior que avisar demais, e o corte é
+ * opcional por decisão do usuário.
+ */
+export function vendaEntraNoLembrete(params: {
+  corteDoTerapeuta: string | null | undefined
+  dataHoraDaVenda: string | null | undefined
+}): boolean {
+  if (!params.corteDoTerapeuta) return true
+  if (!params.dataHoraDaVenda) return true
+  // `>=` e não `>`: venda feita EXATAMENTE no instante do corte está dentro.
+  // O corte é "vendas a partir de", e a partir de inclui o próprio instante.
+  return new Date(params.dataHoraDaVenda).getTime() >= new Date(params.corteDoTerapeuta).getTime()
+}
+
 // Busca sessões agendadas de terapeutas com automação de WhatsApp ligada
 // (grupo_whatsapp_id preenchido), dentro da janela de data informada, que
 // ainda não tiveram pelo menos um dos dois lembretes daquele tipo enviado.
@@ -150,17 +179,10 @@ export async function buscarPendentes(
     cortePorTerapeuta[t.id as string] = t.vendas_a_partir_de as string | null
   }
 
-  // Sessões de vendas anteriores ao corte configurado pro terapeuta (dado
-  // retroativo, lançado em massa) não entram nos lembretes automáticos —
-  // mesma regra do resto do sistema (Agenda/Consultas), senão a automação
-  // manda mensagem real sobre paciente que nem deveria aparecer aqui.
-  function saleAposCorte(s: SessaoRow): boolean {
-    const corte = cortePorTerapeuta[s.terapeuta_id]
-    if (!corte) return true
-    const dataHora = dataHoraPorSale[s.sale_id]
-    if (!dataHora) return true
-    return new Date(dataHora).getTime() >= new Date(corte).getTime()
-  }
+  const saleAposCorte = (s: SessaoRow): boolean => vendaEntraNoLembrete({
+    corteDoTerapeuta: cortePorTerapeuta[s.terapeuta_id],
+    dataHoraDaVenda: dataHoraPorSale[s.sale_id],
+  })
 
   const porTerapeuta: Record<string, TerapeutaPendente> = {}
   for (const s of linhas) {

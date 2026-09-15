@@ -37,8 +37,18 @@ const MODULOS_DE_DINHEIRO = [
 const TROCAS: [RegExp, string, string][] = [
   [/>=/g, '>', 'fronteira: >= virou >'],
   [/<=/g, '<', 'fronteira: <= virou <'],
-  [/([^<>=!])>([^=>])/g, '$1>=$2', 'fronteira: > virou >='],
-  [/([^<>=!])<([^=<])/g, '$1<=$2', 'fronteira: < virou <='],
+  // Os dois EXIGEM espaco nos dois lados, e nao e detalhe de estilo: sem isso
+  // o motor mutava o `>` que FECHA TIPO GENERICO. `Record<string, string>` virava
+  // `Record<string, string>=`, que o TypeScript aceita (le como o tipo, e depois
+  // `= {}`) e que nao muda comportamento nenhum. Resultado: dezenas de mutantes
+  // equivalentes contados como SOBREVIVENTES, ou seja, notas mais baixas do que a
+  // realidade e uma lista de "defeitos" que nao eram defeito.
+  // Em 15/09/2026, `lib/whatsapp-pendentes.ts` apareceu com 29 sobreviventes; a
+  // maioria era isto. Neste projeto toda comparacao de verdade e escrita com
+  // espaco (`a > b`), e nenhum generico tem (`Record<string, X>`) - conferido em
+  // todo o `lib` antes de apertar o padrao.
+  [/ > /g, ' >= ', 'fronteira: > virou >='],
+  [/ < /g, ' <= ', 'fronteira: < virou <='],
   [/===/g, '!==', 'igualdade invertida'],
   [/!==/g, '===', 'desigualdade invertida'],
   [/&&/g, '||', 'E virou OU'],
