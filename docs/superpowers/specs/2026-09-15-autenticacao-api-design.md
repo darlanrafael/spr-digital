@@ -93,7 +93,7 @@ cron e confirmar que continuam respondendo como hoje.
 | quem | regra |
 |---|---|
 | DRE `admin` | tudo |
-| DRE `socio` | vê tudo, **menos a divisão entre sócios**; não edita caixa, DRE nem fechamento |
+| DRE `socio` | **exatamente como hoje**: vê tudo menos a divisão entre sócios; não edita caixa, DRE nem fechamento; e mantém o acesso ao módulo de terapeutas como tem hoje |
 | Terapeutas `admin` | tudo |
 | Terapeutas `comercial` | o operacional (agendar, remarcar, pedir lançamento manual). **Não** cria usuário, **não** troca senha, **não** muda percentual de comissão |
 | Terapeutas `terapeuta` | só o próprio `terapeuta_id`, para ver e para agir |
@@ -139,10 +139,25 @@ seção 5 ganha um teste que **faz a chamada** e confere o que voltou:
 - crachá de sócio em `GET /api/closings` -> 200, e **sem** os valores dos sócios;
 - os 2 webhooks e as 3 rotas de cron -> continuam respondendo como hoje.
 
-## 8. Em aberto, para o usuário decidir
+## 8. Restrição vinda da decisão do usuário
 
-1. **Reinaldo (sócio) entra no módulo de terapeutas hoje**, por
-   `layout.tsx:27`, e lá vê nome de paciente e comissão. Mantém ou restringe?
-2. **`FELIPE TESTE` (`FELIPE@GMAIL.COM`) está ativo** como comercial. Desativa?
-3. **Mariana Longo nunca logou** desde 21/06/2026 e não tem nenhuma ação
-   registrada. Mantém o login ativo?
+**O sócio fica exatamente com a visualização de hoje.** Decisão dele, dita duas
+vezes. Isso vira restrição de implementação, não pergunta:
+
+- o `middleware.ts` **não** pode restringir sessão do DRE dentro do módulo de
+  terapeutas. `app/terapeutas/layout.tsx:27` continua valendo como está;
+- o que o sócio não vê continua sendo só a divisão entre sócios, e agora também
+  na resposta de `GET /api/closings`;
+- nenhuma tela muda de aparência para ele.
+
+Verificação obrigatória antes de publicar: entrar como sócio e confirmar que
+tudo aparece igual, e que a divisão entre sócios continua escondida.
+
+## 9. Fora do escopo, para quando o usuário quiser
+
+Dois logins que apareceram no levantamento. Não travam nada e não fazem parte
+deste trabalho:
+
+- `FELIPE TESTE` (`FELIPE@GMAIL.COM`), comercial, ativo.
+- Mariana Longo, comercial, ativa, **nunca logou** desde 21/06/2026 e não tem
+  nenhuma ação registrada.
