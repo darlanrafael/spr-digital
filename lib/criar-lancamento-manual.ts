@@ -88,6 +88,66 @@ export function datasDoLancamento(p: PayloadLancamentoManual): {
   return { entregues: listaEntregues, futuras: listaFuturas, totalSessoes }
 }
 
+/**
+ * Monta as linhas de sessao do lancamento manual. PURA de proposito.
+ *
+ * Estava embutida dentro de `criarLancamentoManual`, que precisa de banco para
+ * rodar - e por isso nenhum teste alcancava esta parte. O teste de mutacao de
+ * 15/09/2026 mediu a consequencia: o modulo pegava 34% dos defeitos, e entre os
+ * que passavam estavam a NUMERACAO das sessoes (`i + 1` e
+ * `entregues.length + i + 1`) e a duracao de uma hora do evento no Google.
+ *
+ * Numerar errado nao quebra nada na hora: a venda e criada, as sessoes
+ * aparecem, e so muito depois alguem repara que o pacote tem duas sessoes "1"
+ * ou pula da 2 para a 4.
+ */
+export function montarSessoesDoLancamento(params: {
+  saleId: string
+  terapeutaId: string
+  /** Datas ja passadas, que entram como entregues. */
+  entregues: string[]
+  /** Datas futuras, que entram como agendadas. */
+  futuras: string[]
+  totalSessoes: number
+  comissaoPorSessao: number
+  pacienteNome: string
+  pacienteEmail: string
+  usuarioNome: string
+}) {
+  const base = (numero: number, dataIso: string, entregue: boolean) => ({
+    sale_id: params.saleId,
+    terapeuta_id: params.terapeutaId,
+    numero_sessao: numero,
+    total_sessoes: params.totalSessoes,
+    status: entregue ? 'entregue' : 'agendada',
+    status_consulta: entregue ? 'concluida' : 'aguardando',
+    data_agendada: dataIso,
+    data_entrega: entregue ? dataIso : null,
+    link_meet: null,
+    comissao_valor: params.comissaoPorSessao,
+    comissao_paga: false,
+    paciente_nome: params.pacienteNome,
+    paciente_email: params.pacienteEmail,
+    agendado_por: params.usuarioNome,
+    entregue_confirmado_por: entregue ? params.usuarioNome : null,
+    vendedor_nome: params.usuarioNome,
+    vendedor_email: '',
+  })
+
+  // As entregues vem PRIMEIRO e numeram a partir de 1; as futuras continuam a
+  // contagem. Trocar a ordem ou o deslocamento gera pacote com numero repetido
+  // ou com buraco, e nada reclama na hora.
+  return [
+    ...params.entregues.map((d, i) => base(i + 1, d, true)),
+    ...params.futuras.map((d, i) => base(params.entregues.length + i + 1, d, false)),
+  ]
+}
+
+/** Uma sessao dura uma hora. Usado para o evento no Google Calendar. */
+export function fimDaSessaoISO(inicioISO: string): string {
+  return new Date(new Date(inicioISO).getTime() + 60 * 60 * 1000).toISOString()
+}
+
 export async function criarLancamentoManual(params: {
   client: SupabaseClient
   payload: PayloadLancamentoManual
@@ -126,30 +186,17 @@ export async function criarLancamentoManual(params: {
     numero_sessoes: datas.totalSessoes,
   })
 
-  const base = (numero: number, dataIso: string, entregue: boolean) => ({
-    sale_id: saleId,
-    terapeuta_id: p.terapeuta_id,
-    numero_sessao: numero,
-    total_sessoes: datas.totalSessoes,
-    status: entregue ? 'entregue' : 'agendada',
-    status_consulta: entregue ? 'concluida' : 'aguardando',
-    data_agendada: dataIso,
-    data_entrega: entregue ? dataIso : null,
-    link_meet: null,
-    comissao_valor: comissao_por_sessao,
-    comissao_paga: false,
-    paciente_nome: p.nome ?? '',
-    paciente_email: p.email ?? '',
-    agendado_por: usuarioNome,
-    entregue_confirmado_por: entregue ? usuarioNome : null,
-    vendedor_nome: usuarioNome,
-    vendedor_email: '',
+  const sessoes = montarSessoesDoLancamento({
+    saleId,
+    terapeutaId: p.terapeuta_id,
+    entregues: datas.entregues,
+    futuras: datas.futuras,
+    totalSessoes: datas.totalSessoes,
+    comissaoPorSessao: comissao_por_sessao,
+    pacienteNome: p.nome ?? '',
+    pacienteEmail: p.email ?? '',
+    usuarioNome,
   })
-
-  const sessoes = [
-    ...datas.entregues.map((d, i) => base(i + 1, d, true)),
-    ...datas.futuras.map((d, i) => base(datas.entregues.length + i + 1, d, false)),
-  ]
   const puladas = sessoes.length === 0 ? datas.totalSessoes : 0
 
   if (sessoes.length > 0) {
@@ -169,7 +216,7 @@ export async function criarLancamentoManual(params: {
     const evento = await criarEventoComMeet({
       titulo: `Sessão - ${s.paciente_nome}`,
       inicioISO: s.data_agendada,
-      fimISO: new Date(new Date(s.data_agendada).getTime() + 60 * 60 * 1000).toISOString(),
+      fimISO: fimDaSessaoISO(s.data_agendada),
     })
     if (evento) {
       const { error: linkErr } = await client.from('sessoes')
