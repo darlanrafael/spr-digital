@@ -22,6 +22,7 @@ import { precisaConverter } from '@/lib/moeda-da-venda'
 import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
+import { divisaoDoLucro } from '@/lib/base-da-reserva-de-caixa'
 import { invariantesDoFechamento } from '@/lib/invariantes-do-fechamento'
 import { PAGAMENTO_DENISE_POR_SESSAO } from '@/lib/diagnostico-guiado'
 import { ehDiagnosticoGuiado } from '@/lib/vendas-por-situacao'
@@ -492,23 +493,23 @@ function FechamentosContent() {
   const taxasPlat = byProduct.reduce((a, p) => a + p.taxas, 0)
   const faturamentoLiquido = faturamentoBruto - taxasPlat - impostoTotal
 
-  // Produtos de mentoria não entram na reserva de caixa (30%) — o lucro deles
-  // vai para o Lucro Real líquido do repasse devido à terapeuta que atende
-  // (ex.: 30% da Denise), já que quem entrega a sessão precisa ser pago antes
-  // dos sócios receberem sua parte.
-  const faturamentoLiquidoMentoria = byProduct
-    .filter(p => p.nome.toLowerCase().includes('mentoria'))
-    .reduce((a, p) => a + (p.bruto - p.taxas - p.imposto), 0)
+  // A divisão do lucro entre o que sofre a reserva de caixa de 30% e o que não
+  // sofre vive em `lib/base-da-reserva-de-caixa.ts`, com teste próprio. Eram
+  // cinco expressões soltas aqui, e os cinco números precisam fechar entre si.
+  //
+  // MENTORIA e DIAGNÓSTICO GUIADO ficam fora da reserva: quem entrega a sessão
+  // precisa ser pago antes de os sócios dividirem a parte deles, e reservar 30%
+  // do lucro desses produtos guardaria dinheiro que já tem dono. O Diagnóstico
+  // entrou nessa regra por decisão do usuário em 15/09/2026.
   const repasseTerapeutasTotal = byProduct.reduce((a, p) => a + p.repasse_terapeuta, 0)
-
-  const lucroBruto = faturamentoLiquido - totalCosts
-  const lucroBrutoOutros = lucroBruto - faturamentoLiquidoMentoria
-  // Sem reserva de caixa quando dá prejuízo — não tem como reservar 30% de um
-  // valor negativo. Nesse caso o prejuízo inteiro (100%) vira Lucro Real
-  // negativo, pra ser distribuído (rateado) entre os sócios normalmente.
-  const reservaCaixa = lucroBrutoOutros > 0 ? lucroBrutoOutros * 0.3 : 0
-  const lucroRealOutros = lucroBrutoOutros > 0 ? lucroBrutoOutros * 0.7 : lucroBrutoOutros
-  const lucroReal = lucroRealOutros + (faturamentoLiquidoMentoria - repasseTerapeutasTotal)
+  const {
+    faturamentoLiquidoForaDaReserva, lucroBruto, reservaCaixa, lucroReal,
+  } = divisaoDoLucro({
+    linhas: byProduct.map(p => ({ nome: p.nome, liquidoPosImpostos: p.bruto - p.taxas - p.imposto })),
+    faturamentoLiquido,
+    totalCustos: totalCosts,
+    repasseTerapeutasTotal,
+  })
 
   const socioPercents = socioInputs.map(parsePercent)
   const socioTotal = socioPercents[0] + socioPercents[1]
@@ -1604,9 +1605,9 @@ function FechamentosContent() {
                     <p className="text-xs text-gray-500 mb-2">Reserva de Caixa (30%)</p>
                     <p className="text-2xl font-bold text-purple-400">{formatCurrency(reservaCaixa)}</p>
                     <p className="text-xs text-gray-600 mt-1">Lançada automaticamente ao confirmar</p>
-                    {faturamentoLiquidoMentoria > 0 && (
+                    {faturamentoLiquidoForaDaReserva > 0 && (
                       <p className="text-[10px] text-gray-600 mt-1">
-                        Não incide sobre {formatCurrency(faturamentoLiquidoMentoria)} de produtos de mentoria
+                        Não incide sobre {formatCurrency(faturamentoLiquidoForaDaReserva)} de mentoria e Diagnóstico Guiado
                       </p>
                     )}
                   </div>
