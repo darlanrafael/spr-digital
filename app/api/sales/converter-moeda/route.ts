@@ -13,7 +13,30 @@ import { converterParaReais, precisaConverter, MOEDA_DA_CASA } from '@/lib/moeda
 // preenchida, e a mesma gravacao que converte limpa esse campo. Chamar duas
 // vezes nao multiplica o valor duas vezes - a segunda chamada e recusada.
 export async function POST(req: NextRequest) {
-  const { sale_id, cambio } = await req.json()
+  // Corpo protegido: sem isto, um JSON malformado derruba a rota com 500 e sem
+  // mensagem util. Achado na auditoria das rotas em 15/09/2026.
+  let corpo: { sale_id?: string; cambio?: unknown; usuario_email?: string }
+  try {
+    corpo = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
+  }
+  const { sale_id, cambio, usuario_email } = corpo
+
+  // QUEM ESTA CHAMANDO. Esta rota GRAVA DINHEIRO - ela reescreve os quatro
+  // valores de uma venda - e subiu em 11/09/2026 sem nenhuma verificacao:
+  // qualquer um que soubesse a URL podia converter uma venda com o cambio que
+  // quisesse. Achado na auditoria das rotas de 15/09/2026, junto com o
+  // `req.json()` desprotegido e a falta de try/catch.
+  //
+  // Mesmo criterio das outras rotas de dinheiro do projeto: o e-mail precisa
+  // existir em `usuarios_sistema` e estar ativo. Nao e autenticacao de verdade
+  // (esta na lista de pendencias do MD), mas fecha a porta anonima.
+  const email = String(usuario_email ?? '').trim().toLowerCase()
+  if (!email) return NextResponse.json({ error: 'usuario_email é obrigatório' }, { status: 401 })
+  const { data: quem } = await getSupabaseAdmin()
+    .from('usuarios_sistema').select('id').ilike('email', email).eq('ativo', true).maybeSingle()
+  if (!quem) return NextResponse.json({ error: 'Usuário não autorizado' }, { status: 403 })
 
   if (!sale_id) return NextResponse.json({ error: 'sale_id é obrigatório' }, { status: 400 })
   const taxa = Number(cambio)
@@ -22,6 +45,7 @@ export async function POST(req: NextRequest) {
   // faturamento por cem, e a linha ainda pareceria plausível na tela.
   if (taxa > 100) return NextResponse.json({ error: `Câmbio de ${taxa} parece erro de digitação. Confira antes de aplicar.` }, { status: 400 })
 
+  try {
   const client = getSupabaseAdmin()
   const { data: venda, error } = await client.from('sales')
     .select('id,nome,produto,moeda,preco_base,valor_pago_cliente,valor_com_juros,valor_liquido,valores_originais')
@@ -79,4 +103,10 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ success: true, nome: venda.nome, moeda: venda.moeda, cambio: taxa, antes, depois })
+  } catch (err) {
+    // Falha inesperada nao pode virar 500 mudo: quem esta fechando precisa
+    // saber que a conversao NAO aconteceu.
+    console.error('[converter-moeda]', err)
+    return NextResponse.json({ error: 'Falha ao converter. A venda não foi alterada.' }, { status: 500 })
+  }
 }

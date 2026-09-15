@@ -87,11 +87,27 @@ const MARCADOR = '.mutacao-em-andamento'
 {
   const { execSync: ex } = require('node:child_process') as typeof import('node:child_process')
   if (existsSync(MARCADOR)) {
+    // RESTAURA SOZINHO em vez de so avisar.
+    //
+    // Em 15/09/2026 uma rodada foi morta com `pkill -TERM` e o arquivo ficou
+    // mutado: o sinal atinge o `npx`, nao o node por dentro, entao o tratador
+    // que eu tinha registrado nunca rodou. O MARCADOR foi o que denunciou o
+    // arquivo - e essa e a camada que funciona, porque nao depende de o
+    // processo ter chance de reagir.
+    //
+    // Avisar e pedir para o humano rodar `git checkout` deixa uma janela em que
+    // alguem pode commitar o defeito plantado sem perceber. Restaurar na hora
+    // fecha a janela.
     const antigo = readFileSync(MARCADOR, 'utf8').trim()
-    console.error(`\nRODADA ANTERIOR NAO TERMINOU. O arquivo abaixo pode estar MUTADO:`)
-    console.error(`  ${antigo}`)
-    console.error(`Rode:  git checkout -- ${antigo}\n`)
-    process.exit(1)
+    console.error(`\nRODADA ANTERIOR NAO TERMINOU. Restaurando ${antigo}...`)
+    try {
+      ex(`git checkout -- "${antigo}"`, { encoding: 'utf8' })
+      console.error(`  restaurado.\n`)
+      unlinkSync(MARCADOR)
+    } catch (e) {
+      console.error(`  NAO CONSEGUI RESTAURAR. Rode a mao: git checkout -- ${antigo}\n`)
+      process.exit(1)
+    }
   }
   const sujos = ex(`git status --porcelain -- ${arquivos.join(' ')}`, { encoding: 'utf8' }).trim()
   if (sujos) {

@@ -400,7 +400,8 @@ function FechamentosContent() {
     try {
       const r = await fetch('/api/sales/converter-moeda', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sale_id: sale.id, cambio: taxa }),
+        // Quem esta convertendo. A rota exige e confere contra `usuarios_sistema`.
+        body: JSON.stringify({ sale_id: sale.id, cambio: taxa, usuario_email: user?.email }),
       })
       const j = await r.json()
       if (!r.ok) { setErroConversao(j.error ?? 'Não foi possível converter.'); return }
