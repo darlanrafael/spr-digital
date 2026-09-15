@@ -112,3 +112,39 @@ test('a propria venda no meio da lista tambem e ignorada', () => {
   const b = v({ id: 'b', data_hora: '2026-08-25T14:00:00Z' })
   assert.equal(candidataAoMesmoPacote({ venda: a, outras: [a, b] })?.id, 'b')
 })
+
+// --- A PROPRIA VENDA dentro da lista de candidatas.
+//
+// Nao e caso hipotetico: e exatamente o que a tela faz. Em
+// app/terapeutas/vendas/page.tsx a venda a agendar sai de
+// `[...vendas_pendentes, ...vendas_ativos].find(...)`, e a MESMA lista vai
+// inteira como `outras` para ca. A venda esta sempre la dentro.
+//
+// Nenhum teste cobria isso, e por isso o modulo nao percebia a diferenca entre
+// pular a propria venda e aceita-la. A distancia no tempo dela para ela mesma e
+// ZERO, entao, aceita, ela vence a ordenacao e vira a propria candidata - e de
+// quebra ESCONDE a irma de verdade, que e a unica que importa.
+
+test('a propria venda NUNCA e candidata a formar pacote consigo mesma', () => {
+  const a = v({ id: 'a', data_hora: '2026-09-10T14:00:00Z' })
+  assert.equal(candidataAoMesmoPacote({ venda: a, outras: [a] }), null)
+})
+
+test('CRITICO: com a propria venda na lista, a irma de verdade ainda e encontrada', () => {
+  // Se a propria venda for aceita, ela ganha por distancia zero e a irma real
+  // nunca aparece: o pacote de 8 seria agendado como 4, porque a segunda
+  // compra nao entra na conta da quantidade.
+  const a = v({ id: 'a', data_hora: '2026-09-10T14:00:00Z' })
+  const irma = v({ id: 'b', data_hora: '2026-09-10T16:00:00Z' })
+  const achada = candidataAoMesmoPacote({ venda: a, outras: [a, irma] })
+  assert.equal(achada?.id, 'b', 'a irma tem que vencer, nao a propria venda')
+})
+
+test('a lista chega na ordem da tela, e a propria venda vindo PRIMEIRO nao atrapalha', () => {
+  // `[...pendentes, ...ativos]` nao tem ordem garantida em relacao a venda
+  // escolhida - o teste fixa os dois arranjos.
+  const a = v({ id: 'a', data_hora: '2026-09-10T14:00:00Z' })
+  const irma = v({ id: 'b', data_hora: '2026-09-10T16:00:00Z' })
+  assert.equal(candidataAoMesmoPacote({ venda: a, outras: [a, irma] })?.id, 'b')
+  assert.equal(candidataAoMesmoPacote({ venda: a, outras: [irma, a] })?.id, 'b')
+})

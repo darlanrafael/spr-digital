@@ -49,7 +49,7 @@ export function candidataAoMesmoPacote(params: {
   const janelaMs = JANELA_MESMO_PACOTE_HORAS * 60 * 60 * 1000
 
   const possiveis = outras.filter(o => {
-    if (o.id === venda.id) return true
+    if (o.id === venda.id) return false
     if ((o.email ?? '').trim().toLowerCase() !== email) return false
     if (o.produto !== venda.produto) return false
     // Já pertence a um pacote: não é candidata a formar outro.

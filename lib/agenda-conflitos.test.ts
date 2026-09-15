@@ -262,3 +262,145 @@ test('FIACAO: o nome do terapeuta aparece na mensagem, para o comercial saber de
   })
   assert.ok(c[0].descricao.includes('Pedro Roncada'))
 })
+
+// --- A CONTA DA SOBREPOSICAO, nas bordas exatas.
+//
+// O teste de mutacao de 15/09/2026 deu 50% neste modulo: metade dos defeitos
+// introduzidos passava. Os testes de FIACAO acima provam QUE TIPO de conflito
+// sai; nenhum deles provava QUANDO ha conflito.
+//
+// A conta e uma linha so:
+//
+//   p.inicio < o.fim && fimPedido > o.inicio
+//
+// Sao intervalos meio-abertos: encostar nao e sobrepor. Trocar um `<` por
+// `<=` faz sessao COLADA virar conflito, e o horario valido some da agenda sem
+// explicacao. Trocar o `&&` por `||` faz TUDO virar conflito - a agenda inteira
+// fica bloqueada. Nenhum dos dois quebra teste nenhum antes destes aqui.
+
+test('BORDA: sessao que termina na hora em que a nova comeca NAO e conflito', () => {
+  // 10:00-11:00 ocupado, pedido para as 11:00. Atendimentos colados sao o
+  // normal da agenda: se isto virasse conflito, o terapeuta perderia metade
+  // dos horarios do dia.
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-16T14:00:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana', data_agendada: '2026-09-16T13:00:00.000Z', numero_sessao: 1, total_sessoes: 4 }],
+    compromissos: [],
+  })
+  assert.equal(c.length, 0, 'encostar no fim nao e sobrepor')
+})
+
+test('BORDA: sessao que comeca na hora em que a nova termina NAO e conflito', () => {
+  // Pedido 13:00-14:00, ocupado 14:00-15:00. O outro lado da mesma borda.
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-16T13:00:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana', data_agendada: '2026-09-16T14:00:00.000Z', numero_sessao: 1, total_sessoes: 4 }],
+    compromissos: [],
+  })
+  assert.equal(c.length, 0, 'encostar no inicio nao e sobrepor')
+})
+
+test('BORDA: UM MINUTO de invasao JA E conflito, dos dois lados', () => {
+  // E o que separa "colado" de "em cima". Se a borda errar para o lado
+  // permissivo, DOIS PACIENTES caem no mesmo horario.
+  const porCima = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-16T13:59:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana', data_agendada: '2026-09-16T14:00:00.000Z', numero_sessao: 1, total_sessoes: 4 }],
+    compromissos: [],
+  })
+  assert.equal(porCima.length, 1, 'comecar 1 min antes do fim alheio e conflito')
+
+  const porBaixo = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-16T14:01:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana', data_agendada: '2026-09-16T13:59:00.000Z', numero_sessao: 1, total_sessoes: 4 }],
+    compromissos: [],
+  })
+  assert.equal(porBaixo.length, 1, 'comecar 1 min depois do inicio alheio e conflito')
+})
+
+test('mesmo horario exato e conflito', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-16T14:00:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana', data_agendada: '2026-09-16T14:00:00.000Z', numero_sessao: 2, total_sessoes: 4 }],
+    compromissos: [],
+  })
+  assert.equal(c.length, 1)
+  assert.equal(c[0].tipo, 'sessao')
+})
+
+test('sessao que ENGLOBA o pedido inteiro e conflito', () => {
+  // Bloqueio longo (gravacao de 4 horas) com o pedido inteiro dentro dele.
+  // Nenhuma das duas bordas do pedido toca as bordas do bloqueio - so a
+  // conta completa pega este caso.
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-16T15:00:00.000Z'),
+    sessoes: [],
+    compromissos: [{ titulo: 'GRAVACAO', inicio: '2026-09-16T13:00:00.000Z', fim: '2026-09-16T17:00:00.000Z', categoria: 'compromisso' }],
+  })
+  assert.equal(c.length, 1, 'pedido dentro de bloqueio longo tem que bater')
+  assert.equal(c[0].tipo, 'compromisso')
+})
+
+test('pedido que ENGLOBA a sessao curta e conflito', () => {
+  // O inverso: uma sessao de 10 minutos no meio da hora pedida.
+  const dezMin = (iso: string) => new Date(iso).getTime() + 10 * 60 * 1000
+  const c = montarConflitos({
+    nomeTerapeuta: 'Pedro Roncada',
+    fimRealMs: (iso) => (iso === '2026-09-16T14:20:00.000Z' ? dezMin(iso) : fimFixo(iso)),
+    pedidos: pedido('2026-09-16T14:00:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana', data_agendada: '2026-09-16T14:20:00.000Z', numero_sessao: 1, total_sessoes: 1 }],
+    compromissos: [],
+  })
+  assert.equal(c.length, 1, 'sessao curta dentro do pedido tem que bater')
+})
+
+test('agenda VAZIA nao gera conflito nenhum, para nenhuma data', () => {
+  const c = montarConflitos({
+    ...base,
+    pedidos: [
+      { iso: '2026-09-16T13:00:00.000Z', inicio: new Date('2026-09-16T13:00:00.000Z').getTime() },
+      { iso: '2026-09-17T13:00:00.000Z', inicio: new Date('2026-09-17T13:00:00.000Z').getTime() },
+    ],
+    sessoes: [], compromissos: [],
+  })
+  assert.equal(c.length, 0)
+})
+
+test('CADA data pedida e avaliada: a livre passa, a ocupada bate', () => {
+  // Reagendamento de pacote manda varias datas de uma vez. Parar na primeira
+  // batida deixaria as outras entrarem por cima da agenda.
+  const c = montarConflitos({
+    ...base,
+    pedidos: [
+      { iso: '2026-09-16T13:00:00.000Z', inicio: new Date('2026-09-16T13:00:00.000Z').getTime() },
+      { iso: '2026-09-17T13:00:00.000Z', inicio: new Date('2026-09-17T13:00:00.000Z').getTime() },
+      { iso: '2026-09-18T13:00:00.000Z', inicio: new Date('2026-09-18T13:00:00.000Z').getTime() },
+    ],
+    sessoes: [
+      { paciente_nome: 'Ana', data_agendada: '2026-09-16T13:00:00.000Z', numero_sessao: 1, total_sessoes: 4 },
+      { paciente_nome: 'Bia', data_agendada: '2026-09-18T13:00:00.000Z', numero_sessao: 2, total_sessoes: 4 },
+    ],
+    compromissos: [],
+  })
+  assert.equal(c.length, 2, 'as duas ocupadas batem, a do meio passa')
+  assert.ok(c.every(x => !x.dataISO.includes('09-17')), 'a data livre nao pode aparecer')
+})
+
+test('a descricao do conflito carrega a DATA pedida, nao so a hora', () => {
+  // O comercial ve uma lista de datas recusadas; sem a data, nao da para
+  // saber QUAL das sessoes do pacote precisa mudar.
+  const c = montarConflitos({
+    ...base,
+    pedidos: pedido('2026-09-16T14:00:00.000Z'),
+    sessoes: [{ paciente_nome: 'Ana', data_agendada: '2026-09-16T14:00:00.000Z', numero_sessao: 1, total_sessoes: 4 }],
+    compromissos: [],
+  })
+  assert.match(c[0].descricao, /16\/09/, 'a data pedida tem que estar na frase')
+  assert.match(c[0].descricao, /Ana/, 'e o nome de quem ja ocupa o horario')
+})

@@ -83,7 +83,46 @@ const arquivos = alvos.length > 0 ? alvos : MODULOS_DE_DINHEIRO
 //      onde restaurar com seguranca)
 //   2. restaura em SIGINT e SIGTERM, que e o que `timeout` manda
 //   3. deixa um marcador em disco; se ele sobrar, a proxima rodada avisa
+//   4. instala um gancho de pre-commit que RECUSA commit enquanto o marcador
+//      existir (ver abaixo o porque)
 const MARCADOR = '.mutacao-em-andamento'
+
+// O marcador so serve se alguem olhar para ele na hora certa. Em 15/09/2026 um
+// mutante foi parar num commit: `git add -A` rodou enquanto um lote estava no
+// meio de `lib/pacote-de-vendas.ts`, e a linha `if (o.id === venda.id) return
+// true` (no lugar de `false`) entrou no repositorio. O motor restaurou o
+// arquivo logo depois - mas o commit ja estava feito, e a restauracao virou uma
+// "modificacao" que, lida ao contrario, foi descartada com `git checkout --`.
+//
+// `.git/hooks/` nao e versionado, entao o gancho e (re)instalado aqui, toda vez
+// que o motor roda. Assim ele existe em qualquer clone que ja tenha rodado uma
+// medicao.
+{
+  const { writeFileSync: escrever, existsSync: existe, chmodSync: permissao } = require('node:fs') as typeof import('node:fs')
+  const GANCHO = '.git/hooks/pre-commit'
+  const CORPO = [
+    '#!/bin/sh',
+    '# Instalado por scripts/mutacao.ts. Ver o comentario la sobre o mutante',
+    '# que foi commitado em 15/09/2026.',
+    'if [ -f .mutacao-em-andamento ]; then',
+    '  echo ""',
+    '  echo "  COMMIT RECUSADO: ha um teste de mutacao em andamento."',
+    '  echo "  Arquivo sendo mutado agora: $(cat .mutacao-em-andamento)"',
+    '  echo ""',
+    '  echo "  Commitar agora grava um defeito de proposito no repositorio."',
+    '  echo "  Espere o lote terminar (o motor restaura sozinho) e commite depois."',
+    '  echo ""',
+    '  exit 1',
+    'fi',
+    '',
+  ].join('\n')
+  try {
+    if (existe('.git/hooks')) {
+      escrever(GANCHO, CORPO, 'utf8')
+      permissao(GANCHO, 0o755)
+    }
+  } catch { /* sem gancho o motor ainda funciona; nao vale derrubar a medicao */ }
+}
 {
   const { execSync: ex } = require('node:child_process') as typeof import('node:child_process')
   if (existsSync(MARCADOR)) {
