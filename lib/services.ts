@@ -1,4 +1,5 @@
 import { getSupabaseClient } from './supabase'
+import { normTs, brtDayRangeToUTC, kiwifyBrtRange } from './datas-da-plataforma'
 import type {
   Sale, SaleStatus, Product, Project, FixedCost, VariableCost,
   MetaAdsEntry, CostsData, Closing, CashflowEntry,
@@ -6,42 +7,10 @@ import type {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function normTs(ts: string | null | undefined, isKiwify = false): string {
-  if (!ts) return ''
-  // Timestamps do Supabase (timestamptz) chegam com +00:00 ou Z. A Hubla grava
-  // data_hora em UTC real, então convertemos pra Brasília (UTC-3) subtraindo
-  // 3 horas. A Kiwify grava data_hora já em horário de Brasília, só com o
-  // sufixo +00:00 (não é UTC de verdade) — se aplicarmos a mesma subtração
-  // de 3h nela, o horário desloca 3h a mais do que deveria, e uma venda feita
-  // entre 00:00 e 02:59 (BRT) passa a aparecer com data do dia anterior em
-  // todo filtro de período (Vendas, Fechamentos, DRE, Análises).
-  if (!isKiwify && (ts.includes('+') || ts.endsWith('Z'))) {
-    const date = new Date(ts)
-    if (!isNaN(date.getTime())) {
-      return new Date(date.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 19)
-    }
-  }
-  return ts.slice(0, 19)
-}
-
-// Converte uma data Brasília (YYYY-MM-DD) nos limites UTC corretos para filtro
-// no Supabase. Brasília = UTC-3: o dia D vai de D T03:00:00Z até (D+1) T02:59:59Z.
-// Usado para HUBLA, que grava data_hora em UTC real.
-function brtDayRangeToUTC(dateStr: string): { startUTC: string; endUTC: string } {
-  const startUTC = `${dateStr}T03:00:00`
-  // +1 dia via Date UTC para cobrir virada de mês e de ano corretamente
-  const next = new Date(`${dateStr}T00:00:00Z`)
-  next.setUTCDate(next.getUTCDate() + 1)
-  const endUTC = `${next.toISOString().slice(0, 10)}T02:59:59`
-  return { startUTC, endUTC }
-}
-
-// Limites para KIWIFY, que grava data_hora em BRT-como-UTC:
-// hora de Brasília com sufixo +00:00 sem conversão para UTC real.
-// Dia D em BRT = D T00:00:00 até D T23:59:59 no campo data_hora.
-function kiwifyBrtRange(dateStr: string): { start: string; end: string } {
-  return { start: `${dateStr}T00:00:00`, end: `${dateStr}T23:59:59` }
-}
+// `normTs`, `brtDayRangeToUTC` e `kiwifyBrtRange` moraram aqui, sem `export`, e
+// por isso nenhum teste as alcancava - e sao elas que decidem a data de TODA
+// venda. Agora vivem em `lib/datas-da-plataforma.ts`, com teste proprio. O
+// comportamento e o mesmo; o que mudou e poder conferi-lo.
 
 // ─── Projects ────────────────────────────────────────────────────────────────
 
