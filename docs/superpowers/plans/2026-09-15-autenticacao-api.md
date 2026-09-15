@@ -58,6 +58,18 @@ Valem para TODAS as tarefas.
    propósito: a rota recusa na validação e nada é gravado. **Nenhum passo deste
    plano cria, altera ou apaga registro de produção.**
 
+## Nota de realidade (conferido no banco em 15/09/2026)
+
+- `usuarios_sistema` JA tem `session_token` e `session_token_expira_em`, e as 7
+  colunas que o middleware le. `usuarios_dashboard` ainda NAO tem - e o que a
+  Tarefa 1 cria. `closings.socios` existe (Tarefa 10).
+- Papeis que existem HOJE: `usuarios_sistema` tem `admin`, `comercial`,
+  `terapeuta`; `usuarios_dashboard` tem `admin` e `socio`. O papel `financeiro`
+  e previsto no codigo (`app/dre/page.tsx:61`) e nas regras deste plano, mas
+  **nenhum usuario real o exerce hoje**. A regra `podeEditarCustos` para
+  `financeiro` fica pronta para quando existir; nao ha o que testar em producao
+  ate la.
+
 ## Estrutura de arquivos
 
 | arquivo | responsabilidade |
