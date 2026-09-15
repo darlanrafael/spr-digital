@@ -14,7 +14,7 @@
 //
 // Escopo por argumento: `npx tsx scripts/mutacao.ts lib/rateio-das-deducoes.ts`
 // ou sem argumento para os modulos de dinheiro.
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 
 const MODULOS_DE_DINHEIRO = [
@@ -73,12 +73,52 @@ function suiteVerde(): boolean {
 const alvos = process.argv.slice(2).filter(a => a.endsWith('.ts'))
 const arquivos = alvos.length > 0 ? alvos : MODULOS_DE_DINHEIRO
 
+// SEGURANCA. Em 12/09/2026 uma rodada de 38 modulos foi morta por timeout e
+// deixou `lib/ligacao-de-pacote.ts` MUTADO no repositorio: o `finally` nao roda
+// quando o processo e derrubado de fora. Um arquivo mutado esquecido vale menos
+// que zero - e um defeito plantado que passa pelos testes daquele mutante.
+//
+// Tres camadas:
+//   1. recusa comecar se o alvo tiver mudanca nao commitada (senao nao ha para
+//      onde restaurar com seguranca)
+//   2. restaura em SIGINT e SIGTERM, que e o que `timeout` manda
+//   3. deixa um marcador em disco; se ele sobrar, a proxima rodada avisa
+const MARCADOR = '.mutacao-em-andamento'
+{
+  const { execSync: ex } = require('node:child_process') as typeof import('node:child_process')
+  if (existsSync(MARCADOR)) {
+    const antigo = readFileSync(MARCADOR, 'utf8').trim()
+    console.error(`\nRODADA ANTERIOR NAO TERMINOU. O arquivo abaixo pode estar MUTADO:`)
+    console.error(`  ${antigo}`)
+    console.error(`Rode:  git checkout -- ${antigo}\n`)
+    process.exit(1)
+  }
+  const sujos = ex(`git status --porcelain -- ${arquivos.join(' ')}`, { encoding: 'utf8' }).trim()
+  if (sujos) {
+    console.error('\nOs alvos abaixo tem mudanca nao commitada. Commite ou descarte antes:')
+    console.error(sujos + '\n')
+    process.exit(1)
+  }
+}
+
+let emUso: { arquivo: string; original: string } | null = null
+const restaurar = () => {
+  if (emUso) { writeFileSync(emUso.arquivo, emUso.original, 'utf8'); emUso = null }
+  try { if (existsSync(MARCADOR)) unlinkSync(MARCADOR) } catch { /* nada a fazer */ }
+}
+for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(sinal, () => { restaurar(); process.exit(130) })
+}
+process.on('exit', restaurar)
+
 type Sobrevivente = { arquivo: string; linha: number; mutacao: string; trecho: string }
 const sobreviventes: Sobrevivente[] = []
 let totalMutantes = 0
 
 for (const arq of arquivos) {
   const original = readFileSync(arq, 'utf8')
+  emUso = { arquivo: arq, original }
+  writeFileSync(MARCADOR, arq, 'utf8')
   const linhas = original.split('\n')
   const validas = linhasDeCodigo(original)
   let mortos = 0
@@ -138,6 +178,8 @@ for (const arq of arquivos) {
     // SEMPRE restaura, mesmo se algo explodir no meio. Deixar um arquivo mutado
     // no repositorio seria pior que nao ter medido nada.
     writeFileSync(arq, original, 'utf8')
+    emUso = null
+    try { if (existsSync(MARCADOR)) unlinkSync(MARCADOR) } catch { /* nada a fazer */ }
   }
 
   const total = mortos + vivos
