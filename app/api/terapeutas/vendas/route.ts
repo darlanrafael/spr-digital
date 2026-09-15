@@ -392,7 +392,11 @@ export async function POST(req: NextRequest) {
         paciente_nome: string
         paciente_email: string
       }
-      await supabase.from('solicitacoes_reembolso').insert({
+      // O erro TEM de ser conferido: sem isso a rota seguia e devolvia sucesso
+      // mesmo com a solicitacao nao gravada. A terapeuta ficava certa de ter
+      // pedido o reembolso, e o pedido nunca aparecia na tela de aprovacoes do
+      // CEO - ninguem tinha como saber que faltava alguma coisa.
+      const { error: reembolsoErr } = await supabase.from('solicitacoes_reembolso').insert({
         sale_id,
         paciente_nome: de.paciente_nome,
         paciente_email: de.paciente_email,
@@ -405,6 +409,13 @@ export async function POST(req: NextRequest) {
         solicitado_por_email: usuario_email,
         status: 'pendente',
       })
+      if (reembolsoErr) {
+        console.error('[vendas POST] solicitacao_reembolso nao gravada:', reembolsoErr)
+        return NextResponse.json(
+          { error: 'Nao foi possivel registrar a solicitacao de reembolso. Tente de novo.' },
+          { status: 500 },
+        )
+      }
     }
 
     if (tipo === 'orientacao_sessao') {

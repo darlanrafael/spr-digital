@@ -93,13 +93,19 @@ export async function PATCH(req: NextRequest) {
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       // Nada foi alterado, entao rejeitar nao desfaz nada. Mas o prontuario
       // precisa registrar que alguem TENTOU trocar e foi recusado.
-      await client.from('ocorrencias_prontuario').insert({
+      const { error: notaErr1 } = await client.from('ocorrencias_prontuario').insert({
         sale_id: String(s.sale_id), tipo: 'nota',
         titulo: 'Troca de paciente recusada',
         descricao: `${s.solicitado_por_nome} pediu para trocar os dados deste prontuário de "${s.nome_atual}" para "${s.nome_novo}". Motivo alegado: ${s.motivo}. RECUSADO por ${nomeUsuario}: ${justificativa}`,
         criado_por_nome: nomeUsuario, criado_por_tipo: (usuario?.tipo as string) ?? 'admin',
         criado_por_email: usuario_email,
       })
+      // A nota de prontuario e o rastro da decisao: se ela nao gravar, o
+      // prontuario perde o registro de que isto aconteceu. NAO derruba a
+      // resposta - a acao principal ja deu certo, e falhar agora faria quem
+      // esta na tela repetir uma operacao que ja foi feita. Mas tem de
+      // aparecer no log: antes, o erro desaparecia sem deixar vestigio.
+      if (notaErr1) console.error('[ocorrencias_prontuario] nota nao gravada:', notaErr1)
       return NextResponse.json({ success: true, acao: 'rejeitado' })
     }
 
@@ -129,7 +135,7 @@ export async function PATCH(req: NextRequest) {
     const compradoEm = s.data_compra
       ? new Date(new Date(String(s.data_compra)).getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10).split('-').reverse().join('/')
       : '?'
-    await client.from('ocorrencias_prontuario').insert({
+    const { error: notaErr2 } = await client.from('ocorrencias_prontuario').insert({
       sale_id: String(s.sale_id), tipo: 'nota',
       titulo: 'Dados do paciente alterados (aprovado)',
       descricao:
@@ -150,6 +156,12 @@ export async function PATCH(req: NextRequest) {
       criado_por_nome: nomeUsuario, criado_por_tipo: (usuario?.tipo as string) ?? 'admin',
       criado_por_email: usuario_email,
     })
+    // A nota de prontuario e o rastro da decisao: se ela nao gravar, o
+    // prontuario perde o registro de que isto aconteceu. NAO derruba a
+    // resposta - a acao principal ja deu certo, e falhar agora faria quem
+    // esta na tela repetir uma operacao que ja foi feita. Mas tem de
+    // aparecer no log: antes, o erro desaparecia sem deixar vestigio.
+    if (notaErr2) console.error('[ocorrencias_prontuario] nota nao gravada:', notaErr2)
 
     const { error: finErr } = await client.from('solicitacoes_edicao_paciente').update({
       status: 'aprovado', decidido_por_nome: nomeUsuario, decidido_por_email: usuario_email,

@@ -141,7 +141,7 @@ export async function PATCH(req: NextRequest) {
       // Google pode ser cancelado a qualquer momento depois.
       for (const eventId of eventosACancelar) await cancelarEvento(eventId)
 
-      await supabase.from('ocorrencias_prontuario').insert({
+      const { error: notaErr1 } = await supabase.from('ocorrencias_prontuario').insert({
         sale_id: s.sale_id,
         tipo: 'reembolso_aprovado',
         titulo: 'Reembolso aprovado pelo CEO',
@@ -151,6 +151,12 @@ export async function PATCH(req: NextRequest) {
         criado_por_tipo: 'admin',
         criado_por_email: usuario_email,
       })
+      // A nota de prontuario e o rastro da decisao: se ela nao gravar, o
+      // prontuario perde o registro de que isto aconteceu. NAO derruba a
+      // resposta - a acao principal ja deu certo, e falhar agora faria quem
+      // esta na tela repetir uma operacao que ja foi feita. Mas tem de
+      // aparecer no log: antes, o erro desaparecia sem deixar vestigio.
+      if (notaErr1) console.error('[ocorrencias_prontuario] nota nao gravada:', notaErr1)
 
       await registrarAtividade({
         usuario_nome,
@@ -178,7 +184,7 @@ export async function PATCH(req: NextRequest) {
       }).eq('id', id)
       if (errRejeicao) return NextResponse.json({ error: errRejeicao.message }, { status: 500 })
 
-      await supabase.from('ocorrencias_prontuario').insert({
+      const { error: notaErr2 } = await supabase.from('ocorrencias_prontuario').insert({
         sale_id: s.sale_id,
         tipo: 'reembolso_rejeitado',
         titulo: 'Solicitação de reembolso rejeitada',
@@ -188,6 +194,12 @@ export async function PATCH(req: NextRequest) {
         criado_por_tipo: 'admin',
         criado_por_email: usuario_email,
       })
+      // A nota de prontuario e o rastro da decisao: se ela nao gravar, o
+      // prontuario perde o registro de que isto aconteceu. NAO derruba a
+      // resposta - a acao principal ja deu certo, e falhar agora faria quem
+      // esta na tela repetir uma operacao que ja foi feita. Mas tem de
+      // aparecer no log: antes, o erro desaparecia sem deixar vestigio.
+      if (notaErr2) console.error('[ocorrencias_prontuario] nota nao gravada:', notaErr2)
 
       await registrarAtividade({
         usuario_nome,

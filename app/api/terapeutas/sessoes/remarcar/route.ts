@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
   // Insere no histórico visível do prontuário (aba "Ocorrências") — antes só
   // o front-end fingia isso via um POST solto que nunca chamava esse
   // endpoint, então a sessão nunca era realmente atualizada.
-  await client.from('ocorrencias_prontuario').insert({
+  const { error: notaErr1 } = await client.from('ocorrencias_prontuario').insert({
     sale_id: sessao.sale_id,
     sessao_id,
     tipo: 'remarcacao',
@@ -179,6 +179,12 @@ export async function POST(req: NextRequest) {
     criado_por_tipo: usuarioTipo,
     criado_por_email: usuario_email,
   })
+  // A nota de prontuario e o rastro da decisao: se ela nao gravar, o
+  // prontuario perde o registro de que isto aconteceu. NAO derruba a
+  // resposta - a acao principal ja deu certo, e falhar agora faria quem
+  // esta na tela repetir uma operacao que ja foi feita. Mas tem de
+  // aparecer no log: antes, o erro desaparecia sem deixar vestigio.
+  if (notaErr1) console.error('[ocorrencias_prontuario] nota nao gravada:', notaErr1)
 
   await registrarAtividade({
     usuario_nome: usuarioNome,

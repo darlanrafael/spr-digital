@@ -101,7 +101,19 @@ export async function PATCH(req: NextRequest) {
 
     if (acao === 'rejeitar') {
       // Nada foi criado, então rejeitar é só liberar os horários reservados.
-      if (reservas.length > 0) await client.from('compromissos_terapeuta').delete().in('id', reservas)
+      //
+      // Se o apagar falhar, NAO marque como rejeitado: a solicitacao sairia da
+      // fila com os horarios ainda bloqueados por uma reserva que ninguem mais
+      // vai limpar, e a agenda do terapeuta ficaria com buraco permanente.
+      if (reservas.length > 0) {
+        const { error: apagarErr } = await client.from('compromissos_terapeuta').delete().in('id', reservas)
+        if (apagarErr) {
+          console.error('[aprovacoes/lancamento-manual] reservas nao liberadas ao rejeitar:', apagarErr)
+          return NextResponse.json({
+            error: 'Nao foi possivel liberar os horarios reservados deste pedido. Ele continua pendente; tente rejeitar de novo em alguns instantes.',
+          }, { status: 500 })
+        }
+      }
       const { error } = await client.from('solicitacoes_lancamento_manual').update({
         status: 'rejeitado', decidido_por_nome: nomeUsuario, decidido_por_email: usuario_email,
         decidido_em: new Date().toISOString(), justificativa_decisao: justificativa,
@@ -116,7 +128,22 @@ export async function PATCH(req: NextRequest) {
     // As reservas saem ANTES de criar as sessões: elas ocupam exatamente os
     // horários que as sessões vão ocupar, então a checagem de conflito da
     // criação bateria na própria reserva.
-    if (reservas.length > 0) await client.from('compromissos_terapeuta').delete().in('id', reservas)
+    //
+    // O erro TEM de ser conferido, e a rota TEM de parar aqui: se o apagar
+    // falhar em silencio, as reservas continuam ocupando exatamente os horarios
+    // pedidos, e a checagem de conflito logo abaixo encontra AS PROPRIAS
+    // RESERVAS. O CEO recebia "o horario foi ocupado enquanto o pedido
+    // esperava" apontando para uma reserva do proprio sistema, sem nenhum jeito
+    // de aprovar e sem entender por que.
+    if (reservas.length > 0) {
+      const { error: apagarErr } = await client.from('compromissos_terapeuta').delete().in('id', reservas)
+      if (apagarErr) {
+        console.error('[aprovacoes/lancamento-manual] reservas nao apagadas ao aprovar:', apagarErr)
+        return NextResponse.json({
+          error: 'Nao foi possivel liberar as reservas de horario deste pedido. Ele continua pendente; tente aprovar de novo em alguns instantes.',
+        }, { status: 500 })
+      }
+    }
 
     // Com as reservas fora, confere se alguém ocupou o horário por outro
     // caminho enquanto o pedido esperava.
@@ -128,17 +155,29 @@ export async function PATCH(req: NextRequest) {
       if (conflitos.length > 0) {
         // Devolve as reservas: o pedido continua pendente e o horário volta a
         // ficar seguro enquanto o CEO decide o que fazer.
+        // Se a devolucao falhar, o horario NAO volta a ficar seguro - e isso
+        // precisa aparecer na mensagem. Em silencio, o CEO leria "ajuste a data
+        // com o comercial" achando que a vaga continua reservada, e ela estaria
+        // livre para qualquer outro agendamento.
+        let naoRedevolvidas = 0
         for (const dataISO of datas.futuras) {
-          await client.from('compromissos_terapeuta').insert({
+          const { error: reservaErr } = await client.from('compromissos_terapeuta').insert({
             terapeuta_id: payload.terapeuta_id,
             titulo: `RESERVA - ${payload.nome || 'lançamento manual'} (aguardando aprovação)`,
             inicio: dataISO, fim: new Date(new Date(dataISO).getTime() + 60 * 60 * 1000).toISOString(),
             categoria: 'compromisso', criado_por_nome: nomeUsuario,
             criado_por_tipo: 'admin', criado_por_email: usuario_email,
           })
+          if (reservaErr) {
+            naoRedevolvidas++
+            console.error('[aprovacoes/lancamento-manual] reserva nao redevolvida:', dataISO, reservaErr)
+          }
         }
+        const avisoReserva = naoRedevolvidas > 0
+          ? ` ATENCAO: ${naoRedevolvidas} de ${datas.futuras.length} horario(s) NAO voltaram a ficar reservados - trate como vaga livre.`
+          : ''
         return NextResponse.json({
-          error: `O horário foi ocupado enquanto o pedido esperava: ${conflitos.map(c => c.descricao).join(' | ')}. Ajuste a data com o comercial antes de aprovar.`,
+          error: `O horário foi ocupado enquanto o pedido esperava: ${conflitos.map(c => c.descricao).join(' | ')}. Ajuste a data com o comercial antes de aprovar.${avisoReserva}`,
           conflitos,
         }, { status: 409 })
       }

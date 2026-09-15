@@ -194,7 +194,7 @@ export async function POST(req: NextRequest) {
     // Tipo 'nota': e o unico que o check constraint de ocorrencias_prontuario
     // conhece para registro livre. Inventar tipo novo repetiria o erro do log
     // de atividades, que ja quebrou tres vezes neste projeto.
-    await client.from('ocorrencias_prontuario').insert({
+    const { error: notaErr1 } = await client.from('ocorrencias_prontuario').insert({
       sale_id,
       tipo: 'nota',
       titulo: tipo === 'quantidade_informada' ? 'Quantidade de sessões informada pelo comercial'
@@ -207,6 +207,12 @@ export async function POST(req: NextRequest) {
       criado_por_tipo: (usuario?.tipo as string) ?? 'admin',
       criado_por_email: usuario_email,
     })
+    // A nota de prontuario e o rastro da decisao: se ela nao gravar, o
+    // prontuario perde o registro de que isto aconteceu. NAO derruba a
+    // resposta - a acao principal ja deu certo, e falhar agora faria quem
+    // esta na tela repetir uma operacao que ja foi feita. Mas tem de
+    // aparecer no log: antes, o erro desaparecia sem deixar vestigio.
+    if (notaErr1) console.error('[ocorrencias_prontuario] nota nao gravada:', notaErr1)
 
     await registrarAtividade({
       usuario_nome: nomeUsuario,
@@ -318,7 +324,7 @@ export async function DELETE(req: NextRequest) {
     // gravada para sempre. Sem esta, o prontuário - que é o registro que o
     // terapeuta e o comercial leem - continuava dizendo que as compras estão
     // juntas depois de elas terem sido separadas.
-    await client.from('ocorrencias_prontuario').insert({
+    const { error: notaErr2 } = await client.from('ocorrencias_prontuario').insert({
       sale_id: v.pacote_pai_id,
       tipo: 'nota',
       titulo: 'Compras separadas: ligação desfeita',
@@ -328,6 +334,12 @@ export async function DELETE(req: NextRequest) {
       criado_por_tipo: (usuario?.tipo as string) ?? 'admin',
       criado_por_email: usuario_email,
     })
+    // A nota de prontuario e o rastro da decisao: se ela nao gravar, o
+    // prontuario perde o registro de que isto aconteceu. NAO derruba a
+    // resposta - a acao principal ja deu certo, e falhar agora faria quem
+    // esta na tela repetir uma operacao que ja foi feita. Mas tem de
+    // aparecer no log: antes, o erro desaparecia sem deixar vestigio.
+    if (notaErr2) console.error('[ocorrencias_prontuario] nota nao gravada:', notaErr2)
 
     await registrarAtividade({
       usuario_nome: nomeUsuario,
