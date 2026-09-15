@@ -4723,3 +4723,18 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     **E decisao do usuario**, e esta aqui para ele decidir.
 
+
+---
+
+81. **15/09/2026 - o `supabase/schema.sql` esta DESATUALIZADO. Achado ao preparar o banco espelho.**
+
+    O arquivo `supabase/schema.sql` (166 linhas) tem so as **8 tabelas do lado financeiro**: `projects`, `products`, `sales`, `fixed_costs`, `variable_costs`, `meta_ads`, `closings`, `cashflow`.
+
+    **Nao tem** nenhuma tabela do modulo de terapeutas nem do controle de acesso: faltam `usuarios_dashboard`, `usuarios_sistema`, `terapeutas`, `sessoes`, `fechamentos_terapeutas`, `solicitacoes_reembolso`, `solicitacoes_lancamento_manual`, `solicitacoes_edicao_paciente`, `compromissos_terapeuta`, `ocorrencias_prontuario` e outras. Essas nasceram nas 34 migracoes de `supabase/migrations/` e nunca foram consolidadas no `schema.sql`.
+
+    **Consequencia pratica:** quem montar um banco novo (espelho de teste, ou uma segunda instancia) SO pelo `schema.sql` vai ter um banco pela metade - o financeiro funciona, os terapeutas e o login nao existem. A fonte de verdade da estrutura completa hoje sao **as migracoes**, nao o `schema.sql`.
+
+    **Estrutura real conferida no banco em 15/09/2026** (colunas por tabela): `usuarios_dashboard` (8), `usuarios_sistema` (13, ja com `session_token`/`session_token_expira_em`/`dispensa_senha_nas_acoes`), `terapeutas` (11), `sessoes` (27), `sales` (26), `closings` (33), `fechamentos_terapeutas` (10), `solicitacoes_reembolso` (17), `solicitacoes_lancamento_manual` (22), `solicitacoes_edicao_paciente` (22), `compromissos_terapeuta` (10), `ocorrencias_prontuario` (11).
+
+    **Pendencia:** ou consolidar tudo no `schema.sql`, ou marca-lo como parcial e apontar para as migracoes como fonte de verdade.
+
