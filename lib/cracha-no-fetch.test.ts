@@ -182,3 +182,22 @@ test('ATAQUE: instalarCrachaNoFetch nao instala duas vezes (linha 72-73)', () =>
     assert.equal(trocas, 1, 'so pode trocar o fetch UMA vez, nao importa quantas chamadas')
   } finally { g.window = antes }
 })
+
+test('ATAQUE: URL malformada NAO leva o cracha (linha 51, o catch)', () => {
+  // `http://[bad` faz `new URL` lancar. O catch retorna false = nao e chamada
+  // da casa = nao anexa cracha. O mutante (`return true`) anexaria a credencial
+  // numa URL que nem da para parsear - vazamento em potencial.
+  const g: any = globalThis
+  const antes = g.window
+  g.window = { localStorage: { getItem: () => null }, location: { origin: 'http://localhost' } }
+  try {
+    let anexou = false
+    const falso = async (_e: any, init?: RequestInit) => {
+      anexou = new Headers(init?.headers).has(CABECALHO_DO_CRACHA)
+      return new Response('{}')
+    }
+    return fetchComCracha(falso as typeof fetch, () => 'abc')('http://[bad').then(() => {
+      assert.equal(anexou, false, 'URL malformada nao pode receber o cracha')
+    })
+  } finally { g.window = antes }
+})
