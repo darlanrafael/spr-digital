@@ -80,7 +80,7 @@ function FechamentosContent() {
 
   type PeriodoGrupo = { id: string; inicio: string; fim: string; produtos: string[] }
   const [periodosGrupos, setPeriodosGrupos] = useState<PeriodoGrupo[]>([])
-  // Busca por nome dentro de "Produtos deste período" — uma chave por período (g.id),
+  // Busca por nome dentro de "Produtos deste período", uma chave por período (g.id) -
   // pra digitar num período não filtrar a lista dos outros.
   const [buscaPorPeriodo, setBuscaPorPeriodo] = useState<Record<string, string>>({})
   const [etiqueta, setEtiqueta] = useState('')
