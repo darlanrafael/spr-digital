@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   lerIdentidade, terapeutaIdQueValeu, podeAdministrar, deveEsconderDivisaoDeSocios,
   semDivisaoDeSocios,
+  podeEditarFechamento, podeEditarCaixa, podeEditarCustos,
   type Identidade,
 } from './identidade-da-chamada'
 
@@ -30,6 +31,7 @@ const comercial: Identidade = { area: 'sistema', papel: 'comercial', id: 'u2', e
 const adminSistema: Identidade = { area: 'sistema', papel: 'admin', id: 'u3', email: 'a@b.c', terapeutaId: null }
 const adminDre: Identidade = { area: 'dashboard', papel: 'admin', id: 'u4', email: 'a@b.c', terapeutaId: null }
 const socio: Identidade = { area: 'dashboard', papel: 'socio', id: 'u5', email: 'a@b.c', terapeutaId: null }
+const financeiro: Identidade = { area: 'dashboard', papel: 'financeiro', id: 'u6', email: 'a@b.c', terapeutaId: null }
 
 test('sem os cabecalhos do middleware, nao ha identidade', () => {
   assert.equal(lerIdentidade(req({})), null)
@@ -180,4 +182,25 @@ test('semDivisaoDeSocios NAO altera o original', () => {
   const original = [{ id: 'c', socios: [{ nome: 'A', valor: 1 }] }]
   semDivisaoDeSocios(original)
   assert.equal(original[0].socios.length, 1)
+})
+
+test('as regras de edicao copiam EXATAMENTE o que a tela ja faz hoje', () => {
+  // app/fechamentos/page.tsx:237 e app/caixa/page.tsx:55 -> canEdit = admin
+  assert.equal(podeEditarFechamento(adminDre), true)
+  assert.equal(podeEditarFechamento(socio), false)
+  assert.equal(podeEditarCaixa(adminDre), true)
+  assert.equal(podeEditarCaixa(socio), false)
+  assert.equal(podeEditarCaixa(financeiro), false, 'a tela do caixa so libera admin')
+
+  // app/dre/page.tsx:61 -> canEdit = admin || financeiro
+  assert.equal(podeEditarCustos(adminDre), true)
+  assert.equal(podeEditarCustos(financeiro), true)
+  assert.equal(podeEditarCustos(socio), false)
+})
+
+test('usuario do modulo de terapeutas nao edita dinheiro do DRE', () => {
+  // Sao duas areas separadas. Comercial nao mexe em fechamento da empresa.
+  assert.equal(podeEditarFechamento(comercial), false)
+  assert.equal(podeEditarCaixa(comercial), false)
+  assert.equal(podeEditarCustos(terapeuta(ID_DENISE)), false)
 })

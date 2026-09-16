@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getClosings, addClosing } from '@/lib/services'
-import { lerIdentidade, deveEsconderDivisaoDeSocios, semDivisaoDeSocios } from '@/lib/identidade-da-chamada'
+import { lerIdentidade, deveEsconderDivisaoDeSocios, semDivisaoDeSocios, podeEditarFechamento } from '@/lib/identidade-da-chamada'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -19,6 +19,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeEditarFechamento(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para confirmar fechamento.' }, { status: 403 })
+  }
   try {
     const { closing, projectId = 'proj_1' } = await req.json()
     if (!closing) return NextResponse.json({ error: 'closing é obrigatório' }, { status: 400 })

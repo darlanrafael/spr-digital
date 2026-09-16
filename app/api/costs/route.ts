@@ -4,6 +4,7 @@ import {
   getVariableCosts, addCost, updateCost, deleteCost,
   getMetaAds, upsertMetaAds,
 } from '@/lib/services'
+import { lerIdentidade, podeEditarCustos } from '@/lib/identidade-da-chamada'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -33,6 +34,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeEditarCustos(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para alterar custos.' }, { status: 403 })
+  }
   try {
     const body = await req.json()
     const { type, ...data } = body
@@ -50,6 +56,11 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeEditarCustos(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para alterar custos.' }, { status: 403 })
+  }
   try {
     const { id, type, ...patch } = await req.json()
     if (!id) return NextResponse.json({ error: 'id é obrigatório' }, { status: 400 })
@@ -65,6 +76,11 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeEditarCustos(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para alterar custos.' }, { status: 403 })
+  }
   try {
     const { id, type } = await req.json()
     if (!id) return NextResponse.json({ error: 'id é obrigatório' }, { status: 400 })

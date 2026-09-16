@@ -335,6 +335,34 @@ async function main() {
       await status('/api/terapeutas/dashboard', crachaComercial), 200)
   }
 
+  console.log('\n=== DINHEIRO DO DRE: quem edita fechamento, caixa e custo (Tarefa 12) ===')
+  // As tres rotas de escrita nao tinham guarda nenhuma - qualquer cracha
+  // valido criava fechamento, lancava no caixa ou apagava custo, mesmo a
+  // tela ja restringindo (canEdit em fechamentos/page.tsx, caixa/page.tsx,
+  // dre/page.tsx). Corpo `{}` de proposito: se a guarda for a PRIMEIRA coisa
+  // no metodo, a resposta para o socio e 403 antes de qualquer `req.json()`
+  // de validacao rodar - nada e lido nem gravado. crachaAdmin e crachaSocio
+  // ja vieram logados mais acima nesta mesma funcao.
+  if (!crachaAdmin || !crachaSocio) {
+    pular('dinheiro do DRE: socio recusado, admin passa da guarda',
+      'precisa de cracha valido de admin E de socio (logados acima)')
+  } else {
+    conferir('POST /api/closings com cracha de socio: recusado (403)',
+      await status('/api/closings', crachaSocio, 'POST', '{}'), 403)
+    conferir('POST /api/closings com cracha de admin: passa da guarda (nao e 403)',
+      (await status('/api/closings', crachaAdmin, 'POST', '{}')) === 403, false)
+
+    conferir('POST /api/cashflow com cracha de socio: recusado (403)',
+      await status('/api/cashflow', crachaSocio, 'POST', '{}'), 403)
+    conferir('POST /api/cashflow com cracha de admin: passa da guarda (nao e 403)',
+      (await status('/api/cashflow', crachaAdmin, 'POST', '{}')) === 403, false)
+
+    conferir('DELETE /api/costs com cracha de socio: recusado (403)',
+      await status('/api/costs', crachaSocio, 'DELETE', '{}'), 403)
+    conferir('DELETE /api/costs com cracha de admin: passa da guarda (nao e 403)',
+      (await status('/api/costs', crachaAdmin, 'DELETE', '{}')) === 403, false)
+  }
+
   if (falhas > 0) {
     console.log(`\n${falhas} FALHA(S)\n`)
     process.exit(1)

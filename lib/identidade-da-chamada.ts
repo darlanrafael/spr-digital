@@ -87,6 +87,33 @@ export function deveEsconderDivisaoDeSocios(id: Identidade): boolean {
 }
 
 /**
+ * As tres regras abaixo COPIAM o que as telas ja fazem, sem inventar nada:
+ *
+ *   app/fechamentos/page.tsx:237  canEdit = role === 'admin'
+ *   app/caixa/page.tsx:55         canEdit = role === 'admin'
+ *   app/dre/page.tsx:61           canEdit = role === 'admin' || 'financeiro'
+ *
+ * Todas exigem area `dashboard`: o DRE e o modulo de terapeutas sao sistemas
+ * separados, e comercial nao mexe em dinheiro da empresa.
+ */
+const ehDoDre = (id: Identidade) => id.area === 'dashboard'
+
+/** Confirmar fechamento. So admin - copia app/fechamentos/page.tsx:237. */
+export function podeEditarFechamento(id: Identidade): boolean {
+  return ehDoDre(id) && id.papel === 'admin'
+}
+
+/** Lancar no caixa. So admin, financeiro NAO - copia app/caixa/page.tsx:55. */
+export function podeEditarCaixa(id: Identidade): boolean {
+  return ehDoDre(id) && id.papel === 'admin'
+}
+
+/** Alterar custos do DRE. Admin ou financeiro - copia app/dre/page.tsx:61. */
+export function podeEditarCustos(id: Identidade): boolean {
+  return ehDoDre(id) && (id.papel === 'admin' || id.papel === 'financeiro')
+}
+
+/**
  * O fechamento sem a divisao entre socios.
  *
  * Copia em vez de alterar: mexer no objeto original faria o proximo pedido, de
