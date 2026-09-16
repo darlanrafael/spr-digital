@@ -55,3 +55,17 @@ test('cracha ja vencido NAO pede renovacao - pede login', () => {
   const agora = new Date('2026-09-16T12:00:00.000Z').getTime()
   assert.equal(precisaRenovar(new Date(agora - DIA).toISOString(), agora), false)
 })
+test('data INVALIDA conta como vencida (crachaVencido) e nao renova (precisaRenovar)', () => {
+  // O mutante da mutacao: `Number.isNaN(t)) return true/false`. Uma data
+  // corrompida no banco nao pode virar cracha valido nem pedir renovacao.
+  const lixo = 'nao-e-data'
+  assert.equal(crachaVencido(lixo), true, 'data quebrada = vencida')
+  assert.equal(precisaRenovar(lixo), false, 'data quebrada nao renova')
+})
+
+test('precisaRenovar com validade VAZIA nao renova', () => {
+  // `!expiraEm) return false`: sem validade gravada, nao ha o que renovar.
+  assert.equal(precisaRenovar(null), false)
+  assert.equal(precisaRenovar(undefined), false)
+  assert.equal(precisaRenovar(''), false)
+})
