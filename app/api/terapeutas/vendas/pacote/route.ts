@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
 import { MARCA_DESFAZER } from '@/lib/conferencia-de-pacote'
 import { avaliarLigacao, desfazerLinkSeAuditoriaFalhar, refazerLinkSeAuditoriaFalhar, type VendaParaLigar, type Veredicto } from '@/lib/ligacao-de-pacote'
+import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 
 // Resposta do comercial sobre pacote pago em mais de uma compra.
 //
@@ -60,6 +61,21 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // QUEM ESTA CHAMANDO, pelo cracha que o middleware confere (guarda de
+  // papel). Roda ANTES de req.json()/verificarAcesso/qualquer escrita: e o
+  // MESMO furo do B, numa rota gemea - a rota so checava usuario ATIVO, sem
+  // papel nem escopo, entao uma terapeuta com a propria senha escrevia nota
+  // no prontuario de QUALQUER paciente e juntava/separava pacote de QUALQUER
+  // paciente (bagunca contagem de sessao e comissao). A conferencia de
+  // pacote e do comercial/CEO - o comentario da rota ja dizia isso -,
+  // terapeuta fica de fora. `verificarAcesso` abaixo continua como camada
+  // extra, nao foi removido.
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeMexerEmVenda(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para conferir pacotes.' }, { status: 403 })
+  }
+
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
@@ -235,6 +251,15 @@ export async function POST(req: NextRequest) {
 // Pendentes, do dashboard e da tela do terapeuta, sem nenhuma tela mostrando
 // que ela virou filha de outra - a única saída seria cirurgia no banco.
 export async function DELETE(req: NextRequest) {
+  // Mesma guarda do POST, mesmo motivo: sem papel, a mesma terapeuta que
+  // juntava pacote de qualquer paciente tambem o separava. `verificarAcesso`
+  // abaixo continua como camada extra, nao foi removido.
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeMexerEmVenda(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para conferir pacotes.' }, { status: 403 })
+  }
+
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
