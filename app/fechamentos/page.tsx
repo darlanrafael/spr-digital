@@ -120,6 +120,9 @@ function FechamentosContent() {
   const [confirmed, setConfirmed] = useState(false)
   const [confirmedClosing, setConfirmedClosing] = useState<Closing | null>(null)
   const [successMsg, setSuccessMsg] = useState('')
+  // Reserva de caixa de 30%: ligada por padrao. Pedido do usuario em
+  // 16/09/2026: poder desligar e mandar os 30% para a divisao dos socios.
+  const [reservarCaixa, setReservarCaixa] = useState(true)
 
   const [trafego, setTrafego] = useState<{
     periodo: { inicio: string; fim: string }
@@ -512,6 +515,7 @@ function FechamentosContent() {
     faturamentoLiquido,
     totalCustos: totalCosts,
     repasseTerapeutasTotal,
+    reservarCaixa,
   })
 
   const socioPercents = socioInputs.map(parsePercent)
@@ -812,17 +816,23 @@ function FechamentosContent() {
     }))
 
     const lastBalance = cashflow.length > 0 ? cashflow[cashflow.length - 1].saldoAcumulado : 0
-    const cfEntry: CashflowEntry = {
-      id: `cf_${Date.now()}`,
-      data: now.toISOString().split('T')[0],
-      descricao: `Reserva de caixa — Fechamento ${formatDate(periodo.inicio)} a ${formatDate(periodo.fim)}`,
-      origem: 'Fechamento Automático',
-      tipo: 'entrada_automatica',
-      valor: reservaCaixa,
-      saldoAcumulado: lastBalance + reservaCaixa,
+    // So lanca a reserva no Caixa quando ela existe de fato. Com o toggle
+    // desligado (ou em prejuizo) `reservaCaixa` vem 0 do calculo, e nesse
+    // caso nao ha entrada automatica para lancar.
+    let cfEntry: CashflowEntry | null = null
+    if (reservaCaixa > 0) {
+      cfEntry = {
+        id: `cf_${Date.now()}`,
+        data: now.toISOString().split('T')[0],
+        descricao: `Reserva de caixa — Fechamento ${formatDate(periodo.inicio)} a ${formatDate(periodo.fim)}`,
+        origem: 'Fechamento Automático',
+        tipo: 'entrada_automatica',
+        valor: reservaCaixa,
+        saldoAcumulado: lastBalance + reservaCaixa,
+      }
+      try { await svcAddCashflow(cfEntry, selectedProject) } catch (e) { console.error(e) }
+      setCashflow(prev => [...prev, cfEntry!])
     }
-    try { await svcAddCashflow(cfEntry, selectedProject) } catch (e) { console.error(e) }
-    setCashflow(prev => [...prev, cfEntry])
 
     // A EMPRESA PAGANDO: saida no caixa em vez de desconto no repasse.
     //
@@ -850,7 +860,7 @@ function FechamentosContent() {
         origem: 'Fechamento Automático',
         tipo: 'saida_reembolso',
         valor: -alertasTotal,
-        saldoAcumulado: cfEntry.saldoAcumulado - alertasTotal,
+        saldoAcumulado: (cfEntry?.saldoAcumulado ?? lastBalance) - alertasTotal,
       }
       try { await svcAddCashflow(cfPrejuizo, selectedProject) } catch (e) { console.error(e) }
       setCashflow(prev => [...prev, cfPrejuizo!])
@@ -859,7 +869,10 @@ function FechamentosContent() {
     setConfirmedClosing(newClosing)
     setConfirmed(true)
     setSuccessMsg(
-      `Fechamento confirmado com sucesso! A reserva de ${formatCurrency(reservaCaixa)} foi lançada automaticamente no Caixa.`
+      'Fechamento confirmado com sucesso!'
+      + (reservaCaixa > 0
+        ? ` A reserva de ${formatCurrency(reservaCaixa)} foi lançada automaticamente no Caixa.`
+        : '')
       + (cfPrejuizo
         ? ` A EMPRESA absorveu ${formatCurrency(alertasTotal)} de reembolsos: saída lançada no Caixa, sem desconto no repasse dos sócios.`
         : ''),
@@ -1629,7 +1642,25 @@ function FechamentosContent() {
                   <div className="bg-gray-900 rounded-xl border border-purple-500/30 p-4 text-center">
                     <p className="text-xs text-gray-500 mb-2">Reserva de Caixa (30%)</p>
                     <p className="text-2xl font-bold text-purple-400">{formatCurrency(reservaCaixa)}</p>
-                    <p className="text-xs text-gray-600 mt-1">Lançada automaticamente ao confirmar</p>
+                    {/* Toggle da reserva. Pedido do usuario em 16/09/2026: poder
+                        desligar e mandar os 30% para a divisao dos socios em vez
+                        de reservar para o caixa. O valor acima ja vem 0 do
+                        calculo em lib/base-da-reserva-de-caixa.ts quando desligado. */}
+                    <label className="flex items-center justify-center gap-2 mt-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={reservarCaixa}
+                        onChange={e => setReservarCaixa(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-purple-500 cursor-pointer"
+                        aria-label="Reservar 30% do lucro para o caixa"
+                      />
+                      <span className="text-xs text-gray-400">Reservar para o Caixa</span>
+                    </label>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {reservarCaixa
+                        ? 'Lançada automaticamente ao confirmar'
+                        : 'NÃO reservar - os 30% entram na divisão dos sócios'}
+                    </p>
                     {faturamentoLiquidoForaDaReserva > 0 && (
                       <p className="text-[10px] text-gray-600 mt-1">
                         Não incide sobre {formatCurrency(faturamentoLiquidoForaDaReserva)} de mentoria e Diagnóstico Guiado
