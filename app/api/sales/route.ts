@@ -17,6 +17,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) {
+      return NextResponse.json({ error: 'Você não tem permissão para alterar vendas.' }, { status: 403 })
+    }
     const body = await req.json()
     await addSale(body)
     return NextResponse.json({ success: true }, { status: 201 })
