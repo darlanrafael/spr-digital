@@ -493,13 +493,27 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Nota generica (tipo:'nota' e demais tipos livres) NAO tinha guarda
-    // nenhuma: 'remarcacao', 'solicitacao_reembolso' e 'orientacao_sessao' ja
-    // se protegem acima e retornam 403 antes de chegar aqui, mas qualquer
-    // outro tipo caia direto neste insert so com o sale_id do corpo - uma
-    // terapeuta gravava nota clinica no prontuario de QUALQUER paciente,
-    // inclusive de outra terapeuta, so passando o sale_id dele. Achado na
-    // revisao final da Tarefa B.
+    // O insert abaixo e INCONDICIONAL - roda pra QUALQUER tipo, usando o
+    // sale_id do CORPO. A primeira versao desta guarda (Tarefa B) excluia
+    // 'remarcacao', 'solicitacao_reembolso' e 'orientacao_sessao' por
+    // confiar que eles ja se protegem nos blocos acima - mas essa exclusao
+    // por tipo reabria o mesmo furo: as guardas de 'remarcacao' (linha ~359)
+    // e 'solicitacao_reembolso' (linha ~399) SO RODAM quando `dados_extras`
+    // existe (e a de reembolso so quando `sessoes_ids` nao e vazio); pedir
+    // tipo:'remarcacao' SEM dados_extras pula o bloco de cima inteiro,
+    // chegava aqui excluido pelo `if` antigo, e caia direto no insert com o
+    // sale_id de QUALQUER paciente. Achado na revisao independente da
+    // Tarefa B, corrigido na rodada de fix 1.
+    //
+    // Por isso a guarda agora roda pra TODOS os tipos, sem excecao, e sempre
+    // contra o sale_id do CORPO (o mesmo valor que o insert usa) - inclusive
+    // pro caminho "guardado" de remarcacao/reembolso: aqueles blocos so
+    // conferiam a sessao/sessoes especificas do dados_extras, nunca o
+    // sale_id em si, entao uma terapeuta remarcando a PROPRIA sessao podia
+    // passar o sale_id de OUTRA venda e a ocorrencia caia no prontuario
+    // alheio mesmo assim. Rodar aqui, sempre, fecha as duas facetas de uma
+    // vez, como camada por CIMA das guardas especificas (que continuam
+    // valendo do jeito que estao).
     //
     // Mesma regra e mesmo padrao do I2 em vendas/editar-paciente: "pelo
     // menos uma sessao da venda e sua" - `sales` nao tem terapeuta_id, quem
@@ -508,8 +522,8 @@ export async function POST(req: NextRequest) {
     // legitima e exigir so "a primeira" deixaria passar quem nao tem sessao
     // nenhuma ali. Sem sessao nenhuma, fail-closed (mesmo comportamento de
     // uma sessao sem terapeuta_id). Comercial/admin passam sempre -
-    // podeAgirNaSessao ja devolve true pra eles.
-    if (tipo !== 'remarcacao' && tipo !== 'solicitacao_reembolso' && tipo !== 'orientacao_sessao') {
+    // podeAgirNaSessao ja devolve true pra eles, sem nem olhar as sessoes.
+    {
       const { data: sessoesDaVenda } = await supabase
         .from('sessoes').select('terapeuta_id').eq('sale_id', sale_id)
       const idsEnvolvidos = [...new Set(
