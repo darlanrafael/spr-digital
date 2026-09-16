@@ -15,15 +15,21 @@ function getCredentials(): Credential[] {
   // no servidor) — login dele passa por loginDashboardUser() agora, não
   // mais por aqui. Removido daqui de propósito pra credencial antiga parar
   // de funcionar.
-  const creds: Credential[] = [
-    {
-      email: process.env.NEXT_PUBLIC_USER2_EMAIL ?? 'pedro@spr.com',
-      password: process.env.NEXT_PUBLIC_USER2_PASSWORD ?? 'spr2026',
-      name: process.env.NEXT_PUBLIC_USER2_NAME ?? 'Pedro Roncada',
-      role: (process.env.NEXT_PUBLIC_USER2_ROLE as UserRole) ?? 'gestor',
-      projetoId: 'proj_1',
-    },
-  ]
+  const creds: Credential[] = []
+
+  // Optional second user via env vars (sem credencial fixa no codigo - so
+  // entra na lista se as env vars existirem; em producao nao existem, a
+  // lista fica vazia e login() cai em loginDashboardUser())
+  const u2 = {
+    email: process.env.NEXT_PUBLIC_USER2_EMAIL,
+    password: process.env.NEXT_PUBLIC_USER2_PASSWORD,
+    name: process.env.NEXT_PUBLIC_USER2_NAME,
+    role: process.env.NEXT_PUBLIC_USER2_ROLE as UserRole,
+    projetoId: 'proj_1',
+  }
+  if (u2.email && u2.password && u2.name && u2.role) {
+    creds.push(u2 as Credential)
+  }
 
   // Optional third user via env vars
   const u3 = {

@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
       email: usuario.email,
       name: usuario.nome,
       role: usuario.role,
+      token: usuario.token,
     })
   } catch (err) {
     console.error('[dashboard-usuarios/login POST]', err)

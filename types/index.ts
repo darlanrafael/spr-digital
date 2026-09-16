@@ -6,6 +6,7 @@ export interface User {
   name: string
   role: UserRole
   projetoId?: string
+  token?: string
 }
 
 export interface Project {

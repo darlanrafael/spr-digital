@@ -8,6 +8,14 @@ import {
   getProjects, getProducts, getSales, getAllCosts,
   getClosings, getCashflow,
 } from '@/lib/services'
+import { instalarCrachaNoFetch } from '@/lib/cracha-no-fetch'
+
+// Instala o embrulho do cracha no fetch do navegador assim que este modulo e
+// importado - antes de qualquer chamada, inclusive o carregamento inicial
+// deste proprio provider (useEffect abaixo). Sem isso, toda chamada a /api/
+// sai sem o cabecalho e o middleware devolve 401. Idempotente e guardado por
+// window (ver lib/cracha-no-fetch.ts), entao e seguro chamar aqui no topo.
+instalarCrachaNoFetch()
 
 // Fallbacks JSON (offline / sem dados no Supabase)
 import salesFallback from '@/data/sales.json'
