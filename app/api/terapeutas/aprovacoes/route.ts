@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
 import { cancelarEvento } from '@/lib/google-meet'
 import { planejarAprovacaoReembolso } from '@/lib/aprovacao-reembolso'
-import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
+import { lerIdentidade, podeAdministrar, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 
 type Solicitacao = {
   id: string
@@ -31,6 +31,10 @@ function fmtBRL(n: number) {
 
 export async function GET(req: NextRequest) {
   try {
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para ver as aprovações.' }, { status: 403 })
+
     const { searchParams } = req.nextUrl
     const supabase = getSupabaseAdmin()
 

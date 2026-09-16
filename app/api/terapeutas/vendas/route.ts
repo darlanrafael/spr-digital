@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
-import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { classificarVendas, COLUNAS_DA_TELA_DE_VENDAS, termosDeProduto } from '@/lib/vendas-por-situacao'
 
@@ -112,6 +112,10 @@ function getDateRange(preset: string, dateStart?: string, dateEnd?: string): { f
 // ─── GET ──────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para ver as vendas.' }, { status: 403 })
+
     const { searchParams } = req.nextUrl
     const datePreset = searchParams.get('datePreset') ?? 'all'
     const dateStart = searchParams.get('dateStart') ?? undefined

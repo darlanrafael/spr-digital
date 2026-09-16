@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
-import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
+import { lerIdentidade, podeAdministrar, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 
 // A fila de trocas de paciente esperando decisao do CEO, e a decisao.
 //
@@ -10,13 +10,11 @@ import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 // com os dados antigos.
 export async function GET(req: NextRequest) {
   try {
-    const client = getSupabaseAdmin()
-    const email = (req.nextUrl.searchParams.get('usuario_email') ?? '').trim().toLowerCase()
-    if (!email) return NextResponse.json({ error: 'Informe o usuário.' }, { status: 401 })
-    const { data: quem } = await client
-      .from('usuarios_sistema').select('id').ilike('email', email).eq('ativo', true).maybeSingle()
-    if (!quem) return NextResponse.json({ error: 'Usuário não autorizado.' }, { status: 401 })
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para ver esta fila.' }, { status: 403 })
 
+    const client = getSupabaseAdmin()
     const { data, error } = await client
       .from('solicitacoes_edicao_paciente').select('*')
       .order('created_at', { ascending: false }).limit(100)

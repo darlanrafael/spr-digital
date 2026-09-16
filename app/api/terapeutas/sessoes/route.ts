@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
-import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 
 // Sessões de UMA venda, lidas na hora.
@@ -19,6 +19,10 @@ import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 // recebe, e nenhuma escrita acontece.
 export async function GET(req: NextRequest) {
   try {
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para ver as sessões.' }, { status: 403 })
+
     const saleId = req.nextUrl.searchParams.get('sale_id')
     if (!saleId) return NextResponse.json({ error: 'sale_id obrigatório' }, { status: 400 })
 

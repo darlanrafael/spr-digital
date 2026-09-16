@@ -1,7 +1,12 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAdministrar(quem)) return NextResponse.json({ error: 'Apenas administradores.' }, { status: 403 })
+
   const client = getSupabaseAdmin()
   const { data, error } = await client
     .from('atividades_log')
@@ -10,11 +15,11 @@ export async function GET() {
     .limit(50)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // `dados_novos` NAO sai daqui cru. Esta rota nao exige autenticacao (nenhum
-  // GET de app/api/terapeutas exige), e o campo carrega, conforme o tipo de
-  // acao: e-mail e telefone de paciente (`paciente_editado`), e-mail e valores
-  // de venda (`lancamento_manual`), valor de reembolso (`reembolso_aprovado`) e
-  // - pelo caminho de PUT em admin/usuarios - `senha_hash`.
+  // `dados_novos` NAO sai daqui cru: mesmo so admin lendo, o campo carrega,
+  // conforme o tipo de acao: e-mail e telefone de paciente
+  // (`paciente_editado`), e-mail e valores de venda (`lancamento_manual`),
+  // valor de reembolso (`reembolso_aprovado`) e - pelo caminho de PUT em
+  // admin/usuarios - `senha_hash`.
   //
   // O motivo de ele ter sido incluido e um so: tornar visivel QUANDO alguem
   // passou por cima da trava de horario. Entao so as chaves de auditoria saem.

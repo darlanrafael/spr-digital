@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getProjectInvestment } from '@/lib/meta'
 import { nomenclaturasDoProjeto } from '@/lib/nomenclaturas-trafego'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
 
 export const revalidate = 300
 
 export async function GET(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (quem.area !== 'dashboard') return NextResponse.json({ error: 'Sem acesso ao financeiro.' }, { status: 403 })
+
   const { searchParams } = new URL(req.url)
   const dateStart  = searchParams.get('dateStart')  ?? ''
   const dateEnd    = searchParams.get('dateEnd')    ?? ''
