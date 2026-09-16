@@ -1639,6 +1639,118 @@ function FechamentosContent() {
                   </div>
                 </div>
 
+                {/* Bloco 3 — Alertas pós-fechamento */}
+                {alertas.length > 0 && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl overflow-hidden">
+                    <div className="p-4 border-b border-red-500/20">
+                      <div className="flex items-center gap-2 mb-1">
+                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                        <h4 className="text-sm font-semibold text-red-400">⚠️ Reembolsos e chargebacks identificados</h4>
+                      </div>
+                      <p className="text-xs text-gray-400">Os seguintes compradores de fechamentos anteriores solicitaram reembolso ou chargeback após o repasse já ter sido realizado.</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Marque os que devem ser abatidos <strong className="text-gray-300">neste</strong> fechamento. Os não marcados continuam pendentes e reaparecem no próximo, sem se perder — útil quando o estorno é de um funil diferente do que está sendo fechado agora.
+                      </p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-red-500/20 bg-red-500/5">
+                            <th className="text-left px-4 py-2.5 text-gray-500">Nome</th>
+                            <th className="text-left px-4 py-2.5 text-gray-500 hidden md:table-cell">Telefone</th>
+                            <th className="text-left px-4 py-2.5 text-gray-500 hidden md:table-cell">Email</th>
+                            <th className="text-left px-4 py-2.5 text-gray-500">Produto</th>
+                            <th className="text-right px-4 py-2.5 text-gray-500">Valor</th>
+                            <th className="text-center px-4 py-2.5 text-gray-500">Tipo</th>
+                            <th className="text-right px-4 py-2.5 text-gray-500 hidden lg:table-cell">Data</th>
+                            <th className="text-center px-4 py-2.5 text-gray-500">Quem absorve</th>
+                            <th className="text-center px-4 py-2.5 text-gray-500">Abater aqui</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {alertas.map((a, i) => (
+                            <tr key={chaveAlerta(a) ?? i} className="border-b border-red-500/10">
+                              <td className="px-4 py-2.5 text-gray-300">{a.nome}</td>
+                              <td className="px-4 py-2.5 text-gray-400 hidden md:table-cell">{a.telefone ?? '—'}</td>
+                              <td className="px-4 py-2.5 text-gray-400 hidden md:table-cell">{a.email ?? '—'}</td>
+                              <td className="px-4 py-2.5 text-gray-400">{a.produto}</td>
+                              <td className="px-4 py-2.5 text-right text-red-400 font-semibold">-{formatCurrency(a.valor)}</td>
+                              <td className="px-4 py-2.5 text-center">
+                                <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                                  a.tipo === 'chargeback'
+                                    ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+                                    : a.tipo === 'reembolso_parcial'
+                                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                                      : 'bg-red-500/20 text-red-400 border-red-500/30'
+                                }`}>
+                                  {a.tipo === 'chargeback' ? 'Chargeback' : a.tipo === 'reembolso_parcial' ? 'Parcial' : 'Reembolso'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-gray-400 hidden lg:table-cell">{formatDate(a.data)}</td>
+                              {/* Quem absorve ESTE estorno. A divisao vem do fechamento que
+                                  PAGOU a venda, nao do fechamento que esta sendo feito agora:
+                                  e o dinheiro voltando pelo mesmo caminho por onde saiu. */}
+                              <td className="px-4 py-2.5 text-center whitespace-nowrap">
+                                {(() => {
+                                  const det = deducoesDetalhadas.find(d => d.chave === chaveAlerta(a))
+                                  const origem = divisaoOriginalDoAlerta(a, closings)
+                                  const pctAtual = det
+                                    ? det.divisao[SOCIO_NAMES[0]]
+                                    : (origem?.divisao[SOCIO_NAMES[0]] ?? socioPercents[0])
+                                  const chave = chaveAlerta(a) ?? ''
+                                  const marcado = !!chave && alertasAceitos.has(chave)
+                                  return (
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          type="text" inputMode="decimal"
+                                          value={divisaoManualDoAlerta[chave] ?? ''}
+                                          placeholder={String(pctAtual)}
+                                          onChange={e => setDivisaoManualDoAlerta(v => ({ ...v, [chave]: e.target.value }))}
+                                          disabled={!marcado || empresaAbsorve}
+                                          className="w-12 bg-gray-900 border border-white/15 rounded px-1 py-0.5 text-[11px] text-white text-right disabled:opacity-40"
+                                          aria-label={`Percentual da ${SOCIO_NAMES[0]} no estorno de ${a.nome}`}
+                                        />
+                                        <span className="text-[10px] text-gray-500">/ {100 - pctAtual}</span>
+                                      </div>
+                                      <span className="text-[9px] text-gray-600">
+                                        {empresaAbsorve
+                                          ? 'empresa paga'
+                                          : det?.fonte === 'manual' ? 'você definiu'
+                                          : origem ? (origem.etiqueta ?? 'fechamento de origem')
+                                          : 'sem origem — confira'}
+                                      </span>
+                                    </div>
+                                  )
+                                })()}
+                              </td>
+                              <td className="px-4 py-2.5 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={!!chaveAlerta(a) && alertasAceitos.has(chaveAlerta(a)!)}
+                                  onChange={() => toggleAlerta(chaveAlerta(a))}
+                                  className="w-4 h-4 accent-red-500 cursor-pointer"
+                                  aria-label={`Abater o estorno de ${a.nome} neste fechamento`}
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-red-500/20">
+                            <td colSpan={4} className="px-4 py-2.5 text-right text-gray-400 font-semibold">
+                              Total a deduzir neste fechamento
+                              <span className="text-gray-600 font-normal"> ({alertasSelecionados.length} de {alertas.length})</span>:
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-red-400 font-bold">-{formatCurrency(alertasTotal)}</td>
+                            <td colSpan={4} />
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {podeVerRepasse && (
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-4">Divisão entre Sócios</h3>
@@ -1886,118 +1998,6 @@ function FechamentosContent() {
                         <p className="text-xs text-amber-400/80 mt-1">
                           Se houver algum reembolso parcial aprovado, ele NAO esta sendo deduzido nesta tela. Confira antes de confirmar o fechamento. Detalhe: {erroReembolsosParciais}
                         </p>
-                      </div>
-                    )}
-
-                    {/* Bloco 3 — Alertas pós-fechamento */}
-                    {alertas.length > 0 && (
-                      <div className="bg-red-500/10 border border-red-500/30 rounded-xl overflow-hidden">
-                        <div className="p-4 border-b border-red-500/20">
-                          <div className="flex items-center gap-2 mb-1">
-                            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                            <h4 className="text-sm font-semibold text-red-400">⚠️ Reembolsos e chargebacks identificados</h4>
-                          </div>
-                          <p className="text-xs text-gray-400">Os seguintes compradores de fechamentos anteriores solicitaram reembolso ou chargeback após o repasse já ter sido realizado.</p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Marque os que devem ser abatidos <strong className="text-gray-300">neste</strong> fechamento. Os não marcados continuam pendentes e reaparecem no próximo, sem se perder — útil quando o estorno é de um funil diferente do que está sendo fechado agora.
-                          </p>
-                        </div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="border-b border-red-500/20 bg-red-500/5">
-                                <th className="text-left px-4 py-2.5 text-gray-500">Nome</th>
-                                <th className="text-left px-4 py-2.5 text-gray-500 hidden md:table-cell">Telefone</th>
-                                <th className="text-left px-4 py-2.5 text-gray-500 hidden md:table-cell">Email</th>
-                                <th className="text-left px-4 py-2.5 text-gray-500">Produto</th>
-                                <th className="text-right px-4 py-2.5 text-gray-500">Valor</th>
-                                <th className="text-center px-4 py-2.5 text-gray-500">Tipo</th>
-                                <th className="text-right px-4 py-2.5 text-gray-500 hidden lg:table-cell">Data</th>
-                                <th className="text-center px-4 py-2.5 text-gray-500">Quem absorve</th>
-                                <th className="text-center px-4 py-2.5 text-gray-500">Abater aqui</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {alertas.map((a, i) => (
-                                <tr key={chaveAlerta(a) ?? i} className="border-b border-red-500/10">
-                                  <td className="px-4 py-2.5 text-gray-300">{a.nome}</td>
-                                  <td className="px-4 py-2.5 text-gray-400 hidden md:table-cell">{a.telefone ?? '—'}</td>
-                                  <td className="px-4 py-2.5 text-gray-400 hidden md:table-cell">{a.email ?? '—'}</td>
-                                  <td className="px-4 py-2.5 text-gray-400">{a.produto}</td>
-                                  <td className="px-4 py-2.5 text-right text-red-400 font-semibold">-{formatCurrency(a.valor)}</td>
-                                  <td className="px-4 py-2.5 text-center">
-                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
-                                      a.tipo === 'chargeback'
-                                        ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
-                                        : a.tipo === 'reembolso_parcial'
-                                          ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                                          : 'bg-red-500/20 text-red-400 border-red-500/30'
-                                    }`}>
-                                      {a.tipo === 'chargeback' ? 'Chargeback' : a.tipo === 'reembolso_parcial' ? 'Parcial' : 'Reembolso'}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-2.5 text-right text-gray-400 hidden lg:table-cell">{formatDate(a.data)}</td>
-                                  {/* Quem absorve ESTE estorno. A divisao vem do fechamento que
-                                      PAGOU a venda, nao do fechamento que esta sendo feito agora:
-                                      e o dinheiro voltando pelo mesmo caminho por onde saiu. */}
-                                  <td className="px-4 py-2.5 text-center whitespace-nowrap">
-                                    {(() => {
-                                      const det = deducoesDetalhadas.find(d => d.chave === chaveAlerta(a))
-                                      const origem = divisaoOriginalDoAlerta(a, closings)
-                                      const pctAtual = det
-                                        ? det.divisao[SOCIO_NAMES[0]]
-                                        : (origem?.divisao[SOCIO_NAMES[0]] ?? socioPercents[0])
-                                      const chave = chaveAlerta(a) ?? ''
-                                      const marcado = !!chave && alertasAceitos.has(chave)
-                                      return (
-                                        <div className="flex flex-col items-center gap-0.5">
-                                          <div className="flex items-center gap-1">
-                                            <input
-                                              type="text" inputMode="decimal"
-                                              value={divisaoManualDoAlerta[chave] ?? ''}
-                                              placeholder={String(pctAtual)}
-                                              onChange={e => setDivisaoManualDoAlerta(v => ({ ...v, [chave]: e.target.value }))}
-                                              disabled={!marcado || empresaAbsorve}
-                                              className="w-12 bg-gray-900 border border-white/15 rounded px-1 py-0.5 text-[11px] text-white text-right disabled:opacity-40"
-                                              aria-label={`Percentual da ${SOCIO_NAMES[0]} no estorno de ${a.nome}`}
-                                            />
-                                            <span className="text-[10px] text-gray-500">/ {100 - pctAtual}</span>
-                                          </div>
-                                          <span className="text-[9px] text-gray-600">
-                                            {empresaAbsorve
-                                              ? 'empresa paga'
-                                              : det?.fonte === 'manual' ? 'você definiu'
-                                              : origem ? (origem.etiqueta ?? 'fechamento de origem')
-                                              : 'sem origem — confira'}
-                                          </span>
-                                        </div>
-                                      )
-                                    })()}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={!!chaveAlerta(a) && alertasAceitos.has(chaveAlerta(a)!)}
-                                      onChange={() => toggleAlerta(chaveAlerta(a))}
-                                      className="w-4 h-4 accent-red-500 cursor-pointer"
-                                      aria-label={`Abater o estorno de ${a.nome} neste fechamento`}
-                                    />
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            <tfoot>
-                              <tr className="border-t border-red-500/20">
-                                <td colSpan={4} className="px-4 py-2.5 text-right text-gray-400 font-semibold">
-                                  Total a deduzir neste fechamento
-                                  <span className="text-gray-600 font-normal"> ({alertasSelecionados.length} de {alertas.length})</span>:
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-red-400 font-bold">-{formatCurrency(alertasTotal)}</td>
-                                <td colSpan={4} />
-                              </tr>
-                            </tfoot>
-                          </table>
-                        </div>
                       </div>
                     )}
 
