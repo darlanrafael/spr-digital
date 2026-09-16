@@ -204,3 +204,12 @@ test('usuario do modulo de terapeutas nao edita dinheiro do DRE', () => {
   assert.equal(podeEditarCaixa(comercial), false)
   assert.equal(podeEditarCustos(terapeuta(ID_DENISE)), false)
 })
+
+test('sistema:admin (admin do modulo de terapeutas) nao edita dinheiro do DRE', () => {
+  // O caso mais sensivel: adminSistema tem papel 'admin', igual adminDre - se
+  // a checagem fosse so `papel === 'admin'` sem exigir `area === 'dashboard'`,
+  // este admin do OUTRO sistema editaria fechamento/caixa/custo da empresa.
+  assert.equal(podeEditarFechamento(adminSistema), false)
+  assert.equal(podeEditarCaixa(adminSistema), false)
+  assert.equal(podeEditarCustos(adminSistema), false)
+})
