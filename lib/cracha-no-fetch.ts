@@ -80,6 +80,21 @@ export function fetchComCracha(
   }
 }
 
+/**
+ * Para onde mandar quem perdeu a sessao, a partir de onde ele esta.
+ *
+ * Pura de proposito: a decisao de destino e de "ja estou la?" e testavel sem
+ * mexer em window. Modulo de terapeutas vai pro login de terapeutas; o resto
+ * pro login do DRE. Se a pessoa JA esta na tela de destino, devolve null - sem
+ * isso, o redirecionamento entraria em loop na propria tela de login.
+ */
+export function destinoAoPerderSessao(caminhoAtual: string): string | null {
+  const ehModuloDeTerapeutas = caminhoAtual.startsWith('/terapeutas')
+  const destino = ehModuloDeTerapeutas ? '/terapeutas/login' : '/login'
+  if (caminhoAtual === destino) return null
+  return `${destino}?sessao=expirada`
+}
+
 let instalado = false
 
 /** Instala o embrulho uma vez so, no navegador. */
@@ -93,10 +108,7 @@ export function instalarCrachaNoFetch(): void {
       window.localStorage.removeItem(CHAVE_DRE)
       window.localStorage.removeItem(CHAVE_TERAPEUTAS)
     } catch { /* navegador sem storage nao impede o redirecionamento */ }
-    const ehModuloDeTerapeutas = window.location.pathname.startsWith('/terapeutas')
-    const destino = ehModuloDeTerapeutas ? '/terapeutas/login' : '/login'
-    if (window.location.pathname !== destino) {
-      window.location.href = `${destino}?sessao=expirada`
-    }
+    const destino = destinoAoPerderSessao(window.location.pathname)
+    if (destino) window.location.href = destino
   })
 }

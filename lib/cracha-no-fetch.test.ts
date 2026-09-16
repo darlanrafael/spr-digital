@@ -256,3 +256,31 @@ test('SEM cracha guardado, a chamada ainda sai (agora sempre chama, so nao poe h
   assert.equal(chamou, true, 'a chamada tem de acontecer mesmo sem cracha')
   assert.equal(temHeader, false, 'sem cracha, sem header')
 })
+
+test('ATAQUE linha 74: resposta 200 COM motivo no corpo NAO desloga', () => {
+  // Mata o mutante `status === 401 && cb` -> `|| cb`: com ||, um 200 (que traz
+  // motivo por acaso) entraria no bloco e deslogaria. So 401 pode deslogar.
+  let deslogou = false
+  const falso = async () => new Response(JSON.stringify({ motivo: 'vencido' }), { status: 200 })
+  return fetchComCracha(falso as unknown as typeof fetch, () => 'abc', () => { deslogou = true })('/api/sales')
+    .then(() => assert.equal(deslogou, false, 'status 200 nunca desloga, mesmo com motivo no corpo'))
+})
+
+import { destinoAoPerderSessao } from './cracha-no-fetch'
+
+test('destinoAoPerderSessao: modulo de terapeutas vai pro login de terapeutas', () => {
+  assert.equal(destinoAoPerderSessao('/terapeutas/vendas'), '/terapeutas/login?sessao=expirada')
+  assert.equal(destinoAoPerderSessao('/terapeutas/c3d5-abc'), '/terapeutas/login?sessao=expirada')
+})
+
+test('destinoAoPerderSessao: o resto vai pro login do DRE', () => {
+  assert.equal(destinoAoPerderSessao('/fechamentos'), '/login?sessao=expirada')
+  assert.equal(destinoAoPerderSessao('/'), '/login?sessao=expirada')
+})
+
+test('ATAQUE linha 98: quem JA esta no login nao e redirecionado (evita loop)', () => {
+  // O `!== destino`. Se a pessoa ja esta em /login e fosse redirecionada de
+  // novo, entraria em loop infinito de redirect. Devolve null nesse caso.
+  assert.equal(destinoAoPerderSessao('/login'), null)
+  assert.equal(destinoAoPerderSessao('/terapeutas/login'), null)
+})
