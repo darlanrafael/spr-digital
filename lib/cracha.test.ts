@@ -69,3 +69,14 @@ test('precisaRenovar com validade VAZIA nao renova', () => {
   assert.equal(precisaRenovar(undefined), false)
   assert.equal(precisaRenovar(''), false)
 })
+
+test('FRONTEIRA: no instante EXATO do vencimento, precisaRenovar e FALSE', () => {
+  // O ultimo mutante da mutacao: `falta > 0` virando `falta >= 0`. No instante
+  // exato (falta=0), o cracha ja venceu - nao ha o que renovar, tem de ser
+  // FALSE. Sem este teste, trocar `>` por `>=` passava, e um cracha vencido no
+  // segundo exato pediria renovacao em vez de mandar a pessoa pro login.
+  const agora = 1_700_000_000_000
+  assert.equal(precisaRenovar(new Date(agora).toISOString(), agora), false)
+  // e um milissegundo DEPOIS de vencer tambem nao renova (ja passou)
+  assert.equal(precisaRenovar(new Date(agora - 1).toISOString(), agora), false)
+})
