@@ -2,15 +2,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { ehRotaAberta } from '@/lib/rotas-abertas'
-import { CABECALHO_DO_CRACHA, CABECALHOS_DA_IDENTIDADE } from '@/lib/cabecalhos-da-identidade'
-import { crachaVencido, precisaRenovar, novaValidade } from '@/lib/cracha'
-import {
-  contaEncontrada,
-  decidirAcesso,
-  construirCabecalhosDeIdentidade,
-  type RegistroSistema,
-  type RegistroDashboard,
-} from '@/lib/decisao-do-middleware'
+import { CABECALHO_DO_CRACHA } from '@/lib/cabecalhos-da-identidade'
+import { construirCabecalhosDeIdentidade } from '@/lib/decisao-do-middleware'
+import { autenticarPeloCracha, type ClienteDeContas } from '@/lib/autenticacao-do-middleware'
 
 // A porta de entrada de TODA rota de API.
 //
@@ -23,10 +17,11 @@ import {
 // proprio middleware escreve. A rota passa a usar isso no lugar do que o
 // navegador mandou.
 //
-// A decisao (quem foi achado, se venceu, o que escrever) mora em
-// lib/decisao-do-middleware.ts - SEM IO, por isso testavel sem banco e sem
-// servidor. Aqui fica so o IO: ler o cabecalho, consultar o Supabase, e
-// devolver a resposta certa.
+// A consulta ao banco (achar a conta, decidir, renovar) mora em
+// lib/autenticacao-do-middleware.ts, atras de um cliente injetavel - por isso
+// testavel sem rede. A montagem dos cabecalhos mora em
+// lib/decisao-do-middleware.ts, pura. Aqui fica so o resto do IO: ler o
+// cabecalho e devolver a resposta certa.
 
 function recusar(motivo: 'sem_cracha' | 'vencido') {
   return NextResponse.json({
@@ -35,6 +30,19 @@ function recusar(motivo: 'sem_cracha' | 'vencido') {
       : 'Você precisa entrar no sistema para fazer isso.',
     motivo,
   }, { status: 401 })
+}
+
+// Falha de CONSULTA (banco fora do ar, rede, o 525 da Cloudflare que este
+// sistema ja teve - lib/supabase.ts) NUNCA pode virar um 401 com `motivo`:
+// lib/cracha-no-fetch.ts trata qualquer 401-com-motivo como sessao perdida e
+// desloga a pessoa. Um soluco do banco nao pode deslogar todo mundo ao mesmo
+// tempo - por isso 503, sem o campo `motivo`, para o cliente nao confundir
+// "banco indisponivel agora" com "sua conta nao existe". A requisicao em si
+// continua negada (fail-closed): so a ROTULAGEM muda.
+function recusarIndisponivel() {
+  return NextResponse.json({
+    error: 'Não foi possível confirmar sua sessão agora. Tente de novo em instantes.',
+  }, { status: 503 })
 }
 
 export async function middleware(req: NextRequest) {
@@ -50,34 +58,13 @@ export async function middleware(req: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   )
 
-  // Procura nas DUAS areas de login. Sao tabelas independentes e nao se falam.
-  const { data: doSistema } = await client
-    .from('usuarios_sistema')
-    .select('id,email,tipo,terapeuta_id,ativo,session_token_expira_em')
-    .eq('session_token', cracha).eq('ativo', true).maybeSingle()
-
-  const { data: doDashboard } = doSistema ? { data: null } : await client
-    .from('usuarios_dashboard')
-    .select('id,email,role,ativo,session_token_expira_em')
-    .eq('session_token', cracha).eq('ativo', true).maybeSingle()
-
-  const achado = contaEncontrada(doSistema as RegistroSistema | null, doDashboard as RegistroDashboard | null)
-  const decisao = decidirAcesso(achado, crachaVencido(achado?.expiraEm))
-  if (decisao.tipo === 'recusado') return recusar(decisao.motivo)
-
-  // Janela deslizante: enquanto a pessoa usa, o cracha nao vence.
-  if (precisaRenovar(achado!.expiraEm)) {
-    const tabela = doSistema ? 'usuarios_sistema' : 'usuarios_dashboard'
-    const nova = novaValidade()
-    const { error } = await client.from(tabela)
-      .update({ session_token_expira_em: nova }).eq('session_token', cracha)
-    // Falha aqui NAO invalida a chamada: a pessoa ja esta autenticada.
-    if (error) console.error('[middleware] validade nao renovada:', error.message)
-  }
+  const resultado = await autenticarPeloCracha(client as unknown as ClienteDeContas, cracha)
+  if (resultado.tipo === 'falha_de_consulta') return recusarIndisponivel()
+  if (resultado.tipo === 'recusado') return recusar(resultado.motivo)
 
   // Apaga o que veio de fora ANTES de escrever: sem isto, quem chama forjaria
   // a identidade mandando o cabecalho direto e viraria admin.
-  const cabecalhos = construirCabecalhosDeIdentidade(req.headers, decisao.conta)
+  const cabecalhos = construirCabecalhosDeIdentidade(req.headers, resultado.conta)
   return NextResponse.next({ request: { headers: cabecalhos } })
 }
 
