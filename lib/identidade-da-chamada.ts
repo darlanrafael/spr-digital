@@ -42,18 +42,37 @@ export function lerIdentidade(req: Request): Identidade | null {
 }
 
 /**
+ * Sentinela para terapeuta do sistema SEM `terapeuta_id` vinculado (cadastro
+ * incompleto, erro de dado - o campo e `string | null` no banco).
+ *
+ * Nunca pode ser `'all'` nem coincidir com um `terapeuta_id` real: toda linha
+ * de `terapeuta_id` no banco e um UUID nao vazio, entao string vazia nunca
+ * bate com nenhuma. Quem filtra por este valor (`.eq('terapeuta_id', valor)`,
+ * o padrao usado nas rotas) volta lista vazia - fail-CLOSED. A alternativa
+ * (cair no `pedido ?? 'all'`) e o furo que motivou o projeto inteiro,
+ * reaberto na direcao pior: sem id proprio, a pessoa veria TUDO.
+ */
+const SEM_TERAPEUTA_VINCULADO = ''
+
+/**
  * O `terapeuta_id` que vale para esta chamada.
  *
- * Para TERAPEUTA, o parametro do cliente e ignorado: vale o dela. E o furo que
- * motivou o trabalho - hoje a rota obedece o parametro, e a Denise pedindo
- * `all` recebe o faturamento do Pedro.
+ * Para TERAPEUTA, o parametro do cliente e SEMPRE ignorado - mesmo quando
+ * falta o `terapeuta_id` proprio. E o furo que motivou o trabalho: hoje a
+ * rota obedece o parametro, e a Denise pedindo `all` recebe o faturamento do
+ * Pedro. Chavear em "tem terapeutaId" em vez de em "e terapeuta" reabriria o
+ * mesmo furo pela porta de tras: uma terapeuta com `terapeuta_id` nulo
+ * pediria `all` e receberia o faturamento de todo mundo. Por isso o guarda
+ * abaixo e so `area === 'sistema' && papel === 'terapeuta'` - sem o `&&
+ * id.terapeutaId` que havia aqui antes - e quem nao tem vinculo cai no
+ * sentinela, nao no pedido.
  *
  * Para todos os outros o parametro vale. O comercial agenda para as duas
  * terapeutas, e o socio do DRE fica com a visualizacao de hoje por decisao do
  * usuario.
  */
 export function terapeutaIdQueValeu(id: Identidade, pedido: string | null): string {
-  if (id.area === 'sistema' && id.papel === 'terapeuta' && id.terapeutaId) return id.terapeutaId
+  if (id.area === 'sistema' && id.papel === 'terapeuta') return id.terapeutaId || SEM_TERAPEUTA_VINCULADO
   return pedido ?? 'all'
 }
 

@@ -23,7 +23,7 @@ test('o teste usa os MESMOS nomes de cabecalho que o middleware escreve', () => 
 const ID_DENISE = 'c3d598b0-2e43-4376-9492-9176169befe5'
 const ID_PEDRO = 'f5b18738-fe04-43e0-a6ac-d15768cf196c'
 
-const terapeuta = (terapeutaId: string): Identidade =>
+const terapeuta = (terapeutaId: string | null): Identidade =>
   ({ area: 'sistema', papel: 'terapeuta', id: 'u1', email: 'a@b.c', terapeutaId })
 const comercial: Identidade = { area: 'sistema', papel: 'comercial', id: 'u2', email: 'a@b.c', terapeutaId: null }
 const adminSistema: Identidade = { area: 'sistema', papel: 'admin', id: 'u3', email: 'a@b.c', terapeutaId: null }
@@ -77,6 +77,36 @@ test('CRITICO: terapeuta pedindo o id de OUTRA recebe o proprio', () => {
 
 test('terapeuta sem pedir nada recebe o proprio', () => {
   assert.equal(terapeutaIdQueValeu(terapeuta(ID_DENISE), null), ID_DENISE)
+})
+
+test('CRITICO: terapeuta SEM terapeutaId (cadastro incompleto) nao vaza para todo mundo', () => {
+  // O guarda tinha `&& id.terapeutaId` so para o TypeScript estreitar
+  // string|null -> string. Efeito colateral perigoso: terapeuta_id nulo
+  // (campo e string|null no banco - cadastro incompleto, erro de vinculo)
+  // caia fora do `if` e ia para `pedido ?? 'all'`, obedecendo o parametro do
+  // cliente. Uma terapeuta sem vinculo pedindo 'all' recebia o faturamento de
+  // TODO MUNDO - o mesmo furo que este modulo existe para fechar, reaberto
+  // na direcao fail-OPEN. A regra certa fail-CLOSED: sem id proprio, nao ve
+  // nada, nunca 'all' e nunca o id de outra pessoa.
+  const semVinculo = terapeuta(null)
+  const resultado = terapeutaIdQueValeu(semVinculo, 'all')
+  assert.notEqual(resultado, 'all')
+  assert.notEqual(resultado, ID_PEDRO)
+  assert.equal(resultado, '')
+})
+
+test('CRITICO: terapeuta SEM terapeutaId pedindo o id de OUTRA tambem nao recebe', () => {
+  const semVinculo = terapeuta(null)
+  const resultado = terapeutaIdQueValeu(semVinculo, ID_PEDRO)
+  assert.notEqual(resultado, ID_PEDRO)
+  assert.equal(resultado, '')
+})
+
+test('terapeuta com terapeutaId vazio (string, nao null) tambem cai no sentinela', () => {
+  // A mesma falha de dado pode chegar como '' em vez de null (ex.: header
+  // vazio). O sentinela e o mesmo para os dois - ambos sao "sem vinculo".
+  const vazio = terapeuta('')
+  assert.equal(terapeutaIdQueValeu(vazio, 'all'), '')
 })
 
 test('admin e comercial continuam podendo pedir qualquer um, inclusive all', () => {
