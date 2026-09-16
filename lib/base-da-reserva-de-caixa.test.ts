@@ -136,3 +136,26 @@ test('sem nenhum produto fora da reserva, a conta e a simples de 30/70', () => {
   assert.equal(r.reservaCaixa, 20_000 * PERCENTUAL_DA_RESERVA)
   assert.equal(r.lucroReal, 20_000 * (1 - PERCENTUAL_DA_RESERVA))
 })
+
+// ── toggle da reserva de caixa ──────────────────────────────────────────────
+const linhasSimples = [{ nome: 'CSP - Curso', liquidoPosImpostos: 20_000 }] // sofre reserva
+
+test('reservarCaixa true (padrao): reserva 30% do lucro positivo', () => {
+  const r = divisaoDoLucro({ linhas: linhasSimples, faturamentoLiquido: 20_000, totalCustos: 10_000, repasseTerapeutasTotal: 0 })
+  assert.equal(r.reservaCaixa, 3_000)   // 30% de 10.000
+  assert.equal(r.lucroReal, 7_000)      // 70%
+})
+
+test('reservarCaixa false: NAO reserva, 100% vai pros socios', () => {
+  const r = divisaoDoLucro({ linhas: linhasSimples, faturamentoLiquido: 20_000, totalCustos: 10_000, repasseTerapeutasTotal: 0, reservarCaixa: false })
+  assert.equal(r.reservaCaixa, 0)
+  assert.equal(r.lucroReal, 10_000)     // 100%
+})
+
+test('prejuizo: reserva 0 independe do toggle', () => {
+  const r1 = divisaoDoLucro({ linhas: linhasSimples, faturamentoLiquido: 5_000, totalCustos: 10_000, repasseTerapeutasTotal: 0, reservarCaixa: true })
+  const r2 = divisaoDoLucro({ linhas: linhasSimples, faturamentoLiquido: 5_000, totalCustos: 10_000, repasseTerapeutasTotal: 0, reservarCaixa: false })
+  assert.equal(r1.reservaCaixa, 0)
+  assert.equal(r2.reservaCaixa, 0)
+  assert.equal(r1.lucroReal, r2.lucroReal) // prejuizo identico nos dois
+})

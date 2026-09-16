@@ -59,6 +59,14 @@ export function divisaoDoLucro(params: {
   totalCustos: number
   /** Soma de TODOS os repasses a terapeuta, mentoria e diagnostico. */
   repasseTerapeutasTotal: number
+  /**
+   * Reservar 30% do lucro positivo para o caixa? Default `true`.
+   *
+   * Quando `false`, os 100% do lucro que sofreria reserva vao direto para o
+   * Lucro Real (socios). O caso de prejuizo nao muda: reserva continua 0 nos
+   * dois casos, porque nao ha como reservar 30% de um valor negativo.
+   */
+  reservarCaixa?: boolean
 }): {
   /** Receita liquida dos produtos que NAO sofrem reserva. */
   faturamentoLiquidoForaDaReserva: number
@@ -78,9 +86,14 @@ export function divisaoDoLucro(params: {
   // Sem reserva quando da prejuizo: nao ha como reservar 30% de um valor
   // negativo. Nesse caso o prejuizo inteiro vira Lucro Real negativo, para ser
   // rateado entre os socios normalmente.
-  const reservaCaixa = lucroBrutoComReserva > 0 ? lucroBrutoComReserva * PERCENTUAL_DA_RESERVA : 0
+  //
+  // `reservarCaixa: false` desliga a reserva mesmo com lucro positivo: os
+  // 100% vao para o Lucro Real. O prejuizo nao muda com o toggle - ja e 0 nos
+  // dois casos.
+  const aplicaReserva = (params.reservarCaixa ?? true) && lucroBrutoComReserva > 0
+  const reservaCaixa = aplicaReserva ? lucroBrutoComReserva * PERCENTUAL_DA_RESERVA : 0
   const lucroDaParteComReserva = lucroBrutoComReserva > 0
-    ? lucroBrutoComReserva * (1 - PERCENTUAL_DA_RESERVA)
+    ? lucroBrutoComReserva * (aplicaReserva ? (1 - PERCENTUAL_DA_RESERVA) : 1)
     : lucroBrutoComReserva
 
   const lucroReal = lucroDaParteComReserva
