@@ -114,6 +114,20 @@ export function podeEditarCustos(id: Identidade): boolean {
 }
 
 /**
+ * Alterar venda (`PATCH /api/sales`) e converter moeda de venda.
+ *
+ * Provado em 15/09/2026 que a terapeuta alcanca as duas hoje: com a credencial
+ * real da Denise, `PATCH /api/sales` respondeu 200 "success". Ela mudava o
+ * status de qualquer venda - inclusive marcar como reembolsada uma que nao foi.
+ *
+ * Terapeuta fica de fora. Comercial trabalha com a venda; socio e leitura.
+ */
+export function podeMexerEmVenda(id: Identidade): boolean {
+  if (id.area === 'sistema') return id.papel === 'admin' || id.papel === 'comercial'
+  return id.papel === 'admin'
+}
+
+/**
  * O fechamento sem a divisao entre socios.
  *
  * Copia em vez de alterar: mexer no objeto original faria o proximo pedido, de

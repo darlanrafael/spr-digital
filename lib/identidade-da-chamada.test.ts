@@ -5,6 +5,7 @@ import {
   lerIdentidade, terapeutaIdQueValeu, podeAdministrar, deveEsconderDivisaoDeSocios,
   semDivisaoDeSocios,
   podeEditarFechamento, podeEditarCaixa, podeEditarCustos,
+  podeMexerEmVenda,
   type Identidade,
 } from './identidade-da-chamada'
 
@@ -212,4 +213,18 @@ test('sistema:admin (admin do modulo de terapeutas) nao edita dinheiro do DRE', 
   assert.equal(podeEditarFechamento(adminSistema), false)
   assert.equal(podeEditarCaixa(adminSistema), false)
   assert.equal(podeEditarCustos(adminSistema), false)
+})
+
+test('PROVADO EM PRODUCAO: terapeuta NAO altera venda nem converte moeda', () => {
+  // Testado com a credencial real da Denise: PATCH /api/sales respondeu 200
+  // "success", e converter-moeda passou pela permissao (404 so por id falso).
+  assert.equal(podeMexerEmVenda(terapeuta(ID_DENISE)), false)
+})
+
+test('comercial e admin mexem em venda; terapeuta e socio nao', () => {
+  // O comercial trabalha com a venda; o socio e leitura no DRE.
+  assert.equal(podeMexerEmVenda(comercial), true)
+  assert.equal(podeMexerEmVenda(adminSistema), true)
+  assert.equal(podeMexerEmVenda(adminDre), true)
+  assert.equal(podeMexerEmVenda(socio), false)
 })

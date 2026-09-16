@@ -400,6 +400,47 @@ async function main() {
     }
   }
 
+  console.log('\n=== COM CRACHA DE TERAPEUTA: nao mexe em venda (Tarefa 14) ===')
+  // PROVADO em producao em 15/09/2026 com a credencial real da Denise:
+  // PATCH /api/sales respondeu 200 "success" (mudava o status de qualquer
+  // venda - inclusive marcar como reembolsada uma que nao foi), e
+  // converter-moeda passou pela permissao (404 so por id falso). A prova do
+  // PATCH usa uma venda REAL do espelho (venda-diag-teste) para poder
+  // conferir que o status NAO mudou - nao basta o 403, precisa provar que
+  // nada foi escrito. converter-moeda usa id falso: nenhuma venda e tocada
+  // de qualquer forma, o 403 tem de vir da guarda de identidade.
+  const ID_VENDA_DIAG_TESTE = 'venda-diag-teste'
+  if (!crachaTerapeuta) {
+    pular('Denise nao mexe em venda', 'a Denise precisa ter entrado uma vez')
+  } else {
+    const { data: antesRaw } = await c.from('sales').select('status').eq('id', ID_VENDA_DIAG_TESTE).maybeSingle()
+    const statusAntes = (antesRaw as { status: string } | null)?.status
+    if (statusAntes === undefined) {
+      pular('Denise NAO altera venda (era 200 antes)',
+        `a venda ${ID_VENDA_DIAG_TESTE} nao existe neste ambiente - fixture do espelho`)
+    } else {
+      conferir('Denise NAO altera venda (era 200 antes)',
+        await status('/api/sales', crachaTerapeuta, 'PATCH', JSON.stringify({ id: ID_VENDA_DIAG_TESTE, status: 'aprovada' })), 403)
+      const { data: depoisRaw } = await c.from('sales').select('status').eq('id', ID_VENDA_DIAG_TESTE).maybeSingle()
+      const statusDepois = (depoisRaw as { status: string } | null)?.status
+      conferir('a venda NAO foi alterada pela tentativa recusada', statusDepois, statusAntes)
+    }
+    conferir('Denise NAO converte moeda (passava a permissao antes)',
+      await status('/api/sales/converter-moeda', crachaTerapeuta, 'POST', JSON.stringify({ sale_id: 'x', cambio: 5, usuario_email: 'x' })), 403)
+  }
+
+  // Comercial trabalha com a venda: tem de passar da guarda de papel. ID
+  // falso de proposito - o que importa aqui e so o codigo NAO ser 403; um
+  // id inexistente nao casa nenhuma linha, entao nada e alterado.
+  if (!crachaComercial) {
+    pular('comercial passa da guarda de venda', 'nenhum comercial entrou ainda')
+  } else {
+    conferir('comercial passa da guarda em PATCH /api/sales (nao e 403)',
+      (await status('/api/sales', crachaComercial, 'PATCH', JSON.stringify({ id: 'x', status: 'aprovada' }))) === 403, false)
+    conferir('comercial passa da guarda em POST /api/sales/converter-moeda (nao e 403)',
+      (await status('/api/sales/converter-moeda', crachaComercial, 'POST', JSON.stringify({ sale_id: 'x', cambio: 5, usuario_email: 'x' }))) === 403, false)
+  }
+
   if (falhas > 0) {
     console.log(`\n${falhas} FALHA(S)\n`)
     process.exit(1)

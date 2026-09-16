@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSales, addSale, updateSaleStatus } from '@/lib/services'
+import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -26,6 +27,11 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) {
+      return NextResponse.json({ error: 'Você não tem permissão para alterar vendas.' }, { status: 403 })
+    }
     const { id, status, dataReembolso } = await req.json()
     if (!id || !status) {
       return NextResponse.json({ error: 'id e status são obrigatórios' }, { status: 400 })

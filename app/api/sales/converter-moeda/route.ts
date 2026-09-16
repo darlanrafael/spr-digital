@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { converterParaReais, precisaConverter, MOEDA_DA_CASA } from '@/lib/moeda-da-venda'
+import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 
 // Converte para real uma venda que entrou em moeda estrangeira.
 //
@@ -13,6 +14,18 @@ import { converterParaReais, precisaConverter, MOEDA_DA_CASA } from '@/lib/moeda
 // preenchida, e a mesma gravacao que converte limpa esse campo. Chamar duas
 // vezes nao multiplica o valor duas vezes - a segunda chamada e recusada.
 export async function POST(req: NextRequest) {
+  // QUEM ESTA CHAMANDO, pelo cracha que o middleware confere (guarda de
+  // papel - Tarefa 14). Vem do cabecalho, entao roda ANTES de tocar em
+  // req.json() ou banco: provado em 15/09/2026 que uma terapeuta alcancava
+  // esta rota (404 "Venda nao encontrada" - passou da permissao, so nao
+  // achou o id falso). Comercial e admin trabalham com venda; terapeuta e
+  // socio nao.
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeMexerEmVenda(quem)) {
+    return NextResponse.json({ error: 'Você não tem permissão para converter vendas.' }, { status: 403 })
+  }
+
   // Corpo protegido: sem isto, um JSON malformado derruba a rota com 500 e sem
   // mensagem util. Achado na auditoria das rotas em 15/09/2026.
   let corpo: { sale_id?: string; cambio?: unknown; usuario_email?: string }
@@ -23,20 +36,19 @@ export async function POST(req: NextRequest) {
   }
   const { sale_id, cambio, usuario_email } = corpo
 
-  // QUEM ESTA CHAMANDO. Esta rota GRAVA DINHEIRO - ela reescreve os quatro
-  // valores de uma venda - e subiu em 11/09/2026 sem nenhuma verificacao:
-  // qualquer um que soubesse a URL podia converter uma venda com o cambio que
-  // quisesse. Achado na auditoria das rotas de 15/09/2026, junto com o
-  // `req.json()` desprotegido e a falta de try/catch.
-  //
-  // Mesmo criterio das outras rotas de dinheiro do projeto: o e-mail precisa
-  // existir em `usuarios_sistema` e estar ativo. Nao e autenticacao de verdade
-  // (esta na lista de pendencias do MD), mas fecha a porta anonima.
+  // CAMADA EXTRA, historica: esta rota GRAVA DINHEIRO - ela reescreve os
+  // quatro valores de uma venda - e subiu em 11/09/2026 sem nenhuma
+  // verificacao: qualquer um que soubesse a URL podia converter uma venda
+  // com o cambio que quisesse. Achado na auditoria das rotas de 15/09/2026,
+  // junto com o `req.json()` desprotegido e a falta de try/catch. A guarda
+  // por identidade acima ja fecha a porta por papel; esta checagem continua
+  // como camada a mais, mesmo criterio das outras rotas de dinheiro do
+  // projeto: o e-mail precisa existir em `usuarios_sistema` e estar ativo.
   const email = String(usuario_email ?? '').trim().toLowerCase()
   if (!email) return NextResponse.json({ error: 'usuario_email é obrigatório' }, { status: 401 })
-  const { data: quem } = await getSupabaseAdmin()
+  const { data: usuarioDoEmail } = await getSupabaseAdmin()
     .from('usuarios_sistema').select('id').ilike('email', email).eq('ativo', true).maybeSingle()
-  if (!quem) return NextResponse.json({ error: 'Usuário não autorizado' }, { status: 403 })
+  if (!usuarioDoEmail) return NextResponse.json({ error: 'Usuário não autorizado' }, { status: 403 })
 
   if (!sale_id) return NextResponse.json({ error: 'sale_id é obrigatório' }, { status: 400 })
   const taxa = Number(cambio)
