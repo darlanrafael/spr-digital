@@ -252,3 +252,83 @@ git commit -m "feat: busca por nome no bloco Produtos deste periodo (um campo po
 - Câmbio (tópico 2): SEM tarefa - já funciona. Documentado na spec como confirmado.
 - "Empresa absorve" por linha: fora do escopo (fica global).
 - Ao fim das 4 tarefas: `npx tsc --noEmit`, `npm test`, `npm run preflight` (0 grave), e uma passada final na tela de fechamento no espelho antes de qualquer deploy.
+
+---
+
+# Adendo (16/09) - ajustes vistos na prova de tela
+
+Três itens novos, na mesma tela/branch. O da reserva mexe em dinheiro (TDD + prova no espelho).
+
+### Task 5: toggle da Reserva de Caixa (lib pura, TDD)
+
+**Files:** Modify `lib/base-da-reserva-de-caixa.ts` (funcao `divisaoDoLucro`, 54-96); Test `lib/base-da-reserva-de-caixa.test.ts`.
+
+**Interfaces:** `divisaoDoLucro` ganha o parametro opcional `reservarCaixa?: boolean` (default true - callers e testes antigos seguem iguais). Quando `false`, NAO reserva os 30% mesmo com lucro positivo: `reservaCaixa = 0` e os 100% do `lucroBrutoComReserva` positivo vao pro `lucroReal` (socios). Caso negativo (prejuizo) NAO muda (ja e reserva 0).
+
+- [ ] **Step 1: testes que falham** (em `lib/base-da-reserva-de-caixa.test.ts`)
+
+```ts
+import { divisaoDoLucro } from './base-da-reserva-de-caixa'
+const linhas = [{ nome: 'CSP - Curso', liquidoPosImpostos: 20_000 }] // sofre reserva
+test('reservarCaixa true (padrao): reserva 30% do lucro positivo', () => {
+  const r = divisaoDoLucro({ linhas, faturamentoLiquido: 20_000, totalCustos: 10_000, repasseTerapeutasTotal: 0 })
+  assert.equal(r.reservaCaixa, 3_000)   // 30% de 10.000
+  assert.equal(r.lucroReal, 7_000)      // 70%
+})
+test('reservarCaixa false: NAO reserva, 100% vai pros socios', () => {
+  const r = divisaoDoLucro({ linhas, faturamentoLiquido: 20_000, totalCustos: 10_000, repasseTerapeutasTotal: 0, reservarCaixa: false })
+  assert.equal(r.reservaCaixa, 0)
+  assert.equal(r.lucroReal, 10_000)     // 100%
+})
+test('prejuizo: reserva 0 independe do toggle', () => {
+  const r1 = divisaoDoLucro({ linhas, faturamentoLiquido: 5_000, totalCustos: 10_000, repasseTerapeutasTotal: 0, reservarCaixa: true })
+  const r2 = divisaoDoLucro({ linhas, faturamentoLiquido: 5_000, totalCustos: 10_000, repasseTerapeutasTotal: 0, reservarCaixa: false })
+  assert.equal(r1.reservaCaixa, 0)
+  assert.equal(r2.reservaCaixa, 0)
+  assert.equal(r1.lucroReal, r2.lucroReal) // prejuizo identico nos dois
+})
+```
+
+- [ ] **Step 2: rodar e ver falhar** - `npx tsx --test lib/base-da-reserva-de-caixa.test.ts` (FAIL: `reservarCaixa` ignorado).
+- [ ] **Step 3: implementar** - em `divisaoDoLucro`, acrescentar `reservarCaixa?: boolean` ao params e trocar o calculo:
+
+```ts
+const aplicaReserva = (params.reservarCaixa ?? true) && lucroBrutoComReserva > 0
+const reservaCaixa = aplicaReserva ? lucroBrutoComReserva * PERCENTUAL_DA_RESERVA : 0
+const lucroDaParteComReserva = lucroBrutoComReserva > 0
+  ? lucroBrutoComReserva * (aplicaReserva ? (1 - PERCENTUAL_DA_RESERVA) : 1)
+  : lucroBrutoComReserva
+```
+
+- [ ] **Step 4: rodar e ver passar** - o arquivo de teste + `npm test` (suite inteira verde, testes antigos de reserva intactos).
+- [ ] **Step 5: commit** - `git commit -m "feat: divisaoDoLucro aceita reservarCaixa opcional (default true)"`
+
+### Task 6: ligar o toggle da Reserva na tela
+
+**Files:** Modify `app/fechamentos/page.tsx` (estado + chamada de `divisaoDoLucro` ~510 + card ~1630-1632 + handleConfirm ~814-862).
+
+- [ ] **Step 1:** estado `const [reservarCaixa, setReservarCaixa] = useState(true)` perto dos outros estados do fechamento.
+- [ ] **Step 2:** passar `reservarCaixa` na chamada de `divisaoDoLucro` (~510).
+- [ ] **Step 3:** no card "Reserva de Caixa (30%)" (~1630-1632), acrescentar um toggle (checkbox/switch) ligado a `reservarCaixa`/`setReservarCaixa`, com texto claro: ligado = "reservados pro caixa"; desligado = "NAO reservar; os 30% entram na divisao dos socios". Quando desligado, o valor mostrado ja sera R$ 0,00 (vem do calculo).
+- [ ] **Step 4:** no `handleConfirm`, o lancamento da reserva no Caixa (~814-822) e a mensagem (~862) so acontecem se `reservaCaixa > 0` (quando desligado, reservaCaixa=0, nao lanca entrada de caixa nem promete reserva).
+- [ ] **Step 5:** `npx tsc --noEmit` e `npm test` verdes.
+- [ ] **Step 6:** prova na tela (espelho, controlador): com lucro positivo, ligado reserva 30% / desligado 0 e os 30% vao pros socios.
+- [ ] **Step 7:** commit.
+
+### Task 7: "A empresa absorve" sempre visivel
+
+**Files:** Modify `app/fechamentos/page.tsx:1782`.
+
+- [ ] **Step 1:** na condicao `{alertas.length > 0 && alertasSelecionados.length > 0 && podeVerRepasse && (...)}` remover o `alertasSelecionados.length > 0`, ficando `{alertas.length > 0 && podeVerRepasse && (...)}` - o bloco passa a aparecer sempre que houver reembolsos na lista, mesmo sem nenhum marcado.
+- [ ] **Step 2:** `npx tsc --noEmit` e `npm test` verdes.
+- [ ] **Step 3:** commit.
+
+### Task 8: etiqueta "mentoria do Pedro (65/35)"
+
+**Files:** Modify `app/fechamentos/page.tsx` (label da coluna "Quem absorve", ~1741-1745).
+
+- [ ] **Step 1:** na cadeia de label, acrescentar um caso para `det?.fonte === 'mentoria'` que mostre "mentoria do Pedro (65/35)" (ou texto equivalente claro), ANTES do fallback `'sem origem — confira'`. Ordem: empresa paga > manual ('voce definiu') > mentoria ('mentoria do Pedro 65/35') > origem (etiqueta) > 'sem origem — confira'.
+- [ ] **Step 2:** `npx tsc --noEmit` e `npm test` verdes.
+- [ ] **Step 3:** commit.
+
+Ordem: Task 5 (dinheiro, TDD) -> 6 (fiacao do toggle) -> 7 (empresa absorve) -> 8 (etiqueta). Ao fim, prova na tela no espelho e revisao final.
