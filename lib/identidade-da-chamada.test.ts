@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   lerIdentidade, terapeutaIdQueValeu, podeAdministrar, deveEsconderDivisaoDeSocios,
+  semDivisaoDeSocios,
   type Identidade,
 } from './identidade-da-chamada'
 
@@ -147,4 +148,36 @@ test('a divisao entre socios some SO para o socio', () => {
   assert.equal(deveEsconderDivisaoDeSocios(adminDre), false)
   assert.equal(deveEsconderDivisaoDeSocios(adminSistema), false)
   assert.equal(deveEsconderDivisaoDeSocios(comercial), false)
+})
+
+test('semDivisaoDeSocios tira os valores e mantem o resto do fechamento', () => {
+  const fechamentos = [{
+    id: 'close_1', lucroReal: 5863.44, faturamentoBruto: 90000,
+    socios: [
+      { nome: 'SPR DIGITAL LTDA', valor: 2931.72, repasse_final: 2931.72 },
+      { nome: 'Pedro Roncada', valor: 2931.72, repasse_final: 2931.72 },
+    ],
+  }]
+  const limpo = semDivisaoDeSocios(fechamentos)
+  assert.equal(limpo[0].id, 'close_1', 'o resto do fechamento continua la')
+  assert.equal(limpo[0].lucroReal, 5863.44, 'o lucro real ele ve - so a divisao some')
+  assert.deepEqual(limpo[0].socios, [], 'a divisao entre socios sai')
+})
+
+test('semDivisaoDeSocios nao quebra com fechamento sem socios', () => {
+  // `socios: undefined` e nao `{ id: 'x' }` puro: o generico e
+  // `T extends { socios?: unknown[] }`, e no modo estrito um objeto sem a chave
+  // `socios` nao casa com o tipo - reprova no `tsc --noEmit`, que e portao de
+  // commit. Com a chave presente (mesmo undefined), casa. Provado em 15/09/2026.
+  assert.deepEqual(
+    semDivisaoDeSocios([{ id: 'x', socios: undefined }]),
+    [{ id: 'x', socios: [] }],
+  )
+})
+
+test('semDivisaoDeSocios NAO altera o original', () => {
+  // Se alterasse, o mesmo objeto voltaria vazio para o admin na chamada seguinte.
+  const original = [{ id: 'c', socios: [{ nome: 'A', valor: 1 }] }]
+  semDivisaoDeSocios(original)
+  assert.equal(original[0].socios.length, 1)
 })

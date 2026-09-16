@@ -85,3 +85,13 @@ export function podeAdministrar(id: Identidade): boolean {
 export function deveEsconderDivisaoDeSocios(id: Identidade): boolean {
   return id.area === 'dashboard' && id.papel === 'socio'
 }
+
+/**
+ * O fechamento sem a divisao entre socios.
+ *
+ * Copia em vez de alterar: mexer no objeto original faria o proximo pedido, de
+ * um admin, receber a lista ja esvaziada.
+ */
+export function semDivisaoDeSocios<T extends { socios?: unknown[] }>(fechamentos: T[]): T[] {
+  return fechamentos.map(f => ({ ...f, socios: [] }))
+}
