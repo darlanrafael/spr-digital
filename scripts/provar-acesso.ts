@@ -322,9 +322,10 @@ async function main() {
 
   console.log('\n=== COM CRACHA DE COMERCIAL: administracao recusada ===')
   const { data: com } = await c.from('usuarios_sistema')
-    .select('session_token,nome').eq('tipo', 'comercial')
+    .select('session_token,nome,email').eq('tipo', 'comercial')
     .not('session_token', 'is', null).limit(1).maybeSingle()
   const crachaComercial = (com as { session_token: string | null } | null)?.session_token
+  const emailComercial = (com as { email: string | null } | null)?.email ?? ''
   if (!crachaComercial) {
     pular('administracao com cracha de comercial', 'nenhum comercial entrou ainda')
   } else {
@@ -432,13 +433,26 @@ async function main() {
   // Comercial trabalha com a venda: tem de passar da guarda de papel. ID
   // falso de proposito - o que importa aqui e so o codigo NAO ser 403; um
   // id inexistente nao casa nenhuma linha, entao nada e alterado.
+  //
+  // converter-moeda manda o EMAIL REAL do proprio comercial: a rota tem uma
+  // camada extra e mais antiga (usuario_email precisa existir em
+  // usuarios_sistema e estar ativo, ver comentario na rota) que roda DEPOIS
+  // da guarda nova. Um e-mail falso cai nessa camada e devolve 403 pelo
+  // motivo ERRADO, mascarando exatamente o que esta prova quer medir - se
+  // isso acontecer, a prova mede a camada antiga, nao a guarda desta tarefa.
   if (!crachaComercial) {
     pular('comercial passa da guarda de venda', 'nenhum comercial entrou ainda')
   } else {
     conferir('comercial passa da guarda em PATCH /api/sales (nao e 403)',
       (await status('/api/sales', crachaComercial, 'PATCH', JSON.stringify({ id: 'x', status: 'aprovada' }))) === 403, false)
-    conferir('comercial passa da guarda em POST /api/sales/converter-moeda (nao e 403)',
-      (await status('/api/sales/converter-moeda', crachaComercial, 'POST', JSON.stringify({ sale_id: 'x', cambio: 5, usuario_email: 'x' }))) === 403, false)
+    if (!emailComercial) {
+      pular('comercial passa da guarda em POST /api/sales/converter-moeda',
+        'o comercial logado nao tem email cadastrado em usuarios_sistema')
+    } else {
+      conferir('comercial passa da guarda em POST /api/sales/converter-moeda (nao e 403)',
+        (await status('/api/sales/converter-moeda', crachaComercial, 'POST',
+          JSON.stringify({ sale_id: 'x', cambio: 5, usuario_email: emailComercial }))) === 403, false)
+    }
   }
 
   if (falhas > 0) {
