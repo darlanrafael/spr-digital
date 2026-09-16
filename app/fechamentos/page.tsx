@@ -80,6 +80,9 @@ function FechamentosContent() {
 
   type PeriodoGrupo = { id: string; inicio: string; fim: string; produtos: string[] }
   const [periodosGrupos, setPeriodosGrupos] = useState<PeriodoGrupo[]>([])
+  // Busca por nome dentro de "Produtos deste período" — uma chave por período (g.id),
+  // pra digitar num período não filtrar a lista dos outros.
+  const [buscaPorPeriodo, setBuscaPorPeriodo] = useState<Record<string, string>>({})
   const [etiqueta, setEtiqueta] = useState('')
   const [etiquetaCor, setEtiquetaCor] = useState<CorEtiqueta>(COR_PADRAO)
 
@@ -1301,8 +1304,29 @@ function FechamentosContent() {
                             </div>
                           </div>
                           <label className="block text-xs text-gray-400 mb-1.5">Produtos deste período</label>
+                          <div className="relative mb-2">
+                            <Search className="w-3.5 h-3.5 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="text"
+                              value={buscaPorPeriodo[g.id] ?? ''}
+                              onChange={e => setBuscaPorPeriodo(prev => ({ ...prev, [g.id]: e.target.value }))}
+                              placeholder={`Buscar entre ${availableProducts.length} produtos (ex: mentoria pedro)`}
+                              className="w-full bg-gray-800/60 border border-white/10 rounded-lg pl-9 pr-16 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500/50"
+                              aria-label="Buscar produto pelo nome neste período"
+                            />
+                            {(buscaPorPeriodo[g.id] ?? '').trim().length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setBuscaPorPeriodo(prev => ({ ...prev, [g.id]: '' }))}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 px-2 py-1 rounded text-[11px] text-gray-400 hover:text-white hover:bg-white/10"
+                                aria-label="Limpar busca"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                           <div className="flex flex-wrap gap-2">
-                            {availableProducts.map(p => {
+                            {filtrarProdutos(availableProducts, buscaPorPeriodo[g.id] ?? '').map(p => {
                               const atribuidoAqui = g.produtos.includes(p.id)
                               const atribuidoEmOutro = !atribuidoAqui && produtoParaGrupo[p.id] && produtoParaGrupo[p.id].id !== g.id
                               return (
