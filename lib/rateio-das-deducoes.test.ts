@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa,
+  divisaoDeMentoriaPedro,
 } from './rateio-das-deducoes'
 
 const SPR = 'SPR DIGITAL LTDA'
@@ -252,4 +253,44 @@ test('dois fechamentos com a MESMA data: a escolha e estavel e nao quebra', () =
   assert.equal(r1?.closingId, r2?.closingId, 'a escolha tem que ser estavel')
   assert.equal(r1?.closingId, 'primeiro', 'no empate vale o primeiro da lista')
   assert.equal(r1?.divisao[SPR2], 50)
+})
+
+// classificacao por produto (lista explicita, ancorada no dado)
+test('mentoria particular/individual do Pedro -> 35/65', () => {
+  assert.deepEqual(divisaoDeMentoriaPedro('Mentoria Particular - Pedro Roncada'),
+    { 'SPR DIGITAL LTDA': 35, 'Pedro Roncada': 65 })
+  assert.deepEqual(divisaoDeMentoriaPedro('Mentoria - Individual Pedro Roncada'),
+    { 'SPR DIGITAL LTDA': 35, 'Pedro Roncada': 65 })
+})
+test('acento/caixa nao quebram a classificacao', () => {
+  assert.deepEqual(divisaoDeMentoriaPedro('  mentoria particular - pedro roncada '),
+    { 'SPR DIGITAL LTDA': 35, 'Pedro Roncada': 65 })
+})
+test('grupo do Pedro e mentoria da Denise NAO sao 65/35', () => {
+  assert.equal(divisaoDeMentoriaPedro('MENTORIA EM GRUPO - PEDRO RONCADA'), null)
+  assert.equal(divisaoDeMentoriaPedro('Mentoria em grupo- Pedro Roncada'), null)
+  assert.equal(divisaoDeMentoriaPedro('Mentoria Individual - Denise'), null)
+  assert.equal(divisaoDeMentoriaPedro('Mentoria Particular - Pedro | Denise'), null)
+})
+
+// o degrau novo na prioridade: manual > origem > mentoriaPedro > fechamento
+const F = { 'SPR DIGITAL LTDA': 50, 'Pedro Roncada': 50 } // fechamento atual (IAR 50/50)
+const MP = { 'SPR DIGITAL LTDA': 35, 'Pedro Roncada': 65 }
+test('sem origem, mentoria do Pedro usa 65/35 (o caso Miguel)', () => {
+  const r = divisaoQueVale({ origem: null, mentoriaPedro: MP, divisaoDoFechamento: F })
+  assert.deepEqual(r, { divisao: MP, fonte: 'mentoria' })
+})
+test('sem origem e sem ser mentoria do Pedro, cai no fechamento (50/50)', () => {
+  const r = divisaoQueVale({ origem: null, mentoriaPedro: null, divisaoDoFechamento: F })
+  assert.deepEqual(r, { divisao: F, fonte: 'fechamento' })
+})
+test('com origem, a origem manda (mentoriaPedro nao interfere)', () => {
+  const origem = { divisao: F, closingId: 'c1' }
+  const r = divisaoQueVale({ origem, mentoriaPedro: MP, divisaoDoFechamento: F })
+  assert.equal(r.fonte, 'origem')
+})
+test('escolha manual sobrepoe tudo, inclusive mentoriaPedro', () => {
+  const manual = { 'SPR DIGITAL LTDA': 20, 'Pedro Roncada': 80 }
+  const r = divisaoQueVale({ origem: null, escolhaManual: manual, mentoriaPedro: MP, divisaoDoFechamento: F })
+  assert.deepEqual(r, { divisao: manual, fonte: 'manual' })
 })

@@ -1,4 +1,5 @@
 import type { Closing, ClosingAlert } from '@/types'
+import { normalizar } from './busca-de-produto'
 
 // Quem absorve cada reembolso descontado num fechamento, e em que proporcao.
 //
@@ -151,15 +152,39 @@ export function deducoesPorSocio(itens: DeducaoRateada[], socios: string[]): Rec
  * fecha pode saber de um acordo que o historico nao conta; e a do fechamento
  * atual e o ultimo recurso, que era o comportamento ANTIGO aplicado a tudo.
  */
+// Os DOIS produtos que, historicamente, sempre foram rateados 35/65 (SPR/Pedro).
+// Lista explicita, ancorada no dado: os dois fechamentos "MENTORIAS - PEDRO"
+// (SPR 35 / Pedro 65) continham EXATAMENTE estes dois produtos, e mais nenhum -
+// nem o de grupo do Pedro, nem os da Denise. Conferido no banco em 16/09/2026.
+// Nao e padrao de nome ("mentoria + pedro" pegaria o grupo por engano); e uma
+// lista curta, so para o caso SEM fechamento de origem (o unico que erra hoje).
+export const PRODUTOS_MENTORIA_PEDRO_65_35 = [
+  'Mentoria Particular - Pedro Roncada',
+  'Mentoria - Individual Pedro Roncada',
+]
+
+const NOMES_65_35 = new Set(PRODUTOS_MENTORIA_PEDRO_65_35.map(normalizar))
+
+/** A divisao 35/65 quando o produto e uma das mentorias individuais do Pedro; senao null. */
+export function divisaoDeMentoriaPedro(produto: string): DivisaoSocios | null {
+  if (!produto) return null
+  return NOMES_65_35.has(normalizar(produto))
+    ? { 'SPR DIGITAL LTDA': 35, 'Pedro Roncada': 65 }
+    : null
+}
+
 export function divisaoQueVale(params: {
   origem: OrigemDaDivisao | null
   escolhaManual?: DivisaoSocios | null
+  /** 35/65 quando e mentoria individual do Pedro E nao ha origem; senao null. */
+  mentoriaPedro?: DivisaoSocios | null
   divisaoDoFechamento: DivisaoSocios
-}): { divisao: DivisaoSocios; fonte: 'manual' | 'origem' | 'fechamento' } {
+}): { divisao: DivisaoSocios; fonte: 'manual' | 'origem' | 'mentoria' | 'fechamento' } {
   if (params.escolhaManual && Object.keys(params.escolhaManual).length > 0) {
     return { divisao: params.escolhaManual, fonte: 'manual' }
   }
   if (params.origem) return { divisao: params.origem.divisao, fonte: 'origem' }
+  if (params.mentoriaPedro) return { divisao: params.mentoriaPedro, fonte: 'mentoria' }
   return { divisao: params.divisaoDoFechamento, fonte: 'fechamento' }
 }
 
