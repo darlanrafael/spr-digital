@@ -493,6 +493,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Nota generica (tipo:'nota' e demais tipos livres) NAO tinha guarda
+    // nenhuma: 'remarcacao', 'solicitacao_reembolso' e 'orientacao_sessao' ja
+    // se protegem acima e retornam 403 antes de chegar aqui, mas qualquer
+    // outro tipo caia direto neste insert so com o sale_id do corpo - uma
+    // terapeuta gravava nota clinica no prontuario de QUALQUER paciente,
+    // inclusive de outra terapeuta, so passando o sale_id dele. Achado na
+    // revisao final da Tarefa B.
+    //
+    // Mesma regra e mesmo padrao do I2 em vendas/editar-paciente: "pelo
+    // menos uma sessao da venda e sua" - `sales` nao tem terapeuta_id, quem
+    // tem e `sessoes`, e o Diagnostico Guiado mistura sessoes de DOIS
+    // terapeutas na mesma venda, entao exigir "todas" bloquearia nota
+    // legitima e exigir so "a primeira" deixaria passar quem nao tem sessao
+    // nenhuma ali. Sem sessao nenhuma, fail-closed (mesmo comportamento de
+    // uma sessao sem terapeuta_id). Comercial/admin passam sempre -
+    // podeAgirNaSessao ja devolve true pra eles.
+    if (tipo !== 'remarcacao' && tipo !== 'solicitacao_reembolso' && tipo !== 'orientacao_sessao') {
+      const { data: sessoesDaVenda } = await supabase
+        .from('sessoes').select('terapeuta_id').eq('sale_id', sale_id)
+      const idsEnvolvidos = [...new Set(
+        (sessoesDaVenda ?? []).map(s => (s as { terapeuta_id: string | null }).terapeuta_id).filter((t): t is string => !!t)
+      )]
+      const podeEscrever = idsEnvolvidos.length > 0
+        ? idsEnvolvidos.some(tid => podeAgirNaSessao(quem, tid))
+        : podeAgirNaSessao(quem, null)
+      if (!podeEscrever) {
+        return NextResponse.json({ error: 'Este paciente não é seu.' }, { status: 403 })
+      }
+    }
+
     const { data: ocorrencia, error: ocErr } = await supabase
       .from('ocorrencias_prontuario')
       .insert({
