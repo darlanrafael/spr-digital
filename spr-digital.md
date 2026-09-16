@@ -4738,3 +4738,44 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     **Pendencia:** ou consolidar tudo no `schema.sql`, ou marca-lo como parcial e apontar para as migracoes como fonte de verdade.
 
+---
+
+82. **16/09/2026 - `terapeutaIdQueValeu` vazava faturamento de todo mundo para terapeuta sem `terapeuta_id`. Achado por revisao independente, Tarefa 8 do plano de autenticacao.** Commit `2b89494`.
+
+    ## 82.1. O contexto
+
+    O plano de autenticacao (`.superpowers/sdd/2026-09-15-autenticacao-api/`, ligado ao achado 80 acima) esta construindo `middleware.ts` + `lib/identidade-da-chamada.ts`: o middleware confere o cracha e escreve QUEM chama em cabecalhos; `lib/identidade-da-chamada.ts` (Tarefa 8) tem as funcoes puras que decidem o que essa pessoa pode - entre elas, `terapeutaIdQueValeu`, que existe especificamente para fechar o furo do achado 80: hoje a rota `app/api/terapeutas/dashboard/route.ts` obedece cegamente o `terapeutaId` que o navegador manda.
+
+    ## 82.2. O furo que a propria correcao reabriu
+
+    A primeira versao de `terapeutaIdQueValeu`:
+
+    ```ts
+    if (id.area === 'sistema' && id.papel === 'terapeuta' && id.terapeutaId) return id.terapeutaId
+    return pedido ?? 'all'
+    ```
+
+    O `&& id.terapeutaId` estava ali so para o TypeScript estreitar `string | null` -> `string` no `return`. Efeito colateral: `terapeuta_id` e `string | null` em `usuarios_sistema` (o login repassa `null` quando falta o vinculo, e o middleware so escreve o cabecalho `if (conta.terapeutaId)`) - entao uma terapeuta com **cadastro incompleto** nao entrava no `if` e caia no `return pedido ?? 'all'`, voltando a obedecer o parametro do cliente. **A mesma terapeuta que a funcao foi escrita para conter, pedindo `all`, recebia o faturamento de TODO MUNDO** - o furo do achado 80, reaberto pela borda, na pior direcao possivel: fail-OPEN em vez de fail-CLOSED.
+
+    A suite de mutacao (100% de mortos nos 12 mutantes classicos - `>=`, `<=`, `===`, `&&`, etc.) **nao pegou isso**, porque mutacao so estraga codigo que ja existe; aqui o defeito era a AUSENCIA de um caminho (o caso `terapeutaId: null` nunca era exercitado com `pedido: 'all'`), nao uma inversao de operador.
+
+    ## 82.3. A correcao
+
+    A condicao passou a chavear so em **"e terapeuta do sistema"** (`area === 'sistema' && papel === 'terapeuta'`), nunca em "tem terapeutaId":
+
+    ```ts
+    const SEM_TERAPEUTA_VINCULADO = ''
+    export function terapeutaIdQueValeu(id: Identidade, pedido: string | null): string {
+      if (id.area === 'sistema' && id.papel === 'terapeuta') return id.terapeutaId || SEM_TERAPEUTA_VINCULADO
+      return pedido ?? 'all'
+    }
+    ```
+
+    Sem vinculo, o retorno e uma string vazia - nao `'all'`, nao o id de outra pessoa. Isso e seguro porque `terapeuta_id` no banco e sempre um UUID nao vazio quando a linha existe: nenhuma linha bate com `terapeuta_id = ''`. Toda rota do modulo de terapeutas segue o padrao `if (terapeutaId !== 'all') query.eq('terapeuta_id', terapeutaId)` (conferido em `app/api/terapeutas/dashboard/route.ts` e as demais) - filtrar por `''` devolve lista vazia, nao erro. Fail-CLOSED: sem vinculo, a terapeuta nao ve nada, em vez de ver tudo.
+
+    Tres testes novos cobrem o caso: `terapeutaId: null` pedindo `'all'`, o mesmo pedindo o id de outra terapeuta diretamente, e a variante `terapeutaId: ''` (o dado pode chegar vazio em vez de nulo). Mutacao voltou a rodar depois do conserto: continua 100% (12/12 mortos).
+
+    ## 82.4. A licao
+
+    **Um guarda `&& campo` escrito so para o TypeScript estreitar um tipo pode mudar QUANDO a regra se aplica, nao so o que ela retorna.** A pergunta certa era "esta pessoa e terapeuta?" (dado que nao muda: `area` e `papel` vem de como a conta foi criada); a pergunta que o codigo fazia de fato era "esta pessoa e terapeuta E tem o campo preenchido?" - e a segunda parte deixa a regra inteira depender da qualidade de um dado que pode faltar. Quando a decisao e "quem pode o que", o teste que falta nao e o que inverte um operador - e o que verifica o caso em que o dado que a regra pressupoe simplesmente nao esta la.
+
