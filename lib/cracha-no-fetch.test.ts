@@ -201,3 +201,58 @@ test('ATAQUE: URL malformada NAO leva o cracha (linha 51, o catch)', () => {
     })
   } finally { g.window = antes }
 })
+
+// --- Tarefa 5A: o 401 e a sessao perdida. O caso critico e NAO deslogar quem
+// so errou a senha (5 rotas devolvem 401 para senha errada).
+
+test('CRITICO: 401 de SENHA ERRADA (sem motivo) NAO desloga', async () => {
+  // O 401 de senha errada nao manda `motivo`. So o do middleware manda.
+  let deslogou = false
+  const falso = async () => new Response(JSON.stringify({ error: 'Senha incorreta' }), { status: 401 })
+  await fetchComCracha(falso as unknown as typeof fetch, () => 'abc', () => { deslogou = true })('/api/terapeutas/sessoes')
+  assert.equal(deslogou, false, 'errar a senha nao pode jogar a pessoa para fora')
+})
+
+test('CRITICO: 401 do MIDDLEWARE (com motivo) desloga', async () => {
+  let motivoRecebido: string | null = null
+  const falso = async () => new Response(JSON.stringify({ motivo: 'vencido' }), { status: 401 })
+  const r = await fetchComCracha(falso as unknown as typeof fetch, () => 'abc', m => { motivoRecebido = m })('/api/sales')
+  assert.equal(r.status, 401, 'a resposta continua chegando na tela')
+  assert.equal(motivoRecebido, 'vencido', 'a sessao perdida foi sinalizada')
+})
+
+test('401 com motivo "sem_cracha" tambem desloga', async () => {
+  let motivo: string | null = null
+  const falso = async () => new Response(JSON.stringify({ motivo: 'sem_cracha' }), { status: 401 })
+  await fetchComCracha(falso as unknown as typeof fetch, () => null, m => { motivo = m })('/api/sales')
+  assert.equal(motivo, 'sem_cracha')
+})
+
+test('resposta 200 nunca desloga', async () => {
+  let deslogou = false
+  const falso = async () => new Response('{}', { status: 200 })
+  await fetchComCracha(falso as unknown as typeof fetch, () => 'abc', () => { deslogou = true })('/api/sales')
+  assert.equal(deslogou, false)
+})
+
+test('401 de chamada para FORA (outro dominio) nao desloga', async () => {
+  // Um 401 do Facebook nao significa que a sessao do SPR acabou. Como a chamada
+  // e para fora, o embrulho nem olha o status - passa direto.
+  let deslogou = false
+  const falso = async () => new Response(JSON.stringify({ motivo: 'vencido' }), { status: 401 })
+  await fetchComCracha(falso as unknown as typeof fetch, () => 'abc', () => { deslogou = true })('https://graph.facebook.com/me')
+  assert.equal(deslogou, false, 'chamada externa nao dispara logout do SPR')
+})
+
+test('SEM cracha guardado, a chamada ainda sai (agora sempre chama, so nao poe header)', async () => {
+  // A Tarefa 5A mudou: antes retornava cedo sem cracha. Agora sempre chama, para
+  // poder ver o 401. Confirmo que a chamada acontece e sem o header.
+  let chamou = false, temHeader = true
+  const falso = async (_e: any, init?: RequestInit) => {
+    chamou = true; temHeader = new Headers(init?.headers).has(CABECALHO_DO_CRACHA)
+    return new Response('{}')
+  }
+  await fetchComCracha(falso as unknown as typeof fetch, () => null)('/api/sales')
+  assert.equal(chamou, true, 'a chamada tem de acontecer mesmo sem cracha')
+  assert.equal(temHeader, false, 'sem cracha, sem header')
+})

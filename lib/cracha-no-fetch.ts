@@ -54,14 +54,29 @@ function ehChamadaDaCasa(entrada: RequestInfo | URL): boolean {
 export function fetchComCracha(
   fetchOriginal: typeof fetch,
   lerCracha: () => string | null = crachaGuardado,
+  aoPerderSessao?: (motivo: string) => void,
 ): typeof fetch {
   return async (entrada: RequestInfo | URL, init?: RequestInit) => {
     if (!ehChamadaDaCasa(entrada)) return fetchOriginal(entrada, init)
     const cracha = lerCracha()
-    if (!cracha) return fetchOriginal(entrada, init)
     const cabecalhos = new Headers(init?.headers)
-    cabecalhos.set(CABECALHO_DO_CRACHA, cracha)
-    return fetchOriginal(entrada, { ...init, headers: cabecalhos })
+    if (cracha) cabecalhos.set(CABECALHO_DO_CRACHA, cracha)
+    const r = await fetchOriginal(entrada, { ...init, headers: cabecalhos })
+
+    // 401 do middleware significa sessao perdida. Quem estava logado desde antes
+    // do cracha existir cai aqui, e precisa ser mandado para o login com uma
+    // frase que explique - nao para uma tela de erro generica.
+    //
+    // MAS SO O DO MIDDLEWARE. Cinco rotas devolvem 401 para SENHA ERRADA. Se
+    // qualquer 401 disparasse isto, errar a senha numa acao apagaria a sessao e
+    // jogaria a pessoa para fora do sistema inteiro - um erro de digitacao
+    // virando logout. O que separa os dois: so o middleware manda `motivo`.
+    if (r.status === 401 && aoPerderSessao) {
+      let motivo: string | null = null
+      try { motivo = ((await r.clone().json()) as { motivo?: string }).motivo ?? null } catch { /* sem corpo */ }
+      if (motivo) aoPerderSessao(motivo)
+    }
+    return r
   }
 }
 
@@ -71,5 +86,17 @@ let instalado = false
 export function instalarCrachaNoFetch(): void {
   if (typeof window === 'undefined' || instalado) return
   instalado = true
-  window.fetch = fetchComCracha(window.fetch.bind(window))
+  window.fetch = fetchComCracha(window.fetch.bind(window), crachaGuardado, () => {
+    // Limpa a sessao velha: deixada la, a tela de login voltaria a achar que a
+    // pessoa esta logada e o ciclo se repetiria.
+    try {
+      window.localStorage.removeItem(CHAVE_DRE)
+      window.localStorage.removeItem(CHAVE_TERAPEUTAS)
+    } catch { /* navegador sem storage nao impede o redirecionamento */ }
+    const ehModuloDeTerapeutas = window.location.pathname.startsWith('/terapeutas')
+    const destino = ehModuloDeTerapeutas ? '/terapeutas/login' : '/login'
+    if (window.location.pathname !== destino) {
+      window.location.href = `${destino}?sessao=expirada`
+    }
+  })
 }
