@@ -4883,3 +4883,319 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     Com este achado fecha o plano de autenticacao inteiro (`.superpowers/sdd/2026-09-15-autenticacao-api/`): toda escrita sensivel e agora toda leitura sensivel do modulo de terapeutas e do DRE passam pela identidade do cracha, nao por parametro/e-mail que o cliente controla.
 
+---
+
+87. **16/09/2026 - a revisao final da branch inteira achou mais 6 furos DEPOIS do item 86 (que dizia "fecha o plano inteiro"). Duas rodadas de revisao adversarial independente (opus), sobre a branch `feat/autenticacao-api` completa.** Commits `03c5348`, `23c9446`, `67991a3`, `6d4d913`, `221f8e5`, `5f46dd1`, `84fd287`, `61796db`, `f55c886`.
+
+    ## 87.1. O item 86 nao era o fim
+
+    O item 86 fechou as 3 ultimas rotas GET do plano original e terminou dizendo "fecha o plano de autenticacao inteiro". Isso era verdade para as 14 tarefas do plano - mas antes de mergear, o processo pedia uma revisao adversarial da BRANCH INTEIRA (nao tarefa por tarefa), e essa revisao rodou em quatro rodadas sucessivas, cada uma achando o que a anterior nao tinha mapeado:
+
+    1. Primeira revisao final: achou C1 (POST `/api/sales` sem guarda), I1 e I2 (ja documentados nos achados 84 e 85 acima).
+    2. Apos I1/I2 fechados, uma NOVA rodada de revisao (ainda sobre I1/I2, nao pedida explicitamente mas feita por iniciativa do revisor) achou IMP-A e IMP-B - viraram as Tarefas A e B.
+    3. Apos A e B fechados, a revisao final DEFINITIVA (nova rodada, branch inteira de novo) achou C-NOVO e a leitura sensivel de `fechamentos`/`estornos-com-sessao`/`vendas/pacote` (viraram Task GETs, ja documentada no item 86).
+    4. Com o item 86 fechado, uma quinta rodada (a revisao que o dono pediu explicitamente como "ultima, antes do merge de verdade") achou F1-F6 abaixo - viraram a Task GETs2. So DEPOIS desta rodada e que a branch foi considerada pronta - e mesmo assim faltava a fiacao do cliente (item 88).
+
+    Cada rodada usou um revisor opus SEM contexto da tarefa (so o diff + o codigo ao redor), e cada achado foi CONFIRMADO pelo controlador (quem orquestrava as tarefas) antes de virar tarefa de correcao - nenhum achado de revisor foi aceito so por afirmacao.
+
+    ## 87.2. F1 (Critical) - `GET /api/terapeutas/vendas` sem guarda nenhuma
+
+    **Cenario de ataque:** qualquer terapeuta logada (cracha real, `sistema:terapeuta`) chamando `GET /api/terapeutas/vendas` recebia `vendas_pendentes` e as demais listas da rota - que trazem nome/e-mail de paciente, valor da venda, comissao e progresso de sessoes de TODAS as terapeutas, nao so a dela. A rota ja tinha guardas nos metodos de escrita (POST/PUT, com `podeAgirNaSessao` por tipo) desde as Tarefas 13/I2/A/B, mas o `GET` (`app/api/terapeutas/vendas/route.ts:113`) nunca tinha ganho guarda nenhuma - nem sequer a checagem antiga por e-mail que outras rotas tinham. Classificado Critical porque e a MESMA classe de vazamento do achado original 80 (PII + comissao de paciente de terceiros), so que numa rota que ninguem tinha revisado ainda.
+
+    **Correcao:** guarda `lerIdentidade` + `podeMexerEmVenda` como primeira coisa do `try`, antes de `searchParams`/`getSupabaseAdmin` (`app/api/terapeutas/vendas/route.ts:115-117`):
+
+    ```ts
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para ver as vendas.' }, { status: 403 })
+    ```
+
+    Terapeuta e socio ficam de fora; comercial e admin (das duas areas) continuam vendo tudo - mesma regra ja usada no POST/PUT da mesma rota e no `converter-moeda`.
+
+    ## 87.3. F2-F4 (Important) - 4 listas operacionais sem papel
+
+    **Cenario de ataque, mesma familia em 4 rotas:** a terapeuta ja estava barrada de AGIR fora da propria agenda (Tarefa 13/I2), mas ainda conseguia LER a fila inteira de pendencias - de sessoes, de aprovacoes, de edicao de paciente e de lancamento manual - de qualquer terapeuta, so por estar logada.
+
+    - `GET /api/terapeutas/sessoes` (`app/api/terapeutas/sessoes/route.ts:20-24`) - listava sessoes de qualquer `sale_id`, sem checar de quem era.
+    - `GET /api/terapeutas/aprovacoes` (`app/api/terapeutas/aprovacoes/route.ts:32-36`, inclusive o modo `?count=true`) - fila inteira de solicitacoes pendentes/historico de TODAS as terapeutas.
+    - `GET /api/terapeutas/aprovacoes/edicao-paciente` (`app/api/terapeutas/aprovacoes/edicao-paciente/route.ts:11-15`) - **removida** a checagem antiga por `usuario_email` ativo (qualquer terapeuta ativa passava, sem olhar papel) e trocada pela guarda de papel.
+    - `GET /api/terapeutas/aprovacoes/lancamento-manual` (`app/api/terapeutas/aprovacoes/lancamento-manual/route.ts:13-17`) - mesma troca.
+
+    **Correcao, identica nas 4:** `lerIdentidade` + `podeMexerEmVenda` (mesmo portao de F1) - terapeuta e socio fora, comercial e admin dentro. Nenhum metodo de escrita foi tocado (ja tinham `podeAdministrar` desde a Tarefa A, para as 3 rotas de aprovacao).
+
+    ## 87.4. F5 (Important) - `meta/insights` e `meta/custo-trafego` GET sem guarda de area
+
+    **Cenario de ataque:** o achado 80 original e a Tarefa I1 ja tinham fechado `closings`/`cashflow`/`costs`/`sales` para quem nao e do `dashboard` (area do DRE) - mas os dois endpoints que expoe o GASTO DE TRAFEGO PAGO (dinheiro da empresa em Meta Ads) tinham ficado de fora do escopo da I1 por nao serem rotas de "financeiro" no sentido estrito, e continuavam sem NENHUMA guarda: `sistema:terapeuta` e ate `sistema:admin` (admin do modulo de terapeutas, que NAO e o mesmo sistema) conseguiam ler o investimento em anuncios da empresa.
+
+    **Correcao:** a mesma guarda de AREA da I1/achado 84 - `quem.area !== 'dashboard'` -> 403 - em `app/api/meta/custo-trafego/route.ts:8-10` e `app/api/meta/insights/route.ts:9-11`. Esta e literalmente "a metade da Tarefa I1 que faltou": a I1 cobriu os 4 GETs de financeiro classico e deixou os 2 GETs de trafego pago de fora do inventario original.
+
+    ## 87.5. F6 (Minor) - `GET /api/terapeutas/admin/log` sem autorizacao nenhuma
+
+    **Cenario de ataque:** a rota de auditoria (log de acoes administrativas) era `export async function GET()` - SEM SEQUER RECEBER `req`, e portanto sem nenhuma chance de checar identidade. Classificado Minor porque e so log de atividade (nao PII de paciente nem dinheiro), mas ainda assim uma trilha de auditoria administrativa legivel por qualquer papel.
+
+    **Correcao:** assinatura trocada para `GET(req: NextRequest)`, guarda `lerIdentidade` + `podeAdministrar` (`app/api/terapeutas/admin/log/route.ts:5-8`). O comentario antigo que dizia "esta rota nao exige autenticacao" (verdadeiro antes, falso depois) foi corrigido.
+
+    ## 87.6. A prova, re-executada duas vezes contra o espelho
+
+    Cada rodada de correcao (F1-F4 numa leva, F5-F6 na mesma leva - commit `f55c886`) foi provada por HTTP real contra o banco espelho, e depois RE-EXECUTADA por um controlador independente (nao so aceitando o relatorio do implementador). Matriz de status por papel, dos dois relatorios (`task-GETs2-report.md`, secao "Prova RE-EXECUTADA pelo controlador"):
+
+    | Rota | terapeuta | socio (DRE) | comercial | admin | sem cracha |
+    |---|---|---|---|---|---|
+    | F1 `GET /terapeutas/vendas` | 403 | 403 | 200 | 200 | 401 |
+    | F2 `GET /terapeutas/sessoes` | 403 | - | 200 | 200 | - |
+    | F3 `GET /terapeutas/aprovacoes` (+ `?count=true`) | 403 | - | 200 | 200 | - |
+    | F4 `GET /aprovacoes/edicao-paciente` | 403 | - | 200 | - | - |
+    | F4 `GET /aprovacoes/lancamento-manual` | 403 | - | 200 | - | - |
+    | F5 `GET /meta/insights` (por AREA) | 403 (sistema) | 200 | - | 403 (sistema:admin) | - |
+    | F5 `GET /meta/custo-trafego` (por AREA) | 403 (sistema) | 200 | - | 403 (sistema:admin) | - |
+    | F6 `GET /terapeutas/admin/log` | 403 | - | 403 | 200 | - |
+
+    Confirmado no F5, de proposito: `sistema:admin` (admin do MODULO DE TERAPEUTAS) tambem toma 403 em `meta/insights`/`meta/custo-trafego` - a guarda e por AREA (`dashboard` vs `sistema`), nao por papel. So quem e do DRE ve gasto de trafego, mesmo que seja admin de outro sistema.
+
+    Validacao tecnica em todas as correcoes desta rodada: `tsc` limpo, **777/777** testes (nenhum teste unitario novo - a decisao inteira vive em `podeMexerEmVenda`/`podeAdministrar`/checagem de `area`, ja cobertas por mutacao 100% nas Tarefas 8/11/14), `preflight` 0 grave. Relatorios completos: `task-GETs2-report.md` (implementador) e a re-execucao do controlador registrada no mesmo arquivo e em `progress.md`.
+
+    ## 87.7. A licao
+
+    Duas coisas se repetem em quase todo achado deste item: (1) a guarda de ESCRITA sempre chegou primeiro, e a guarda de LEITURA da mesma informacao ficou pra tras - o padrao "ja fechei o POST, esqueci o GET gemeo" apareceu em F1 (vendas), nos GETs do item 86, e em C-NOVO/Furo B (abaixo); (2) revisao adversarial de branch inteira, feita EM CAMADAS (nao uma rodada so, mas revisao->fix->revisao de novo, repetido cinco vezes), continuou achando coisa nova a cada rodada - nenhuma rodada isolada teria fechado tudo. Isso e o argumento pratico para nunca declarar "pronto" depois de uma unica revisao aprovada, quando a superficie e "todas as rotas de um sistema financeiro".
+
+---
+
+88. **16/09/2026 - o furo mais grave do processo inteiro: o SERVIDOR exigia crachá havia varias tarefas, mas o NAVEGADOR nunca mandava - achado so na revisão final v2, depois de toda a autorização de servidor estar pronta.** Commit `088ad3c`.
+
+    ## 88.1. O que aconteceu
+
+    Todo o trabalho documentado nos achados 82 a 87 - `middleware.ts`, `lib/identidade-da-chamada.ts`, as dezenas de guardas por rota - depende de uma premissa: que o navegador manda o cabecalho `x-spr-cracha` em toda chamada a `/api/`. Essa premissa tinha ficado sem prova. A revisao final v2 (rodada apos o item 87 estar fechado) achou DOIS furos de fiacao, os dois classificados Critical porque cada um, sozinho, quebraria o sistema inteiro no deploy:
+
+    ## 88.2. Critical 1 - `instalarCrachaNoFetch()` nunca era chamado
+
+    `lib/cracha-no-fetch.ts` (Tarefa 4 do plano, ja com mutacao 100% desde 15/09) existia havia dias, testado e pronto - mas a funcao que ele exporta para ligar o embrulho no navegador, `instalarCrachaNoFetch()`, nao era chamada em NENHUM lugar do app. Nenhuma tela, nenhum layout, nenhum provider chamava essa funcao. Resultado pratico: toda chamada de `fetch('/api/...')` saia do navegador SEM o cabecalho `x-spr-cracha`, e o `middleware.ts` - que ja estava em producao havia varias tarefas, exigindo o cracha em toda rota nao-aberta - devolveria **401 em TODAS as chamadas autenticadas**, tanto do DRE quanto do modulo de terapeutas. Se este estado tivesse ido para producao como estava, o app inteiro quebraria no deploy: ninguem conseguiria carregar vendas, fechamentos, agenda, nada que passe por `/api/`.
+
+    ## 88.3. Critical 2 - o login do DRE descartava o crachá que acabava de emitir
+
+    Desde a Tarefa 3 do plano (commit `cb79dce`), `lib/dashboard-auth.ts` (`verificarSenhaDashboard`) ja gerava um crachá no login e gravava em `usuarios_dashboard.session_token`. Mas `app/api/dashboard-usuarios/login/route.ts` **nao devolvia o `token` no corpo da resposta** (so `email`, `name`, `role`) - o crachá era gerado, gravado no banco, e jogado fora na resposta HTTP. Do lado do cliente, `lib/auth.ts` (`loginDashboardUser()`) fazia `persistSession(user)` com o objeto que a rota devolvia - sem o campo `token`, `localStorage['spr_session']` nunca guardava um crachá, mesmo que o passo 88.2 estivesse corrigido. Os dois furos juntos significavam: mesmo consertando um, o outro sozinho ja bloquearia toda sessao do DRE.
+
+    ## 88.4. Por que os 777 testes nao pegaram isto
+
+    Nenhuma das duas falhas e do tipo que teste de unidade pega. Os testes de `lib/cracha-no-fetch.ts` chamavam `fetchComCracha` DIRETAMENTE, passando o cracha na mao (e a propria funcao, testada isoladamente, sempre funcionou perfeitamente - o defeito nunca esteve nela). Os testes de rota (`app/api/.../route.test.ts`, e o proprio `scripts/provar-acesso.ts`) tambem anexavam o cabecalho `x-spr-cracha` manualmente em cada chamada, simulando o que o navegador DEVERIA fazer - nunca exercitando o caminho real "app carrega -> instala o embrulho -> usuario clica -> fetch sai com o cabecalho sozinho". A cadeia inteira (boot do app -> instalacao do embrulho -> `window.fetch` embrulhado -> chamada real) so existe em tempo de execucao no navegador, e nenhuma prova anterior tinha chegado ate ali - era exatamente o tipo de lacuna que a regra "provar rodando, nao lendo" existe para pegar, e mesmo assim escapou ate a revisao final porque as provas anteriores rodavam contra o SERVIDOR (curl, `provar-acesso.ts`), nunca contra o CLIENTE.
+
+    ## 88.5. A correcao
+
+    Tres mudancas, uma por arquivo:
+
+    **A - instalar o embrulho no boot** (`contexts/AppContext.tsx:11,18`):
+
+    ```ts
+    import { instalarCrachaNoFetch } from '@/lib/cracha-no-fetch'
+    // ...
+    instalarCrachaNoFetch()
+    ```
+
+    Chamada no escopo de MODULO (fora de qualquer componente/`useEffect`), logo apos os imports - roda uma unica vez, na primeira vez que o modulo e importado, antes de qualquer `fetch` disparado pelo proprio `AppProvider`. Como `AppProvider` envolve o app inteiro a partir do layout raiz (`app/layout.tsx`), inclusive `/terapeutas/*`, um unico ponto de instalacao cobre as duas areas de login. A funcao e idempotente e guardada por uma flag de modulo (`instalado`, em `lib/cracha-no-fetch.ts:98`), entao chamar de novo (ex: hot reload) e no-op seguro.
+
+    **B - o login do DRE devolver o token** (`app/api/dashboard-usuarios/login/route.ts:20`): uma linha, `token: usuario.token` acrescentada ao corpo da resposta JSON.
+
+    **C - `lib/auth.ts` guardar o token, e a credencial fixa removida:**
+    - `types/index.ts`: campo `token?: string` acrescentado a `interface User` - com isso, `loginDashboardUser()` (que ja fazia `res.json() as User` e `persistSession(user)`, sem alterar uma linha) passa a persistir o token automaticamente assim que o tipo o reconhece.
+    - `lib/auth.ts`, `getCredentials()`: removidos os DEFAULTS hardcoded que existiam nas variaveis `NEXT_PUBLIC_USER2_*` (`?? 'pedro@spr.com'`, `?? 'spr2026'`, `?? 'Pedro Roncada'`, `?? 'gestor'`) - a credencial `pedro@spr.com` que funcionava SEM nenhuma variavel de ambiente configurada foi removida. `USER2` passou a exigir as 4 variaveis (`EMAIL`/`PASSWORD`/`NAME`/`ROLE`) simultaneamente para entrar na lista, exatamente como `USER3` ja exigia. Em producao nenhuma delas esta configurada, entao `getCredentials()` devolve lista vazia e `login()` sempre cai em `loginDashboardUser()` (o caminho com crachá real). Decisao do dono, registrada no ledger: "no DRE so entram ele + socios (todos no banco); login fixo por env nao e usado -> remover".
+
+    ## 88.6. A prova que faltava - duas camadas, nenhuma so leitura de codigo
+
+    **Prova 1 - teste de integracao da fiacao** (`lib/cracha-no-fetch.wiring.test.ts`, arquivo novo, pego automaticamente por `npm test`): monta um `window` FALSO (com `localStorage` em memoria e um `fetch` original que captura os cabecalhos recebidos) ANTES do import do modulo, chama a funcao REAL `instalarCrachaNoFetch()` uma unica vez (a mesma que `AppContext.tsx` chama no boot), e dai em diante so chama `window.fetch(...)` como a tela chamaria - nunca invocando `fetchComCracha` por fora. 4 casos: instalacao troca `window.fetch`; sessao do DRE (`spr_session`) leva `x-spr-cracha`; sessao de terapeutas (`terapeutas_session`) leva `x-spr-cracha`; sem sessao nenhuma, NAO leva o cabecalho (o que faria a rota protegida devolver 401 - comportamento correto). Prova de que o teste pega regressao de verdade (nao so um resultado que bate por acaso): o arquivo `lib/cracha-no-fetch.ts` foi copiado para FORA do repositorio (scratchpad, apagado depois), uma linha mutada (`if (cracha) cabecalhos.set(...)` -> `if (false && cracha) ...`, simulando "o embrulho para de anexar o cabecalho"), e o mesmo teste rodado contra a copia mutada: os 2 casos que dependem do cabecalho FALHARAM como esperado; o caso "sem sessao" e o de instalacao continuaram passando (a mutacao nao os afeta) - confirmando que o teste realmente exercita o comportamento, nao so simula.
+
+    **Prova 2 - navegador real (Chrome headless), re-executada pelo controlador contra o espelho:** app do dev real, aberto num Chrome headless de verdade, confirmando no runtime real (nao em teste simulado nem em curl):
+    - `window.fetch` depois do boot: EMBRULHADO (`instalarCrachaNoFetch` rodou de fato no app real, nao so no teste).
+    - SEM sessao no `localStorage` -> `GET /api/sales` -> **401** (o middleware barra, correto).
+    - COM `spr_session.token` real gravado -> `GET /api/sales` -> **200** (o embrulho anexou o crachá sozinho, a chamada foi aceita).
+    - Login do DRE (`POST /api/dashboard-usuarios/login`) devolve `token` no corpo (chaves `[email,name,role,token]`, token de 64 caracteres).
+
+    A cadeia inteira - login grava token -> boot instala o embrulho -> fetch real do navegador leva o cabecalho sozinho -> middleware aceita - ficou provada ponta a ponta no runtime real, nao so em teste unitario e nao so por leitura de codigo. Validacao tecnica: `tsc` limpo, **781/781** testes (777 anteriores + 4 novos desta tarefa), `preflight` 76 achados, 0 grave. Relatorio completo: `task-fiacao-report.md`.
+
+    ## 88.7. A licao
+
+    O trabalho de autorizacao no SERVIDOR (achados 80-87) foi extenso, testado, revisado varias vezes e correto - e ainda assim teria derrubado o sistema inteiro no deploy, porque a metade CLIENTE nunca tinha sido exercitada de ponta a ponta. "O middleware exige crachá" e "o navegador manda crachá" sao duas afirmacoes DIFERENTES, e so a primeira tinha prova de execucao ate esta tarefa. A prova por HTTP direto (curl, `provar-acesso.ts`) e suficiente para provar que o SERVIDOR autoriza certo - mas ela simula o cliente perfeito, e um cliente que nunca existiu de verdade nao pode revelar que o cliente real nao manda nada. So testar (ou melhor, LIGAR) as duas pontas junto - servidor E navegador, no mesmo teste ou na mesma prova - garante que a cadeia inteira funciona, nao so cada metade isolada.
+
+---
+
+89. **16/09/2026 - referência de arquitetura completa da autenticação/autorização da API: o sistema inteiro, de ponta a ponta, para quem chega sem contexto.** Cobre os achados 80, 82-88 (a construção inteira do plano `.superpowers/sdd/2026-09-15-autenticacao-api/`), publicado em produção no mesmo dia (16/09/2026).
+
+    ## 89.1. Por que este trabalho existiu
+
+    O problema original (achado 80, detalhado acima): as rotas de API do sistema nao conferiam sessao nenhuma. Provado por execucao, sem nenhuma credencial, em 15/09/2026 (`docs/superpowers/specs/2026-09-15-autenticacao-api-design.md`, secao 1): `GET /api/terapeutas/dashboard?terapeutaId=all` devolvia 200 com faturamento de TODAS as terapeutas e nome/e-mail de paciente de 11 consultas do dia; `POST /api/terapeutas/admin/usuarios` com corpo vazio devolvia 400 de validacao (ou seja, aceitava a chamada sem login, so recusava por corpo incompleto - com corpo completo teria criado usuario); `GET /api/closings` devolvia 200 com 2,5 MB incluindo o array `socios`, exatamente a divisao que a tela esconde do socio. As regras de acesso existiam so no NAVEGADOR (checagens de `role` espalhadas em `app/*/page.tsx` e `components/Header.tsx`), nunca no servidor - qualquer chamada direta (curl, DevTools, script) contornava tudo.
+
+    ## 89.2. Arquitetura - as pecas e onde vivem
+
+    **O crachá (session token).** `lib/cracha.ts`: token de 32 bytes aleatorios em hexadecimal (64 caracteres), gerado com `globalThis.crypto.getRandomValues` (Web Crypto, NUNCA `import * as crypto from 'crypto'` - o modulo `crypto` do Node nao existe no runtime Edge onde `middleware.ts` roda; usar `import from 'crypto'` la faz o `npm run build` passar normalmente e o servidor devolver 500 em TODA rota de API, porque o build nao executa o middleware para avisar - provado rodando em 15/09/2026, comentario no topo do arquivo). Validade: 30 dias (`DIAS_DE_VALIDADE`), janela DESLIZANTE - cada uso empurra a validade para a frente, e renova automaticamente quando faltam menos de 15 dias (`RENOVAR_QUANDO_FALTAR_DIAS`), para nao escrever no banco a cada chamada. Sem validade gravada conta como vencido (fail-closed).
+
+    **As duas áreas de login, que nao se falam.** `usuarios_sistema` (modulo de terapeutas: papeis `admin`/`comercial`/`terapeuta`) e `usuarios_dashboard` (DRE financeiro: papeis `admin`/`socio`/`gestor`/`financeiro`). Sao tabelas independentes, cada uma com suas proprias colunas `session_token`/`session_token_expira_em` - `usuarios_sistema` ja tinha desde 19/08/2026; `usuarios_dashboard` ganhou as mesmas duas colunas nesta iniciativa (migration `supabase/migrations/20260916000000_cracha_no_dashboard.sql`, ver 89.8).
+
+    **O cabecalho de identidade, formato `area:papel`.** `lib/cabecalhos-da-identidade.ts` define os nomes, sem nenhum import (o arquivo e lido pelo navegador, pelo middleware/Edge e pelas rotas/Node - qualquer dependencia ali viraria dependencia nos tres runtimes): `x-spr-cracha` (o navegador manda, com o token) e os quatro que o SERVIDOR escreve - `x-spr-quem-tipo` (formato `sistema:admin`, `dashboard:socio` etc.), `x-spr-quem-id`, `x-spr-quem-terapeuta-id` (so terapeuta tem), `x-spr-quem-email`.
+
+    **O middleware Edge.** `middleware.ts`, `matcher: '/api/:path*'` - roda ANTES de toda rota de API (nunca em paginas). Fluxo: se a rota e uma das 7 abertas (`ehRotaAberta`, ver abaixo), deixa passar sem checar nada; senao, le `x-spr-cracha`; sem crachá, 401 `motivo: 'sem_cracha'`; com crachá, chama `autenticarPeloCracha` (`lib/autenticacao-do-middleware.ts`) que consulta as DUAS tabelas (primeiro `usuarios_sistema`, so consulta `usuarios_dashboard` se a primeira nao achou), com `ativo = true` nas duas; crachá vencido, 401 `motivo: 'vencido'`; falha de CONSULTA (rede, banco fora do ar - o incidente 525 que este sistema ja teve) NUNCA vira 401-com-motivo, sempre 503 SEM o campo `motivo` (ver 89.6, achado do fix da Tarefa 6) - a diferenca de rotulagem existe porque o cliente (`lib/cracha-no-fetch.ts`) trata QUALQUER 401-com-motivo como sessao perdida e desloga; um soluco do banco nao pode deslogar todo mundo ao mesmo tempo. Autorizado, monta os cabecalhos de identidade (`lib/decisao-do-middleware.ts`, `construirCabecalhosDeIdentidade`) - **apagando os quatro cabecalhos de identidade ANTES de escrever os novos**, nesta ordem, nunca ao contrario: sem isso, quem chama mandaria `x-spr-quem-tipo: dashboard:admin` direto no cabecalho e a rota trataria como admin de verdade (forja de identidade). A parte que so DECIDE (sem IO) vive em `lib/decisao-do-middleware.ts`, pura e testavel sem rede; a parte que CONSULTA o banco (com o cliente Supabase injetavel, para testar sem rede real) vive em `lib/autenticacao-do-middleware.ts`. Essa separacao existe porque a versao inicial do `middleware.ts` (Tarefa 6, antes do fix) so tinha prova por `curl` efemero - sem teste automatizado, a logica de IO nao pegava regressao (achado IMPORTANT-2 da revisao da Tarefa 6).
+
+    **Os helpers de autorizacao (puros, com teste proprio).** `lib/identidade-da-chamada.ts`:
+    - `lerIdentidade(req)` - le os 4 cabecalhos e devolve `Identidade | null`. Se o middleware e esta funcao um dia divergirem no NOME do cabecalho, a identidade some sem erro - por isso os nomes vem so da constante `CABECALHOS_DA_IDENTIDADE`, nunca escritos a mao duas vezes.
+    - `terapeutaIdQueValeu(id, pedido)` - para terapeuta, o parametro do cliente e SEMPRE ignorado, mesmo sem `terapeuta_id` proprio (cai no sentinela `''`, fail-closed - ver achado 82); para qualquer outro papel, o parametro vale, inclusive `'all'`.
+    - `podeAdministrar(id)` - so `papel === 'admin'`, de QUALQUER area (decisao consciente: o unico admin real e a mesma pessoa nas duas tabelas).
+    - `deveEsconderDivisaoDeSocios(id)` / `semDivisaoDeSocios(lista)` - a regra do socio no DRE (Tarefa 10): esconde o array `socios` da resposta, copiando a lista (nunca mutando o objeto original).
+    - `podeEditarFechamento` / `podeEditarCaixa` / `podeEditarCustos` - copiam literalmente as regras que ja existiam nas telas (`app/fechamentos/page.tsx:237`, `app/caixa/page.tsx:55`, `app/dre/page.tsx:61`), todas exigindo `area === 'dashboard'`.
+    - `podeMexerEmVenda(id)` - terapeuta e socio fora; comercial e admin (das duas areas) dentro. Fecha o furo provado com a credencial real da Denise (achado 83).
+
+    `lib/sessao-do-terapeuta.ts`: `podeAgirNaSessao(quem, terapeutaIdDaSessao)` - so restringe TERAPEUTA (comercial/admin/DRE sempre `true`, por decisao do dono - ver 89.7); terapeuta so age quando `quem.terapeutaId === terapeutaIdDaSessao`, e sessao sem `terapeuta_id` NAO libera ninguem (fail-closed).
+
+    **As 7 rotas abertas.** `lib/rotas-abertas.ts`, `ROTAS_ABERTAS`: `webhooks/hubla` POST, `webhooks/kiwify` POST (a Hubla/Kiwify avisando de venda nova - sem login proprio; exigir crachá pararia a entrada de venda em silencio), `whatsapp/pendentes-vespera` GET, `whatsapp/pendentes-30min` GET, `whatsapp/marcar-enviado` POST (crons, ja protegidos por `x-whatsapp-cron-secret` proprio), `dashboard-usuarios/login` POST e `terapeutas/login` POST (sao os proprios logins - exigir crachá para logar seria circular). `ehRotaAberta` compara por caminho EXATO (apos remover query string e barras finais), nunca por prefixo - por prefixo, a rota aberta `dashboard-usuarios/login` abriria tambem `dashboard-usuarios` (que cria/altera usuario do DRE).
+
+    **A fiacao do navegador.** `lib/cracha-no-fetch.ts`: `crachaGuardado()` le o token de qualquer uma das duas chaves de sessao no `localStorage` (`spr_session` do DRE, `terapeutas_session` dos terapeutas); `fetchComCracha` embrulha `window.fetch`, anexando `x-spr-cracha` so em chamadas para o PROPRIO `/api/` (nunca para dominio de fora - o crachá e credencial); `instalarCrachaNoFetch()` faz essa troca uma unica vez, com guarda de modulo. Ligado em `contexts/AppContext.tsx:18`, no escopo de modulo (achado 88).
+
+    ## 89.3. Fluxo ponta a ponta
+
+    1. Usuario faz login (`POST /api/dashboard-usuarios/login` ou `POST /api/terapeutas/login`, as duas rotas abertas) - o servidor gera o crachá (`gerarCracha`), grava `session_token`/`session_token_expira_em` na tabela certa, e devolve o token no corpo da resposta.
+    2. O cliente grava a sessao (com o token) em `localStorage`.
+    3. No boot do app, `instalarCrachaNoFetch()` (chamado de `contexts/AppContext.tsx`) troca `window.fetch` pelo embrulho.
+    4. Toda chamada seguinte a `/api/...` sai automaticamente com `x-spr-cracha: <token>` - nenhuma tela precisa saber disso.
+    5. `middleware.ts` confere o crachá contra as duas tabelas, renova a validade se preciso (janela deslizante), e escreve a identidade em cabecalhos que so ele escreve (apagando qualquer forja antes).
+    6. A rota le a identidade (`lerIdentidade`) e decide com os helpers puros (`podeXxx`, `terapeutaIdQueValeu`, `podeAgirNaSessao`) - nunca confiando em parametro/e-mail que o cliente mandou.
+    7. Se a sessao caiu (401-com-`motivo`), o embrulho do fetch detecta, limpa o `localStorage` e redireciona para o login certo (`/login` ou `/terapeutas/login`, conforme onde a pessoa estava - `destinoAoPerderSessao`). Se o banco falhou (503, sem `motivo`), ninguem e deslogado - so a chamada atual falha, e a pessoa tenta de novo.
+
+    ## 89.4. Tabela das 35 rotas de API
+
+    Existem exatamente 35 arquivos `route.ts` em `app/api/` (confirmado por `find app/api -name route.ts | wc -l` = 35). 27 usam algum dos helpers de identidade (`lerIdentidade` e companhia); 7 estao deliberadamente na lista de rotas abertas; 1 (`meta/test`) nao usa identidade nenhuma - divida conhecida, ver 89.9. Cada guarda abaixo foi confirmada lendo o arquivo real, com o numero de linha exato.
+
+    | Rota | Método | Guarda | O que protege |
+    |---|---|---|---|
+    | `cashflow` | GET | `lerIdentidade` + `area==='dashboard'` (`route.ts:8-10`) | leitura do fluxo de caixa do DRE |
+    | `cashflow` | POST | `podeEditarCaixa` (`route.ts:20-23`) | lançar no caixa (só admin DRE) |
+    | `closings` | GET | `lerIdentidade` + `area==='dashboard'` (`route.ts:13-19`, antes de `deveEsconderDivisaoDeSocios`) | leitura de fechamentos + divisão de sócios |
+    | `closings` | POST | `podeEditarFechamento` (`route.ts:27-30`) | confirmar fechamento (só admin DRE) |
+    | `costs` | GET | `lerIdentidade` + `area==='dashboard'` (`route.ts:13-15`) | leitura de custos fixos/variáveis/tráfego |
+    | `costs` | POST/PUT/DELETE | `podeEditarCustos` (`route.ts:40-43`,`62-65`,`82-85`) | alterar custos (admin ou financeiro DRE) |
+    | `dashboard-usuarios` | GET/POST/PUT/PATCH | `podeAdministrar` (`route.ts:10-13`,`26-29`,`62-65`,`99-102`) | gestão de usuários do DRE |
+    | `meta/custo-trafego` | GET | `lerIdentidade` + `area==='dashboard'` (`route.ts:8-10`) | gasto de tráfego pago (dinheiro da empresa) |
+    | `meta/insights` | GET | `lerIdentidade` + `area==='dashboard'` (`route.ts:9-11`) | idem |
+    | `meta/test` | GET | **nenhuma identidade** - só `?secret` (últimos 12 chars do `META_ACCESS_TOKEN`) | dívida conhecida, 89.9 |
+    | `sales` | GET | `lerIdentidade` + `area==='dashboard'` (`route.ts:10-12`) | leitura de vendas do DRE |
+    | `sales` | POST | `podeMexerEmVenda` (`route.ts:23-26`) | criar/sobrescrever venda (upsert) |
+    | `sales` | PATCH | `podeMexerEmVenda` (`route.ts:38-41`) | alterar status de venda (o furo provado com a Denise) |
+    | `sales/converter-moeda` | POST | `podeMexerEmVenda` (`route.ts:24-26`) + checagem antiga por e-mail (camada extra, mantida) | converter moeda de venda |
+    | `terapeutas/admin/log` | GET | `podeAdministrar` (`route.ts:6-8`) | trilha de auditoria |
+    | `terapeutas/admin/terapeutas` | GET/POST/PUT/PATCH | `podeAdministrar` (4 métodos) | cadastro de terapeutas |
+    | `terapeutas/admin/usuarios` | GET/POST/PUT/PATCH | `podeAdministrar` (4 métodos) | cadastro de usuários do sistema |
+    | `terapeutas/aprovacoes` | GET | `podeMexerEmVenda` (`route.ts:34-36`) | fila de aprovações |
+    | `terapeutas/aprovacoes` | PATCH | senha (antiga, mantida) + `podeAdministrar` (`route.ts:93-96`) | aprovar/cancelar sessão via reembolso |
+    | `terapeutas/aprovacoes/edicao-paciente` | GET | `podeMexerEmVenda` (`route.ts:13-15`) | fila de edição de paciente |
+    | `terapeutas/aprovacoes/edicao-paciente` | PATCH | `podeAdministrar` (`route.ts:74-77`) | aprovar edição |
+    | `terapeutas/aprovacoes/lancamento-manual` | GET | `podeMexerEmVenda` (`route.ts:15-17`) | fila de lançamento manual |
+    | `terapeutas/aprovacoes/lancamento-manual` | PATCH | `podeAdministrar` (`route.ts:86-89`) | aprovar lançamento |
+    | `terapeutas/compromissos` | POST | `podeAgirNaSessao` (corpo, `route.ts:48-51`) | criar compromisso na agenda |
+    | `terapeutas/compromissos` | DELETE | `podeAgirNaSessao` (do banco, `route.ts:131-134`) | apagar compromisso |
+    | `terapeutas/dashboard` | GET | `lerIdentidade` + `terapeutaIdQueValeu` (`route.ts:143-145`) | faturamento/comissão/PII por terapeuta |
+    | `terapeutas/estornos-com-sessao` | GET | `podeMexerEmVenda` (`route.ts:19-21`) | lista global de estornos |
+    | `terapeutas/fechamentos` | GET | `lerIdentidade` + `terapeutaIdQueValeu` (`route.ts:104-108`) | comissão/PII por terapeuta |
+    | `terapeutas/fechamentos` | POST | senha + regra pré-existente (fora desta iniciativa) | confirmar fechamento de comissão |
+    | `terapeutas/sessoes` | GET | `podeMexerEmVenda` (`route.ts:22-24`) | leitura de sessões de uma venda |
+    | `terapeutas/sessoes` | PATCH | `podeAgirNaSessao` (`route.ts:80-83`) | iniciar/concluir/anular sessão |
+    | `terapeutas/sessoes/agendar` | POST | `podeAgirNaSessao` (corpo, `route.ts:60-63`) + guarda dupla p/ Diagnóstico Guiado (`route.ts:157-160`) | criar sessão na agenda |
+    | `terapeutas/sessoes/confirmar` | POST | `podeAgirNaSessao` (`route.ts:37-40`) | confirmar sessão |
+    | `terapeutas/sessoes/empurrar-seguintes` | POST | `podeAgirNaSessao` (sessão-base, `route.ts:66-69`) | empurrar agenda |
+    | `terapeutas/sessoes/remarcar` | POST | `podeAgirNaSessao` (`route.ts:49-52`) | remarcar sessão |
+    | `terapeutas/vendas` | GET | `podeMexerEmVenda` (`route.ts:115-117`, F1 Critical) | listas de vendas/pendências |
+    | `terapeutas/vendas` | POST | `podeAgirNaSessao` por tipo (`remarcacao` `route.ts:377-378`; `solicitacao_reembolso` `route.ts:425-428`; `orientacao_sessao`/`nota` genérico `route.ts:537-540`) | escrita em sessão/prontuário |
+    | `terapeutas/vendas` | PUT | `podeAgirNaSessao` (`route.ts:634-635`,`646-651`) | editar orientação de sessão |
+    | `terapeutas/vendas/editar-paciente` | PUT | `podeAgirNaSessao` ("pelo menos uma sessão sua", `route.ts:61-64`) | editar dados do paciente |
+    | `terapeutas/vendas/lancamento-manual` | POST | `podeAgirNaSessao` (`route.ts:57-58`) | lançar sessão manual |
+    | `terapeutas/vendas/pacote` | GET | `podeMexerEmVenda` (`route.ts:34-36`) | lista de conferência de pacote |
+    | `terapeutas/vendas/pacote` | POST/DELETE | `podeMexerEmVenda` (`route.ts:63-66`,`247-250`) | juntar/separar pacote + nota clínica |
+    | `webhooks/hubla` | POST | **rota aberta** (`lib/rotas-abertas.ts`) | webhook Hubla, sem login próprio |
+    | `webhooks/kiwify` | POST | **rota aberta** | webhook Kiwify |
+    | `whatsapp/pendentes-vespera` | GET | **rota aberta** (secret de cron próprio) | cron de lembrete |
+    | `whatsapp/pendentes-30min` | GET | **rota aberta** (idem) | cron de lembrete |
+    | `whatsapp/marcar-enviado` | POST | **rota aberta** (idem) | cron |
+    | `dashboard-usuarios/login` | POST | **rota aberta** (é o próprio login) | login do DRE |
+    | `terapeutas/login` | POST | **rota aberta** (é o próprio login) | login do módulo de terapeutas |
+
+    ## 89.5. Todos os testes
+
+    - **Unitários:** `npm test` (`tsx --test lib/*.test.ts`) - **781 testes** ao final de todo o trabalho (777 ao fim das 14 tarefas do plano + Tarefas A/B/C1/I1/I2/C-NOVO/GETs/GETs2; +4 na Tarefa de fiação, o novo `lib/cracha-no-fetch.wiring.test.ts`), 56 arquivos `*.test.ts` em `lib/`.
+    - **Mutação (`npm run mutacao`), 100% ou equivalência provada, módulo a módulo:** `lib/cracha.ts` (Tarefa 2); `lib/cracha-no-fetch.ts` (Tarefa 4 + rodadas de fix - 9 ataques de colisão/URL malformada); `lib/rotas-abertas.ts` (Tarefa 5, fuzzing com 14 truques por rota - path traversal, maiúscula, `//`, `%20`); `lib/decisao-do-middleware.ts`/`lib/autenticacao-do-middleware.ts` (Tarefa 6, extraídos do `middleware.ts` justamente para poderem ser testados sem servidor); `lib/identidade-da-chamada.ts` (Tarefa 8: 100%, 12/12; Tarefa 14: 100%, 26/26 - a função cresceu e a suite acompanhou); `lib/sessao-do-terapeuta.ts` (Tarefa 13: 6/7 mortos, 1 sobrevivente - mutante `||`→`&&` na condição de "sem terapeutaId/sessão sem vínculo" - provado EQUIVALENTE por análise de casos + exaustão computacional sobre `{null,'','a','b'}`: no domínio `string|null` com `===` estrito, OU e E coincidem sempre nesse ponto do código).
+    - **Prova por HTTP real contra o espelho** (banco de teste, cópia estrutural da produção, nunca a produção): `scripts/provar-acesso.ts` (`npm run provar-acesso`) - script permanente que faz chamadas de verdade e confere a resposta ("teste que lê código não prova acesso" - comentário no topo do arquivo, citando que em 15/09/2026 quatro afirmações tiradas de leitura de código estavam erradas, e todas as que saíram de execução estavam certas); não cria/altera/apaga nada em rotas de escrita (manda corpo inválido de propósito, então 400-de-validação em vez de 401 já prova que não há guarda). Cresceu a cada tarefa com um bloco novo. Complementado por `curl` direto nos casos que exigiam fixture sob controle manual (ex.: compromisso de outro terapeuta, venda reclassificada como Diagnóstico Guiado).
+    - **Prova de navegador real:** Chrome headless de verdade contra o app do dev (Tarefa de fiação, achado 88) - a única camada que exercita a cadeia cliente completa (boot → embrulho → `window.fetch` real → middleware).
+    - **`npm run preflight`:** varredura de padrões de defeito já conhecidos do projeto (0 grave em toda tarefa desta iniciativa).
+    - **`npx tsc --noEmit`:** limpo em toda tarefa.
+
+    ## 89.6. Todas as descobertas, em ordem cronológica
+
+    Todos os achados abaixo vieram de EXECUÇÃO (chamada HTTP real ou mutação real), nunca de leitura de código sozinha, e a maioria foi achada por revisão adversarial independente (um agente opus sem contexto da tarefa, revisando só o diff), não pelos testes automatizados sozinhos - os testes confirmavam depois que a correção funcionava, mas quem achava o furo era a revisão ou a prova manual.
+
+    1. **Achado 80 (15/09)** - API sem autenticação nenhuma. 3 chamadas reais sem credencial provaram o problema estrutural (já documentado acima, item 80).
+    2. **Achado 82 (Tarefa 8, 16/09)** - `terapeutaIdQueValeu` com guarda `&& id.terapeutaId` deixava terapeuta com cadastro incompleto (`terapeuta_id: null`) cair em `pedido ?? 'all'` - fail-OPEN, reabrindo o furo original na pior direção. Achado por revisão independente, não pela mutação (100% mesmo assim, porque mutação só pega código que existe, não a AUSÊNCIA de um caminho).
+    3. **Achado 83 (Tarefa 14, 16/09)** - `PATCH /api/sales` e `POST /api/sales/converter-moeda` sem guarda de papel. PROVADO com a credencial REAL da terapeuta Denise, em produção: 200 "success" ao mudar status de qualquer venda.
+    4. **C1 (Critical, revisão final)** - `POST /api/sales` (o irmão do PATCH acima) sem guarda nenhuma - `addSale` é um `upsert` por `id`, qualquer logado criava venda ou sobrescrevia campos financeiros de uma existente. Fechado com `podeMexerEmVenda`.
+    5. **Achado 84 = Tarefa I1 (revisão final, já documentado item 84)** - `GET` de `closings`/`cashflow`/`costs`/`sales` sem segregação por área - `sistema:comercial`/`sistema:terapeuta` liam o financeiro do DRE inteiro, inclusive `socios`. Fechado com `area==='dashboard'`.
+    6. **Achado 85 = Tarefa I2 (revisão final, já documentado item 85)** - terapeuta só tinha sido escopada nas rotas de SESSÃO (Tarefa 13); `agendar`, `empurrar-seguintes`, `compromissos`, `lancamento-manual`, `editar-paciente`, `vendas` (tipo `remarcacao`) autenticavam por senha mas não filtravam por `terapeuta_id`. Achou também, sem estar no brief original, que `POST /vendas tipo:'remarcacao'` era o MESMO caminho de escrita do `/sessoes/remarcar` já fechado pela Tarefa 13 - por outra porta.
+    7. **IMP-A = Furo A (revisão sobre I1/I2)** - as 3 rotas de `aprovacoes` validavam só senha, sem papel. Encadeado com `solicitacao_reembolso` sem escopo em `POST /vendas`: terapeuta com a própria senha criava uma solicitação com `sessoes_ids` de sessão de OUTRO paciente e aprovava ela mesma - cancelando sessão de qualquer paciente. Fechado com `podeAdministrar` nas 3 rotas de aprovação + defesa em profundidade (`podeAgirNaSessao`) no `solicitacao_reembolso`.
+    8. **IMP-B = Furo B (mesma revisão)** - insert genérico de nota clínica (`tipo:'nota'` e tipos livres) em `POST /vendas`, sem guarda - terapeuta inseria nota em `ocorrencias_prontuario` de qualquer paciente. Fechado com `podeAgirNaSessao` ("pelo menos uma sessão sua na venda"). **Rodada de fix 1:** a revisão independente achou um BYPASS na correção inicial - a guarda excluía `remarcacao`/`solicitacao_reembolso`/`orientacao_sessao` POR TIPO, mas as guardas específicas desses tipos eram CONDICIONAIS (só rodavam se `dados_extras` existisse); mandando `tipo:'remarcacao'` SEM `dados_extras`, o insert final ficava sem checagem nenhuma - o dano exato do Furo B, reaberto por outra porta. Corrigido tirando a exclusão por tipo: a guarda de escopo passou a rodar SEMPRE, para todos os tipos, contra o `sale_id` do corpo.
+    9. **C-NOVO (Critical, revisão final definitiva)** - `app/api/terapeutas/vendas/pacote/route.ts` (POST+DELETE), uma rota GÊMEA da que originou o Furo B, tinha ficado fora de todos os inventários anteriores: só `verificarAcesso` (usuário ativo), sem papel nem escopo. Mesmo furo do Furo B (nota em prontuário de qualquer paciente) + `UPDATE sales SET pacote_pai_id` de qualquer venda. Fechado com `podeMexerEmVenda`.
+    10. **Achado 86 (Task GETs, já documentado item 86)** - 3 rotas GET (`fechamentos`, `estornos-com-sessao`, `vendas/pacote`) vazavam comissão/PII entre terapeutas, apesar de já exigirem crachá - a leitura simplesmente não usava a identidade que o middleware já entregava.
+    11. **F1-F6 (Task GETs2, item 87 acima)** - mais 6 rotas GET sem guarda, achadas numa QUINTA rodada de revisão, depois do item 86 já fechado: `terapeutas/vendas` GET (Critical), `sessoes`/`aprovacoes`/`edicao-paciente`/`lancamento-manual` GET (Important), `meta/insights`+`meta/custo-trafego` GET sem guarda de área (Important), `admin/log` GET sem guarda nenhuma (Minor).
+    12. **Os 2 Criticals de fiação (item 88 acima)** - depois de TODO o servidor estar fechado: `instalarCrachaNoFetch()` nunca chamado (nenhuma tela mandava o crachá) e o login do DRE descartando o token - juntos, bloqueariam o app inteiro no deploy.
+
+    ## 89.7. Decisões do dono, registradas
+
+    - **O sócio fica com a visualização de hoje no DRE.** Decisão dita duas vezes no desenho original (`docs/superpowers/specs/2026-09-15-autenticacao-api-design.md`, seção 8): o middleware não restringe sessão do DRE dentro do módulo de terapeutas (`app/terapeutas/layout.tsx:27` continua valendo como está); o que o sócio não vê continua sendo só a divisão entre sócios.
+    - **Sócio/gestor/financeiro do DRE PODEM escrever na agenda dos terapeutas** - decisão explícita de 16/09/2026, registrada no ledger: `podeAgirNaSessao` retorna `true` para qualquer `area !== 'sistema'` (ou seja, qualquer papel do `dashboard`), não só para leitura. O código já estava assim desde a Tarefa 13; a revisão v3 sinalizou que isso colidia com "sócio é leitura" e o dono confirmou manter, sem mudança de código.
+    - **Fechar todas as leituras sensíveis antes do merge** - decisão de 16/09/2026 que gerou a Task GETs (item 86) e reforçada na Task GETs2 (item 87): mesmo sendo só LEITURA (não altera dado), vazamento de comissão/PII entre terapeutas e de financeiro do DRE para outro sistema foi tratado como bloqueante, não como dívida.
+    - **Diagnóstico Guiado fica fora da reserva de 30%** - decisão de negócio pré-existente, citada no contexto do produto que cria sessão para os dois terapeutas simultaneamente (relevante para a guarda dupla de `agendar`, achado 85/I2).
+    - **Publicar tudo junto** - as 44 commits de autenticação foram para produção num único merge fast-forward, não em fases incrementais visíveis ao usuário (ver 89.8).
+
+    ## 89.8. Deploy (16/09/2026)
+
+    1. **Migration primeiro, em produção:** `supabase/migrations/20260916000000_cracha_no_dashboard.sql` - `alter table usuarios_dashboard add column if not exists session_token text, session_token_expira_em timestamptz`, mais um índice único PARCIAL (`where session_token is not null`, porque a maioria das linhas fica `NULL` até a pessoa logar pela primeira vez após o deploy). Rodada e confirmada em produção (colunas existem, leitura HTTP 200) ANTES do código subir - ordem deliberada: colunas aditivas não quebram nada rodando com o código ANTIGO (que não sabe que elas existem), então é seguro rodar a migration primeiro e o código depois. Se fosse ao contrário (código novo esperando colunas que não existem), toda tentativa de login do DRE quebraria até a migration rodar.
+    2. **Merge fast-forward** `c9d86e9..5dc0a03` para a `main` - 44 commits de autenticação + 22 commits acumulados de outras mudanças (aprovado pelo dono), sem merge commit (fast-forward puro).
+    3. **Deploy automático na Vercel**, disparado pelo push - status confirmado "Ready", "Production".
+    4. **Validação do dono no ar:** login do DRE e de terapeutas carregando normalmente, ninguém preso em 401. Quem já estava logado no DRE ANTES do deploy precisou relogar uma única vez, porque a sessão antiga não tinha crachá (foi criada antes da coluna existir) - comportamento esperado e avisado, não um bug.
+    5. **Rollback preparado:** promover o deploy anterior na Vercel (um clique). Seguro porque as colunas da migration são ADITIVAS - o código antigo simplesmente as ignora, nenhum dado é perdido nem precisa ser revertido no banco.
+
+    ## 89.9. Dívidas conhecidas (não bloqueiam, documentadas para decisão futura)
+
+    - **Usuário do DRE consegue LER faturamento/fechamento de uma terapeuta específica por chamada direta.** `terapeutaIdQueValeu` e o padrão de filtro (`terapeutaId !== 'all'`) tratam qualquer não-terapeuta (`admin`/`comercial`/`sistema` E qualquer papel do `dashboard`) como podendo pedir `all` OU o id de uma terapeuta específica livremente - em `terapeutas/dashboard` e `terapeutas/fechamentos` GET. Não é um vazamento para QUALQUER pessoa (ainda exige crachá válido de algum papel autorizado), mas um usuário do DRE consegue ler dado operacional de um sistema separado. Sinalizada como IMPORTANT na revisão final original (achado 84/I1 tratou só o financeiro clássico, não esta leitura cruzada) e deixada como dívida por decisão do dono.
+    - **`GET /api/meta/test`** (`app/api/meta/test/route.ts:15-18`) sem guarda de área/identidade nenhuma - só confere `?secret=` contra os últimos 12 caracteres do `META_ACCESS_TOKEN`. Não usa `lerIdentidade`.
+    - **Armadilha do login por variável de ambiente.** `lib/auth.ts`, `getCredentials()` - se `NEXT_PUBLIC_USER2_EMAIL/PASSWORD/NAME/ROLE` (ou `USER3`) forem reativadas em produção no futuro, essa conta loga SEM crachá nenhum (`login()` nunca chama `verificarSenhaDashboard`, só compara string local e faz `persistSession` direto) - voltaria a ser uma sessão sem token, silenciosamente fora do sistema de crachá inteiro. Documentado no código e aqui para quem for mexer nessas variáveis de ambiente no futuro.
+    - **Comentário desatualizado em `app/api/terapeutas/sessoes/route.ts:17-18`** - o comentário do `GET` diz "Sem senha, como o GET de /api/terapeutas/vendas que já alimenta essa mesma tela"; ainda é verdade que não pede senha, mas não menciona a guarda de papel (`podeMexerEmVenda`) acrescentada pela Task GETs2 (F2) - cosmético, sinalizado como minor deferido no relatório da própria tarefa.
+    - **Parâmetro `usuario_email` morto nas telas de aprovações** (`app/terapeutas/aprovacoes/page.tsx`, linhas 133/143/151/160/201/234/289/317) - o front continua mandando `usuario_email` na query string e no corpo dessas chamadas; as rotas correspondentes agora decidem pela identidade do crachá (`lerIdentidade`), não mais por esse parâmetro. Não é um risco de segurança (o parâmetro é ignorado do lado do servidor), só código morto do lado do cliente - limpeza cosmética pendente.
+
+---
+
+90. **16/09/2026 - os erros de PROCESSO (meus, do jeito de trabalhar), separados dos furos de seguranca, e como cada um foi contornado.** Registrado por pedido explicito do dono ("todos os erros e como contornamos cada um deles"). Os achados de seguranca estao nos itens 80-89; estes aqui sao os tropecos de METODO cometidos durante o trabalho - importam porque cada um virou uma trava para nao repetir.
+
+    ## 90.1. Afirmacoes tiradas de leitura de codigo, sem executar
+
+    O erro mais repetido do dia 15/09: eu afirmava coisas sobre acesso ("a rota entrega X", "a Denise ve Y") lendo o codigo, sem fazer a chamada. Varias estavam ERRADAS. O dono cansou disso mais de uma vez ("de novo fazendo afirmacoes sem verificar"), e uma distincao concreta ficou: eu dizia "a Denise ve o faturamento do Pedro" e ele corrigiu tres vezes - a verdade provada por execucao e que, no uso NORMAL, a tela redireciona a terapeuta; o furo so existe na chamada DIRETA da rota. "A rota entrega o dado do Pedro para quem chama direto" e "a Denise ve o Pedro na tela" sao afirmacoes diferentes, e so a primeira era verdade.
+
+    **Como contornei:** virou regra permanente - toda afirmacao sobre acesso/comportamento so sai junto com a execucao que a prova (a chamada feita + a resposta recebida); sem isso, o texto tem de dizer "eu li, nao verifiquei". Foi o que originou o `scripts/provar-acesso.ts` (prova por HTTP real) e a insistencia em provar TUDO contra o espelho, inclusive re-executando eu mesmo o que os subagentes relatavam, em vez de aceitar o relatorio.
+
+    ## 90.2. O mutante que eu commitei por engano
+
+    Trabalhando em paralelo no mesmo repositorio, rodei `git add -A` enquanto o motor de mutacao tinha um arquivo de `lib/` MUTADO em disco (uma funcao devolvendo `true` no lugar de `false`). O mutante entrou no stage. Pior: li o diff ao contrario e um `git checkout --` acabou PLANTANDO a versao errada em vez de desfazer. Um defeito real quase foi para o historico por concorrencia + pressa, nao por falta de teste (os testes e o preflight pegavam o mutante; o problema foi o git, nao a logica).
+
+    **Como contornei:** (1) regra de "uma coisa por vez no repositorio" - nunca editar/commitar enquanto uma ferramenta que altera arquivos (mutacao, formatador) esta rodando; (2) um hook de pre-commit que RECUSA o commit enquanto existir o marcador `.mutacao-em-andamento` no disco (o motor de mutacao cria esse marcador ao comecar e apaga ao terminar) - trava fisica contra commitar durante uma rodada de mutacao; (3) antes de descartar mudanca que eu nao lembro de ter feito, descobrir de onde veio (`git log -S`) em vez de `git checkout --` as cegas.
+
+    ## 90.3. Chamar mutante de "equivalente" sem provar
+
+    Na Tarefa 2, um mutante sobrevivente (`falta > 0` -> `falta >= 0` em `precisaRenovar`) foi por mim chamado de equivalente. O dono perguntou "vale refazer?" - e ao verificar, ele era MATAVEL (o caso `falta === 0` distingue os dois). Eu tinha desistido cedo demais.
+
+    **Como contornei:** regra de nunca declarar mutante equivalente sem tentar mata-lo de verdade primeiro (construir o caso que distingue as duas versoes); a meta e 100% de mutacao por modulo, e "equivalente" so vale com a prova de equivalencia junto - foi o que se fez depois, de forma correta, com o unico sobrevivente real de `lib/sessao-do-terapeuta.ts` (89.5), provado equivalente por exaustao sobre o dominio `{null,'','a','b'}`, nao por desistencia.
+
+    ## 90.4. O prefixo "TESTE" no espelho mascarou o proprio vazamento
+
+    Ao montar os dados de teste no banco espelho, criei os terapeutas como "TESTE Pedro" e "TESTE Denise". A heuristica do produto que casa venda com terapeuta por primeiro nome (`ilike %primeironome%`) passou a casar pela palavra "teste", e isso ESCONDEU o vazamento financeiro que eu estava justamente tentando provar - o dado do Pedro nao aparecia para a Denise por causa do nome errado, nao por causa da guarda. Eu quase conclui "nao ha furo" por causa de um artefato do meu proprio fixture.
+
+    **Como contornei:** renomeei os terapeutas de teste para nomes reais plausiveis ("Pedro Roncada", "Denise Nascimento"), sem o prefixo que colidia com a heuristica, e so entao a prova passou a refletir a guarda de verdade - inclusive confirmando que o dado do Pedro EXISTIA no espelho (nao era ausencia de fixture) antes de afirmar que a guarda o escondia. Licao: o dado de teste tem de ser plausivel o bastante para nao disparar nenhuma regra de negocio por acidente, senao a prova mede o fixture, nao o codigo.
+
+    ## 90.5. Declarar "pronto" cedo demais, varias vezes
+
+    Mais de uma vez eu (ou o item do MD) disse "fecha o plano inteiro" e a revisao seguinte achou mais furo - o item 86 e o exemplo escrito. O padrao real: cada rodada de revisao adversarial de branch inteira, feita EM CAMADAS (revisao -> fix -> revisao de novo), achou algo que a anterior nao tinha mapeado, cinco vezes seguidas, ate a fiacao do cliente (item 88), que era a metade que nenhuma prova de servidor podia revelar.
+
+    **Como contornei:** nunca tratar uma unica revisao aprovada como "pronto" quando a superficie e "todas as rotas de um sistema financeiro"; rodar a revisao final de branch inteira repetidamente ate uma rodada voltar sem achado novo de codigo; e, no fim, o "pronto" so veio depois de provar as DUAS pontas (servidor por HTTP + cliente por navegador real), nao so cada metade. O dono reforcou isso pedindo "roda de angulos diferentes" e revisao repetida antes de eu mesmo aprovar.
+
+    ## 90.6. Por que registrar isto
+
+    Esses erros nao mudaram o resultado final (o sistema entrou em producao correto e provado), mas cada um custou tempo e confianca, e todos tem a mesma raiz: concluir rapido demais (por leitura, por pressa, por uma unica prova) em vez de fechar a cadeia inteira com execucao. As travas criadas - prova por execucao obrigatoria, hook de pre-commit contra mutante, dado de teste plausivel, revisao em camadas ate zerar, provar as duas pontas - existem para que o proximo trabalho grande nao repita nenhum deles.
