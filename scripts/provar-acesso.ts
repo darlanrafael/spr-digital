@@ -188,6 +188,20 @@ async function main() {
     conferir('/api/terapeutas/dashboard com cracha de terapeuta nao recusa', s === 401, false)
   }
 
+  // Admin do MODULO DE TERAPEUTAS (usuarios_sistema, tipo=admin) - o CEO
+  // real. Diferente do crachaAdmin acima (usuarios_dashboard, admin do DRE):
+  // as 3 rotas de aprovacao (Tarefa A) autenticam por
+  // verificarSenhaUsuario/verificarAcesso, que consultam usuarios_sistema -
+  // um admin so do dashboard nao tem senha la e cairia em 401 "Senha
+  // incorreta" antes de chegar na guarda desta tarefa.
+  const rLoginAdminSistema = await fetch(`${BASE}/api/terapeutas/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin-teste@espelho.local', senha: 'teste123' }),
+  })
+  const jLoginAdminSistema = await rLoginAdminSistema.json() as { usuario?: { token?: string } }
+  const crachaAdminSistema = jLoginAdminSistema.usuario?.token ?? null
+
   console.log('\n=== REGRAS POR PAPEL: a Tarefa 9 liga a rota do dashboard na identidade ===')
   // A prova abaixo e REAL - faz a chamada e confere a resposta. A Tarefa 9
   // trocou `const terapeutaId = searchParams.get('terapeutaId') ?? 'all'` por
@@ -631,6 +645,64 @@ async function main() {
         sale_id: 'prova-i2-nao-existe', terapeuta_id: OUTRO_ID_INVENTADO,
         data_primeira_sessao: '2099-01-01T10:00',
         usuario_email: emailComercial || 'x', senha: 'teste123',
+      }))) === 403, false)
+  }
+
+  console.log('\n=== COM CRACHA DE TERAPEUTA: nao aprova reembolso/lancamento-manual/edicao-paciente (Tarefa A) ===')
+  // Achado na revisao final da branch (IMP-A, ver progress.md): as 3 rotas
+  // de aprovacao do CEO validavam SO senha/token, sem conferir papel.
+  // Encadeado com solicitacoes_reembolso sem escopo (fechado na mesma
+  // tarefa, em app/api/terapeutas/vendas/route.ts), uma terapeuta com a
+  // PROPRIA senha criava uma solicitacao com sessoes_ids de outro paciente
+  // e aprovava ela mesma - CANCELA sessao de qualquer paciente.
+  //
+  // Corpo com id INVENTADO de proposito: a guarda de admin fica logo apos a
+  // checagem de senha/token existente, ANTES da busca da solicitacao no
+  // banco - um id que nao existe prova a mesma coisa que um id real. Se a
+  // guarda estivesse ausente ou depois da busca, o id inventado bateria em
+  // "solicitacao nao encontrada" (404) em vez de 403, e teria provado o
+  // contrario. A prova de que NADA E ALTERADO quando a terapeuta tenta
+  // (guarda antes de qualquer escrita) foi feita contra uma solicitacao e
+  // sessao REAIS no espelho - criadas e apagadas na mesma sessao - e fica
+  // documentada em task-A-report.md; este script nao grava solicitacao
+  // pendente nenhuma, entao nao ha fixture permanente para repetir esse
+  // antes/depois aqui.
+  const ID_SOLICITACAO_INVENTADA = '00000000-0000-0000-0000-000000000001'
+  if (!crachaTerapeuta || !crachaAdminSistema) {
+    pular('aprovacoes/lancamento-manual/edicao-paciente exigem admin (Tarefa A)',
+      'precisa de cracha valido de terapeuta E do admin do modulo de terapeutas (usuarios_sistema)')
+  } else {
+    conferir('PATCH /api/terapeutas/aprovacoes com cracha de terapeuta: recusado (403)',
+      await status('/api/terapeutas/aprovacoes', crachaTerapeuta, 'PATCH', JSON.stringify({
+        id: ID_SOLICITACAO_INVENTADA, acao: 'aprovar',
+        senha: 'teste123', usuario_nome: 'x', usuario_email: 'terapeuta-teste@espelho.local',
+      })), 403)
+    conferir('PATCH /api/terapeutas/aprovacoes com cracha de admin: passa da guarda (nao e 403)',
+      (await status('/api/terapeutas/aprovacoes', crachaAdminSistema, 'PATCH', JSON.stringify({
+        id: ID_SOLICITACAO_INVENTADA, acao: 'aprovar',
+        senha: 'teste123', usuario_nome: 'x', usuario_email: 'admin-teste@espelho.local',
+      }))) === 403, false)
+
+    conferir('PATCH .../lancamento-manual com cracha de terapeuta: recusado (403)',
+      await status('/api/terapeutas/aprovacoes/lancamento-manual', crachaTerapeuta, 'PATCH', JSON.stringify({
+        solicitacao_id: ID_SOLICITACAO_INVENTADA, acao: 'aprovar',
+        senha: 'teste123', usuario_email: 'terapeuta-teste@espelho.local',
+      })), 403)
+    conferir('PATCH .../lancamento-manual com cracha de admin: passa da guarda (nao e 403)',
+      (await status('/api/terapeutas/aprovacoes/lancamento-manual', crachaAdminSistema, 'PATCH', JSON.stringify({
+        solicitacao_id: ID_SOLICITACAO_INVENTADA, acao: 'aprovar',
+        senha: 'teste123', usuario_email: 'admin-teste@espelho.local',
+      }))) === 403, false)
+
+    conferir('PATCH .../edicao-paciente com cracha de terapeuta: recusado (403)',
+      await status('/api/terapeutas/aprovacoes/edicao-paciente', crachaTerapeuta, 'PATCH', JSON.stringify({
+        solicitacao_id: ID_SOLICITACAO_INVENTADA, acao: 'aprovar',
+        senha: 'teste123', usuario_email: 'terapeuta-teste@espelho.local',
+      })), 403)
+    conferir('PATCH .../edicao-paciente com cracha de admin: passa da guarda (nao e 403)',
+      (await status('/api/terapeutas/aprovacoes/edicao-paciente', crachaAdminSistema, 'PATCH', JSON.stringify({
+        solicitacao_id: ID_SOLICITACAO_INVENTADA, acao: 'aprovar',
+        senha: 'teste123', usuario_email: 'admin-teste@espelho.local',
       }))) === 403, false)
   }
 

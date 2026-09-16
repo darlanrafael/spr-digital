@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
 import { cancelarEvento } from '@/lib/google-meet'
 import { planejarAprovacaoReembolso } from '@/lib/aprovacao-reembolso'
+import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 
 type Solicitacao = {
   id: string
@@ -77,6 +78,19 @@ export async function PATCH(req: NextRequest) {
 
     const { valido } = await verificarSenhaUsuario(usuario_email, senha)
     if (!valido) return NextResponse.json({ error: 'Senha incorreta' }, { status: 401 })
+
+    // Esta tela e do CEO: aprovar/rejeitar reembolso cancela sessao de
+    // qualquer paciente. Sem esta guarda, a senha correta de QUALQUER
+    // usuario do sistema (inclusive terapeuta) bastava - e como o POST
+    // /vendas deixa a terapeuta abrir uma solicitacao com sessoes_ids de
+    // outro paciente, ela podia criar e aprovar a propria solicitacao,
+    // cancelando sessao de quem quisesse. verificarSenhaUsuario acima
+    // continua valendo como camada extra; esta e a que decide o papel.
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeAdministrar(quem)) {
+      return NextResponse.json({ error: 'Só um administrador pode fazer isso.' }, { status: 403 })
+    }
 
     const supabase = getSupabaseAdmin()
 

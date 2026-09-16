@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso } from '@/lib/terapeutas-auth'
 import { criarLancamentoManual, datasDoLancamento, type PayloadLancamentoManual } from '@/lib/criar-lancamento-manual'
 import { buscarConflitosAgenda } from '@/lib/agenda-conflitos'
+import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 
 // A fila de lançamentos manuais esperando decisão do CEO, e a decisão em si.
 //
@@ -80,6 +81,16 @@ export async function PATCH(req: NextRequest) {
       const { error, status } = erroAcesso(acesso)
       return NextResponse.json({ error }, { status })
     }
+
+    // Esta fila e do CEO: aprovar cria venda, sessoes e evento de agenda de
+    // verdade. verificarAcesso so confirma senha/token - nao confirma papel.
+    // Mantido como camada extra; esta e a que decide quem pode aprovar.
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeAdministrar(quem)) {
+      return NextResponse.json({ error: 'Só um administrador pode fazer isso.' }, { status: 403 })
+    }
+
     const usuario = acesso.usuario as Record<string, unknown> | undefined
     const nomeUsuario = (usuario?.nome as string) ?? usuario_email
 

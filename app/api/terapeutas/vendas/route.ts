@@ -405,6 +405,26 @@ export async function POST(req: NextRequest) {
         paciente_nome: string
         paciente_email: string
       }
+      // Defesa em profundidade: a terapeuta so pode pedir reembolso das
+      // PROPRIAS sessoes. Sem isto ela montava uma solicitacao com
+      // sessoes_ids de outro paciente/terapeuta e - se a aprovacao um dia
+      // deixasse de exigir admin de novo - aprovava ela mesma. A trava de
+      // verdade e a de admin em app/api/terapeutas/aprovacoes/route.ts; esta
+      // aqui so evita que a solicitacao indevida chegue a existir. Comercial
+      // e admin continuam livres: podeAgirNaSessao devolve true pra eles.
+      if (de.sessoes_ids.length > 0 && quem.area === 'sistema' && quem.papel === 'terapeuta') {
+        const { data: sessoesDaSolicitacao, error: sessoesErr } = await supabase
+          .from('sessoes').select('id,terapeuta_id').in('id', de.sessoes_ids)
+        if (sessoesErr) return NextResponse.json({ error: sessoesErr.message }, { status: 500 })
+        const todasSuas = de.sessoes_ids.every(id => {
+          const s = (sessoesDaSolicitacao ?? []).find(r => r.id === id)
+          return !!s && podeAgirNaSessao(quem, s.terapeuta_id)
+        })
+        if (!todasSuas) {
+          return NextResponse.json({ error: 'Uma ou mais sessões não são suas.' }, { status: 403 })
+        }
+      }
+
       // O erro TEM de ser conferido: sem isso a rota seguia e devolvia sucesso
       // mesmo com a solicitacao nao gravada. A terapeuta ficava certa de ter
       // pedido o reembolso, e o pedido nunca aparecia na tela de aprovacoes do
