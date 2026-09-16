@@ -16,12 +16,11 @@ import { alertasDeEstornoComSessao, ESTORNOS_DE_PLATAFORMA, type VendaParaAlerta
 // com outra venda aprovada não conta.
 export async function GET(req: NextRequest) {
   try {
-    const client = getSupabaseAdmin()
-
     const quem = lerIdentidade(req)
     if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
     if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para esta lista.' }, { status: 403 })
 
+    const client = getSupabaseAdmin()
     const agoraISO = new Date().toISOString()
 
     // Só as sessões FUTURAS ativas interessam - é o filtro mais restritivo, e
