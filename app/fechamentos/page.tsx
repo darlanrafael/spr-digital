@@ -1772,8 +1772,9 @@ function FechamentosContent() {
                                         {empresaAbsorve
                                           ? 'empresa paga'
                                           : det?.fonte === 'manual' ? 'você definiu'
+                                          : det?.fonte === 'mentoria' ? 'mentoria do Pedro (65/35)'
                                           : origem ? (origem.etiqueta ?? 'fechamento de origem')
-                                          : 'sem origem — confira'}
+                                          : 'sem origem - confira'}
                                       </span>
                                     </div>
                                   )
@@ -1810,7 +1811,7 @@ function FechamentosContent() {
                     Pedido do usuario em 11/09/2026. Ele foi explicito sobre
                     o texto: "a empresa ta pagando.. isso so precisa constar
                     nos minimos detalhes para melhor orientacao". */}
-                {alertas.length > 0 && alertasSelecionados.length > 0 && podeVerRepasse && (
+                {alertas.length > 0 && podeVerRepasse && (
                   <div className={`rounded-xl border overflow-hidden ${empresaAbsorve ? 'bg-purple-500/[0.07] border-purple-500/40' : 'bg-gray-900 border-white/10'}`}>
                     <div className="p-4">
                       <label className="flex items-start gap-3 cursor-pointer">
