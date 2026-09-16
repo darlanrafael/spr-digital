@@ -4862,3 +4862,24 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     `scripts/provar-acesso.ts` ganhou um bloco novo cobrindo as 6 rotas de forma generica. Complementado por curl direto para os casos que precisavam de fixture sob controle manual (compromisso do Pedro para o DELETE; venda reclassificada como Diagnostico Guiado, via `UPDATE sales SET oferta_nome=...`, revertido depois, para a guarda dupla do `agendar`; uma orientacao do Pedro para o PUT de `/vendas`). Em toda rota: Denise mexendo na agenda do Pedro -> **403**, com o dado no banco confirmado identico antes/depois; Denise na propria agenda -> passa da guarda (as vezes barrada por outra regra depois, ex. sessao sem data - mas nao mais por 403); comercial -> passa. Banco do espelho conferido de volta ao estado inicial ao final (nenhum fixture desta prova ficou para tras). `tsc` limpo, 777/777 testes, preflight 0 grave. Relatorio completo em `task-I2-report.md`.
 
+---
+
+86. **16/09/2026 - 3 rotas GET de leitura vazavam comissao/PII de uma terapeuta para outra. Ultima tarefa do plano de autenticacao.** Commit `61796db`.
+
+    ## 86.1. O furo
+
+    As 3 rotas ja exigiam cracha (nenhuma esta em `ROTAS_ABERTAS`), mas o `GET` de cada uma nao usava a identidade que o middleware ja entregava:
+
+    - `app/api/terapeutas/fechamentos/route.ts` (GET): confiava cegamente no `terapeutaId` da query string - qualquer terapeuta logada podia pedir o id de outra e ver a comissao/paciente dela.
+    - `app/api/terapeutas/estornos-com-sessao/route.ts` e `app/api/terapeutas/vendas/pacote/route.ts` (GET): checagem por `usuario_email` ativo (`usuarios_sistema.ativo`), sem olhar PAPEL nenhum - a mesma terapeuta ja barrada pelo cracha nas rotas de escrita passava aqui so mandando o proprio e-mail, e via a lista GLOBAL de estornos/ocorrencias de pacote de TODAS as terapeutas (comissao, nome de paciente, justificativa de texto livre).
+
+    ## 86.2. A correcao
+
+    `fechamentos`: `lerIdentidade` + `terapeutaIdQueValeu` (mesmo padrao da Tarefa 8/82) - terapeuta so ve o proprio id, admin/comercial/DRE passam qualquer id. `estornos-com-sessao` e `vendas/pacote`: `lerIdentidade` + `podeMexerEmVenda` (mesmo portao ja usado no POST/DELETE de `vendas/pacote` desde o commit `84fd287`) - terapeuta/socio fora, admin/comercial dentro. Nenhum outro arquivo tocado; `git diff --stat`: 3 arquivos, 21 inserções, 28 remoções.
+
+    ## 86.3. Prova contra o espelho
+
+    Cracha real de cada papel (login pela propria rota `/api/terapeutas/login` e `/api/dashboard-usuarios/login`). Em `fechamentos`: Denise pedindo o id do Pedro -> **200**, mas corpo com SO o dado dela (`Paciente da Denise`), zero ocorrencias de `Paciente do Pedro`/`venda-pedro-teste` - e a resposta e byte a byte identica a de Denise pedindo o proprio id, confirmando que o parametro e ignorado para ela; admin/comercial pedindo o id do Pedro -> **200** com o dado real dele (`comissao_valor: 500`, `Paciente do Pedro`), confirmando que o dado existia de verdade (nao e ausencia de fixture) e que os dois papeis continuam vendo qualquer terapeuta. Em `estornos-com-sessao` e `vendas/pacote`: Denise (terapeuta) e socio (dashboard) -> **403** `"Sem permissão para esta lista."`; comercial e admin -> **200**. Sem cracha nenhum, as 3 -> **401** (checagem extra, coerente com o padrao). Nenhuma escrita nas 3 rotas (sao GET puro), nenhum fixture para limpar. `tsc` limpo, 777/777 testes, preflight 0 grave (nenhum achado novo nas linhas alteradas). Relatorio completo em `task-GETs-report.md`.
+
+    Com este achado fecha o plano de autenticacao inteiro (`.superpowers/sdd/2026-09-15-autenticacao-api/`): toda escrita sensivel e agora toda leitura sensivel do modulo de terapeutas e do DRE passam pela identidade do cracha, nao por parametro/e-mail que o cliente controla.
+
