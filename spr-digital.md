@@ -4779,3 +4779,36 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     **Um guarda `&& campo` escrito so para o TypeScript estreitar um tipo pode mudar QUANDO a regra se aplica, nao so o que ela retorna.** A pergunta certa era "esta pessoa e terapeuta?" (dado que nao muda: `area` e `papel` vem de como a conta foi criada); a pergunta que o codigo fazia de fato era "esta pessoa e terapeuta E tem o campo preenchido?" - e a segunda parte deixa a regra inteira depender da qualidade de um dado que pode faltar. Quando a decisao e "quem pode o que", o teste que falta nao e o que inverte um operador - e o que verifica o caso em que o dado que a regra pressupoe simplesmente nao esta la.
 
+---
+
+83. **16/09/2026 - a terapeuta alterava o status de QUALQUER venda e convertia moeda de venda. PROVADO com credencial real em producao, agora fechado. Tarefa 14 (ultima) do plano de autenticacao.** Commits `4930947`, `93a2b85`.
+
+    ## 83.1. A prova que motivou a tarefa
+
+    Continuacao direta do achado 80: o `middleware.ts` e `lib/identidade-da-chamada.ts` das tarefas anteriores ja bloqueavam a maior parte das rotas sensiveis, mas o usuario testou pessoalmente, na guia anonima, com a credencial REAL da Denise (terapeuta): `PATCH /api/sales` (o que muda o status de uma venda - inclusive marcar como reembolsada) respondeu **200 "success"**. `POST /api/sales/converter-moeda` passou pela permissao (so devolveu 404 porque o id mandado era falso). As outras rotas que se suspeitava vulneraveis (aprovacoes, fechamentos) ja estavam protegidas - so estas duas, de venda, tinham o furo.
+
+    ## 83.2. A correcao
+
+    Nova funcao em `lib/identidade-da-chamada.ts`:
+
+    ```ts
+    export function podeMexerEmVenda(id: Identidade): boolean {
+      if (id.area === 'sistema') return id.papel === 'admin' || id.papel === 'comercial'
+      return id.papel === 'admin'
+    }
+    ```
+
+    Terapeuta e socio ficam de fora; comercial (trabalha com a venda no dia a dia) e admin (das duas areas) passam. Ligada como PRIMEIRA coisa nas duas rotas, antes de `req.json()`/banco. Em `converter-moeda` a checagem antiga (achado 76, `usuario_email` contra `usuarios_sistema`) **nao foi removida** - continua rodando depois, como camada extra; so a variavel local que guardava o resultado foi renomeada (`quem` -> `usuarioDoEmail`) porque colidia com o `quem` novo da identidade.
+
+    ## 83.3. A prova, de novo contra o espelho
+
+    Mesmo metodo do achado 80/82: nada de confiar em leitura de codigo. Com o dev subido apontando pro banco espelho e o cracha real da Denise: `PATCH /api/sales` em `venda-diag-teste` (que estava `status: "aprovada"`) voltou a dar **403**, e o `status` da venda ficou **identico antes e depois** - confirmado direto pela API, nao so pela resposta HTTP. `converter-moeda` tambem 403. Com um cracha de comercial, as duas rotas passam da guarda (nao-403).
+
+    Mutacao em `lib/identidade-da-chamada.ts`: **100%, 26/26 mortos, sem sobrevivente**.
+
+    ## 83.4. Uma prova que provava a coisa errada
+
+    A primeira versao do bloco de prova do comercial em `scripts/provar-acesso.ts` mandava `usuario_email: 'x'` (falso) para `converter-moeda`. A prova "passou" no sentido de dar 403 - mas pelo motivo ERRADO: o e-mail falso caia na camada ANTIGA (achado 76), nao na guarda nova desta tarefa. Rodar contra o espelho pegou isso na hora (a expectativa era "nao-403", e veio 403). Corrigido para mandar o e-mail real do comercial logado. **A licao repete a do achado 79/82: uma prova que da o resultado esperado pelo motivo errado nao prova nada - so rodando contra o servidor de verdade, com o dado certo, e que o erro apareceu.**
+
+    Este era o ultimo achado pendente do plano de autenticacao (`.superpowers/sdd/2026-09-15-autenticacao-api/`). Relatorio completo em `task-14-report.md` na mesma pasta.
+
