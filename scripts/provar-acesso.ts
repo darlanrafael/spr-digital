@@ -237,14 +237,16 @@ async function main() {
       rTerapeuta.json() as Promise<RespostaDashboard>,
     ])
     const totalAdmin = jAdmin.por_terapeuta?.length ?? 0
-    // Ver o comentario acima: `por_terapeuta` nao filtra por `terapeutaId`
-    // (pre-existente, fora do escopo da Tarefa 9) - por isso o tamanho bate
-    // pros dois papeis. Isto NAO prova a restricao; so confirma que o guard
-    // novo (401 sem identidade) nao quebrou o uso normal da rota.
-    conferir('terapeutaId=all: por_terapeuta tem o mesmo tamanho pros dois papeis (formato preservado)',
-      jTerapeuta.por_terapeuta?.length, totalAdmin)
-    pular('terapeutaId=all com cracha de terapeuta: por_terapeuta contem SO ELA',
-      'por_terapeuta nao filtra por terapeutaId (pre-existente, fora do escopo da Tarefa 9) e os dois cadastros de teste colidem no mesmo primeiro-nome ("TESTE") - o defeito de casamento de produto mascara qualquer diferenca de dados neste espelho. Prova real: task-9-report.md, decisao do servidor observada diretamente.')
+    // Depois da Tarefa 9B, por_terapeuta RESPEITA o terapeutaId decidido: o admin
+    // ve TODAS as terapeutas, a terapeuta ve SO ELA. Com os dois cadastros de
+    // teste do espelho (Denise e Pedro), o admin ve 2 e a terapeuta ve 1.
+    conferir('ADMIN pedindo all ve mais de uma terapeuta (o espelho tem 2)',
+      totalAdmin >= 2, true)
+    conferir('TERAPEUTA pedindo all ve SO ELA (por_terapeuta com 1 linha) - o furo da 9B fechado',
+      jTerapeuta.por_terapeuta?.length, 1)
+    const nomeUnico = jTerapeuta.por_terapeuta?.[0]?.nome ?? ''
+    conferir('e a unica linha e a propria terapeuta (Denise), nao outra',
+      nomeUnico.toLowerCase().includes('denise'), true)
   }
 
   // 10: o socio ve a divisao entre socios em /api/closings - ate a Tarefa 10
