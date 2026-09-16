@@ -34,6 +34,16 @@ test('sem os cabecalhos do middleware, nao ha identidade', () => {
   assert.equal(lerIdentidade(req({})), null)
 })
 
+test('falta so o tipo, tambem nao ha identidade', () => {
+  // Distingue de "faltam os dois": se so o `||` virasse `&&` aqui, este caso
+  // seguiria adiante e tentaria fazer split(':') de um tipo nulo.
+  assert.equal(lerIdentidade(req({ 'x-spr-quem-id': 'u1' })), null)
+})
+
+test('falta so o id, tambem nao ha identidade', () => {
+  assert.equal(lerIdentidade(req({ 'x-spr-quem-tipo': 'sistema:terapeuta' })), null)
+})
+
 test('le a identidade que o middleware escreveu', () => {
   const i = lerIdentidade(req({
     'x-spr-quem-tipo': 'sistema:terapeuta',
@@ -42,6 +52,17 @@ test('le a identidade que o middleware escreveu', () => {
     'x-spr-quem-terapeuta-id': ID_DENISE,
   }))
   assert.deepEqual(i, { area: 'sistema', papel: 'terapeuta', id: 'u1', email: 'denise@x.com', terapeutaId: ID_DENISE })
+})
+
+test('le identidade da area dashboard tambem, nao so sistema', () => {
+  // Sem este caso, uma inversao no segundo `!==` (que rejeita `dashboard`
+  // junto com qualquer coisa que nao seja `sistema` nem `dashboard`) passaria
+  // batido: todos os outros testes desta funcao usam area sistema.
+  const i = lerIdentidade(req({
+    'x-spr-quem-tipo': 'dashboard:socio',
+    'x-spr-quem-id': 'u5',
+  }))
+  assert.deepEqual(i, { area: 'dashboard', papel: 'socio', id: 'u5', email: '', terapeutaId: null })
 })
 
 test('CRITICO: terapeuta pedindo "all" recebe o proprio, nao todos', () => {
@@ -69,6 +90,18 @@ test('admin e comercial continuam podendo pedir qualquer um, inclusive all', () 
 test('o socio do DRE nao e restringido no modulo de terapeutas', () => {
   // Decisao do usuario: ele fica exatamente com a visualizacao de hoje.
   assert.equal(terapeutaIdQueValeu(socio, 'all'), 'all')
+})
+
+test('terapeutaId so vale quando area E papel tambem sao terapeuta', () => {
+  // O tipo permite terapeutaId em qualquer Identidade (o middleware hoje so
+  // preenche para terapeuta, mas a funcao e pura e nao pode confiar nisso).
+  // Sem este teste, um `&&` virando `||` aqui passaria batido: os outros
+  // papeis do teste todos tem terapeutaId null, entao nunca exercitam a
+  // diferenca entre "E" e "OU".
+  const comercialComTerapeutaId: Identidade = {
+    area: 'sistema', papel: 'comercial', id: 'u2', email: 'a@b.c', terapeutaId: ID_PEDRO,
+  }
+  assert.equal(terapeutaIdQueValeu(comercialComTerapeutaId, 'all'), 'all')
 })
 
 test('so admin administra: comercial e terapeuta NAO', () => {
