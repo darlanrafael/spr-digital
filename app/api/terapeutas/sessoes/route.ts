@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 
 // Sessões de UMA venda, lidas na hora.
 //
@@ -66,10 +68,16 @@ export async function PATCH(req: NextRequest) {
 
     const { data: sessao } = await supabase
       .from('sessoes')
-      .select('id,sale_id,status,status_consulta,paciente_nome,numero_sessao')
+      .select('id,sale_id,status,status_consulta,paciente_nome,numero_sessao,terapeuta_id')
       .eq('id', sessao_id)
       .single()
     if (!sessao) return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
+
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeAgirNaSessao(quem, (sessao as { terapeuta_id: string | null }).terapeuta_id)) {
+      return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
+    }
 
     const now = new Date().toISOString()
     const horaLocal = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })

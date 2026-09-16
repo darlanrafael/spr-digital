@@ -6,6 +6,8 @@ import { buscarConflitosAgenda, mensagemConflito } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { quebraIntervalo, formatoDaVenda } from '@/lib/diagnostico-guiado'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -43,6 +45,12 @@ export async function POST(req: NextRequest) {
   const { data: sessao, error: fetchErr } = await client
     .from('sessoes').select('*').eq('id', sessao_id).single()
   if (fetchErr || !sessao) return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
+
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAgirNaSessao(quem, (sessao as { terapeuta_id: string | null }).terapeuta_id)) {
+    return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
+  }
 
   if (sessao.status === 'entregue' || sessao.status === 'cancelada') {
     return NextResponse.json({ error: `Não é possível remarcar sessão com status "${sessao.status}"` }, { status: 400 })

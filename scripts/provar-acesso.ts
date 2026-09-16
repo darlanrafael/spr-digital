@@ -178,8 +178,9 @@ async function main() {
     body: JSON.stringify({ email: 'terapeuta-teste@espelho.local', senha: 'teste123' }),
   })
   conferir('login do terapeuta de teste responde 200', rLoginTerapeuta.status, 200)
-  const jLoginTerapeuta = await rLoginTerapeuta.json() as { usuario?: { token?: string } }
+  const jLoginTerapeuta = await rLoginTerapeuta.json() as { usuario?: { token?: string; terapeuta_id?: string | null } }
   const crachaTerapeuta = jLoginTerapeuta.usuario?.token ?? null
+  const terapeutaIdDoLogado = jLoginTerapeuta.usuario?.terapeuta_id ?? null
   if (!crachaTerapeuta) {
     pular('rota fechada com cracha de terapeuta', 'o login nao devolveu token - ver app/api/terapeutas/login/route.ts')
   } else {
@@ -361,6 +362,42 @@ async function main() {
       await status('/api/costs', crachaSocio, 'DELETE', '{}'), 403)
     conferir('DELETE /api/costs com cracha de admin: passa da guarda (nao e 403)',
       (await status('/api/costs', crachaAdmin, 'DELETE', '{}')) === 403, false)
+  }
+
+  console.log('\n=== COM CRACHA DE TERAPEUTA: nao age na sessao de outra (Tarefa 13) ===')
+  // A rota /confirmar tambem exige o par usuario_email+senha (ou token) do
+  // esquema ANTIGO de acesso (verificarAcesso, lib/terapeutas-auth.ts) - o
+  // cracha do middleware (x-spr-cracha) e uma camada A MAIS, nao substitui a
+  // outra nestas rotas de sessao. Por isso o corpo manda senha de novo: sem
+  // ela a rota recusaria em 401 ANTES de chegar na guarda nova, o que
+  // pareceria (sem ser) a guarda funcionando.
+  //
+  // Corpo com sessao_id de OUTRO terapeuta de proposito: se a guarda estiver
+  // no lugar certo, a recusa (403) acontece ANTES do update - nada e escrito.
+  if (!crachaTerapeuta || !terapeutaIdDoLogado) {
+    pular('Denise nao age em sessao de outro terapeuta',
+      'a terapeuta de teste precisa ter entrado e ter terapeuta_id vinculado')
+  } else {
+    const { data: deOutraTerapeuta } = await c.from('sessoes')
+      .select('id,terapeuta_id,status').neq('terapeuta_id', terapeutaIdDoLogado)
+      .limit(1).maybeSingle()
+    const alvo = deOutraTerapeuta as { id: string; status: string } | null
+    if (!alvo) {
+      pular('Denise nao age em sessao de outro terapeuta', 'nenhuma sessao de outro terapeuta no banco')
+    } else {
+      const { data: antesRaw } = await c.from('sessoes').select('status').eq('id', alvo.id).single()
+      const statusAntes = (antesRaw as { status: string } | null)?.status
+      conferir('Denise NAO confirma sessao de outro terapeuta (403)',
+        await status('/api/terapeutas/sessoes/confirmar', crachaTerapeuta, 'POST', JSON.stringify({
+          sessao_id: alvo.id,
+          usuario_email: 'terapeuta-teste@espelho.local',
+          senha: 'teste123',
+        })), 403)
+      const { data: depoisRaw } = await c.from('sessoes').select('status').eq('id', alvo.id).single()
+      const statusDepois = (depoisRaw as { status: string } | null)?.status
+      conferir('a sessao de outro terapeuta NAO foi alterada pela tentativa recusada',
+        statusDepois, statusAntes)
+    }
   }
 
   if (falhas > 0) {
