@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { saleIdsComAsFilhas } from '@/lib/dinheiro-do-pacote'
-import { ehDoTerapeuta, termosDeProduto } from '@/lib/vendas-por-situacao'
+import { ehDoTerapeuta, ehDiagnosticoGuiado, termosDeProduto } from '@/lib/vendas-por-situacao'
 import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
@@ -160,7 +160,14 @@ export async function GET(req: NextRequest) {
     // pelas vendas que já têm sessão — senão as pendentes de agendamento
     // somem do cálculo de "sessões vendidas"/faturamento, já que ainda não
     // têm nenhuma linha em `sessoes`).
-    const terapeutaFiltro = terapeutaId !== 'all' ? terapeutas.find(t => t.id === terapeutaId) : undefined
+    //
+    // `restrito` cobre os dois casos em que o chamador NÃO pode ver todo
+    // mundo: uma terapeuta de verdade (terapeutaId = o id dela) e o sentinela
+    // de terapeuta sem vínculo (terapeutaId = ''). Os dois caem fora do ramo
+    // `=== 'all'`, e é isso que os torna "restrito" - não importa se
+    // `terapeutaFiltro` encontrou alguém ou não.
+    const restrito = terapeutaId !== 'all'
+    const terapeutaFiltro = restrito ? terapeutas.find(t => t.id === terapeutaId) : undefined
     const primeiroNomeFiltro = terapeutaFiltro?.nome.trim().split(' ')[0].toLowerCase()
 
     // 3. Buscar vendas paginadas
@@ -171,9 +178,19 @@ export async function GET(req: NextRequest) {
     // Individual Pedro Roncada"), zerando as métricas de quem vende sob o
     // próprio nome em vez do produto conjunto. Filtra dinamicamente pelo
     // nome de cada terapeuta ativo (ou só o filtrado, se houver).
+    // Restrito sem `terapeutaFiltro` (o sentinela de sem vínculo, ou qualquer
+    // id que não bate com nenhuma terapeuta ativa) não pode cair no ramo
+    // "todos os nomes" - isso é o furo que fazia terapeutaId='' ver o
+    // faturamento de todo mundo (fail-open). Lista vazia aqui, combinada com
+    // o guard abaixo que nem busca vendas quando não há nome nenhum pra
+    // filtrar, é o fail-closed: quem não bate com ninguém não vê ninguém.
     const nomesTerapeutas = primeiroNomeFiltro
       ? [primeiroNomeFiltro]
-      : terapeutas.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean)
+      : (restrito ? [] : terapeutas.map(t => t.nome.trim().split(' ')[0].toLowerCase()).filter(Boolean))
+    // Sem isto, `nomesTerapeutas.length === 0` cai no `if` abaixo que PULA o
+    // `.or()` de produto - e uma varredura de `sales` sem esse filtro
+    // devolve TODO MUNDO, o oposto exato de "não vê ninguém".
+    const terapeutaSemAcesso = restrito && nomesTerapeutas.length === 0
     // Sempre TODOS os terapeutas ativos, mesmo quando terapeutaId filtra um
     // só — usado abaixo pra detectar produto ambíguo (bate com mais de um
     // nome), que nomesTerapeutas sozinho não consegue ver quando já veio
@@ -206,7 +223,11 @@ export async function GET(req: NextRequest) {
     const vendasRawTotal: SaleRow[] = []
     const PAGE = 1000
     let cursor = ''
-    while (true) {
+    // Terapeuta sem vínculo (sentinela, ou qualquer id que não bate com
+    // ninguém) não busca venda nenhuma - fail-closed. Sem este guard,
+    // `nomesTerapeutas` vazio faria o `if` abaixo pular o `.or()` de produto e
+    // a consulta devolveria TODAS as vendas, sem filtro nenhum.
+    while (!terapeutaSemAcesso) {
       let q = supabase
         .from('sales')
         .select(COLUNAS_DO_DASHBOARD)
@@ -340,24 +361,48 @@ export async function GET(req: NextRequest) {
           sessoes: acc.sessoes + p.sessoes, comissao: acc.comissao + p.comissao, bruto: acc.bruto + p.bruto, saleIds: [...acc.saleIds, ...p.saleIds],
         }), { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] as string[] })
 
+    // Quando restrito a uma terapeuta, os totais GLOBAIS (faturamento_bruto,
+    // impostos, líquido, ticket médio) também precisam ficar só com o que é
+    // dela - não só `por_terapeuta`. A varredura de `sales` sempre inclui TODO
+    // Diagnóstico Guiado (`TERMO_SQL_DIAGNOSTICO` em `termosDeProduto`), mesmo
+    // o que ainda não foi dividido entre as duas terapeutas: sem este filtro
+    // o card "Faturamento" da Denise somava o pacote AINDA PENDENTE do Pedro
+    // (R$3000, provado no espelho) mesmo sem nenhuma sessão dela nele.
+    // Qualquer OUTRO produto em `vendasFaturamento` já bate com o nome dela,
+    // garantido pela própria consulta SQL (nomesTerapeutas) - só o
+    // Diagnóstico precisa desta checagem extra de dono: ela é dona se já tem
+    // sessão dele (`saleIdsDaTerapeutaRestrita`, mesma regra de
+    // `saleIdsComAsFilhas` usada em `por_terapeuta`) ou se ele está no
+    // pendente DELA (`pendentesFiltrado`, que só inclui Diagnóstico para o
+    // Pedro - `ehDoTerapeuta` em lib/vendas-por-situacao.ts).
+    const saleIdsDaTerapeutaRestrita = new Set(
+      restrito ? saleIdsComAsFilhas([...new Set(sessoesFiltradas.map(s => s.sale_id))], vendasRaw) : [],
+    )
+    const vendasFaturamentoEscopo = !restrito
+      ? vendasFaturamento
+      : vendasFaturamento.filter(v => !ehDiagnosticoGuiado(v.produto)
+          || saleIdsDaTerapeutaRestrita.has(v.id)
+          || pendentesFiltrado.saleIds.includes(v.id))
+
     // 5. Métricas globais
     const sessoes_entregues = sessoesFiltradas.filter(s => s.status === 'entregue').length
     const sessoes_futuras = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesFiltrado.sessoes
     const sessoes_vendidas = sessoesFiltradas.length + pendentesFiltrado.sessoes
 
-    // Daqui pra baixo, tudo que é dinheiro usa `vendasFaturamento` (sem os
-    // lançamentos manuais). Contagem de sessão continua vindo de
+    // Daqui pra baixo, tudo que é dinheiro usa `vendasFaturamentoEscopo` (sem
+    // os lançamentos manuais, e sem o Diagnóstico Guiado de outra terapeuta
+    // quando restrito). Contagem de sessão continua vindo de
     // `sessoesFiltradas`, que inclui as sessões dos manuais — elas são reais.
-    const faturamento_bruto = vendasFaturamento.reduce((a, v) => a + saleBruto(v), 0)
-    const total_impostos = vendasFaturamento.reduce((a, v) => a + saleImpostoBase(v) * (saleAliquota(v) / 100), 0)
-    const faturamento_liquido_total = vendasFaturamento.reduce((a, v) => {
+    const faturamento_bruto = vendasFaturamentoEscopo.reduce((a, v) => a + saleBruto(v), 0)
+    const total_impostos = vendasFaturamentoEscopo.reduce((a, v) => a + saleImpostoBase(v) * (saleAliquota(v) / 100), 0)
+    const faturamento_liquido_total = vendasFaturamentoEscopo.reduce((a, v) => {
       return a + (v.valor_liquido || 0) - saleImpostoBase(v) * (saleAliquota(v) / 100)
     }, 0)
     const faturamento_liquido_spr = faturamento_liquido_total * 0.70
     const faturamento_liquido_terapeutas = faturamento_liquido_total * 0.30
     // Denominador também sem manual: dividir a receita real por um total de
     // vendas que inclui as manuais derrubaria o ticket médio artificialmente.
-    const ticket_medio = vendasFaturamento.length > 0 ? faturamento_bruto / vendasFaturamento.length : 0
+    const ticket_medio = vendasFaturamentoEscopo.length > 0 ? faturamento_bruto / vendasFaturamentoEscopo.length : 0
     const comissao_gerada = sessoesFiltradas.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + (s.comissao_valor || 0), 0)
     const comissao_futura = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesFiltrado.comissao
     // Comissão total sobre todas as sessões vendidas no período (entregues + futuras + ainda sem sessão criada), independente de já ter sido paga —
@@ -399,34 +444,46 @@ export async function GET(req: NextRequest) {
       : 0
 
     // 6. Stats por terapeuta
+    //
+    // A lista `terapeutas` continua INTEIRA para as detecções internas acima
+    // (nomesTerapeutas quando não-restrito, todosNomesTerapeutas,
+    // duracaoPorTerapeuta, o loop de pendentesPorTerapeuta) - só a SAÍDA é
+    // filtrada aqui. Quando restrito (inclui o sentinela ''), ninguém mais
+    // aparece: antes disto, `por_terapeuta` sempre trazia TODAS as
+    // terapeutas ativas, e a Denise chamando `?terapeutaId=all` (resolvido
+    // pela identidade para o próprio id dela) recebia a linha do Pedro com o
+    // faturamento dele - provado no espelho (venda de Diagnóstico Guiado
+    // pendente, R$3000).
     const now = new Date()
-    const por_terapeuta = terapeutas.map(t => {
-      const ts = sessoesFiltradas.filter(s => s.terapeuta_id === t.id)
-      const pendentesT = pendentesPorTerapeuta.get(t.id) ?? { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] }
-      // As vendas FILHAS entram junto. A lista nasce das SESSOES, e a filha nao
-      // tem nenhuma: depois de ligada ela saia de Pendentes (certo, as sessoes
-      // dela estao no pai) e nao entrava em lugar nenhum - a linha do terapeuta
-      // perdia R$ 2.600 no caso da Amanda, enquanto o card global da mesma tela
-      // continuava com o valor cheio. Duas caixas na mesma pagina, uma so venda.
-      const saleIdsTerapeuta = saleIdsComAsFilhas([...new Set(ts.map(s => s.sale_id))], vendasRaw)
-      const fat_bruto_t = vendasFaturamento
-        .filter(v => saleIdsTerapeuta.includes(v.id))
-        .reduce((a, v) => a + (v.valor_pago_cliente || 0), 0) + pendentesT.bruto
-      const proximas = ts
-        .filter(s => s.status === 'agendada' && s.data_agendada && new Date(s.data_agendada) > now)
-        .sort((a, b) => (a.data_agendada ?? '') < (b.data_agendada ?? '') ? -1 : 1)
-      return {
-        id: t.id,
-        nome: t.nome,
-        sessoes_vendidas: ts.length + pendentesT.sessoes,
-        sessoes_entregues: ts.filter(s => s.status === 'entregue').length,
-        sessoes_futuras: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesT.sessoes,
-        faturamento_bruto: fat_bruto_t,
-        comissao_gerada: ts.filter(s => s.status === 'entregue').reduce((a, s) => a + (s.comissao_valor || 0), 0),
-        comissao_futura: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesT.comissao,
-        proxima_consulta: proximas[0]?.data_agendada ?? null,
-      }
-    })
+    const por_terapeuta = terapeutas
+      .filter(t => terapeutaId === 'all' || t.id === terapeutaId)
+      .map(t => {
+        const ts = sessoesFiltradas.filter(s => s.terapeuta_id === t.id)
+        const pendentesT = pendentesPorTerapeuta.get(t.id) ?? { sessoes: 0, comissao: 0, bruto: 0, saleIds: [] }
+        // As vendas FILHAS entram junto. A lista nasce das SESSOES, e a filha nao
+        // tem nenhuma: depois de ligada ela saia de Pendentes (certo, as sessoes
+        // dela estao no pai) e nao entrava em lugar nenhum - a linha do terapeuta
+        // perdia R$ 2.600 no caso da Amanda, enquanto o card global da mesma tela
+        // continuava com o valor cheio. Duas caixas na mesma pagina, uma so venda.
+        const saleIdsTerapeuta = saleIdsComAsFilhas([...new Set(ts.map(s => s.sale_id))], vendasRaw)
+        const fat_bruto_t = vendasFaturamento
+          .filter(v => saleIdsTerapeuta.includes(v.id))
+          .reduce((a, v) => a + (v.valor_pago_cliente || 0), 0) + pendentesT.bruto
+        const proximas = ts
+          .filter(s => s.status === 'agendada' && s.data_agendada && new Date(s.data_agendada) > now)
+          .sort((a, b) => (a.data_agendada ?? '') < (b.data_agendada ?? '') ? -1 : 1)
+        return {
+          id: t.id,
+          nome: t.nome,
+          sessoes_vendidas: ts.length + pendentesT.sessoes,
+          sessoes_entregues: ts.filter(s => s.status === 'entregue').length,
+          sessoes_futuras: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesT.sessoes,
+          faturamento_bruto: fat_bruto_t,
+          comissao_gerada: ts.filter(s => s.status === 'entregue').reduce((a, s) => a + (s.comissao_valor || 0), 0),
+          comissao_futura: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesT.comissao,
+          proxima_consulta: proximas[0]?.data_agendada ?? null,
+        }
+      })
 
     // 7. Consultas hoje em Brasília
     const today = brasiliaToday()
