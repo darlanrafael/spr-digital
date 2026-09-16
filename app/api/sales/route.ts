@@ -7,6 +7,9 @@ export async function GET(req: NextRequest) {
   const projectId = searchParams.get('projectId') ?? 'proj_1'
   const dateStart = searchParams.get('dateStart') ?? undefined
   const dateEnd = searchParams.get('dateEnd') ?? undefined
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (quem.area !== 'dashboard') return NextResponse.json({ error: 'Sem acesso ao financeiro.' }, { status: 403 })
   try {
     const sales = await getSales(projectId, dateStart, dateEnd)
     return NextResponse.json(sales)

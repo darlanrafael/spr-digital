@@ -5,6 +5,9 @@ import { lerIdentidade, podeEditarCaixa } from '@/lib/identidade-da-chamada'
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const projectId = searchParams.get('projectId') ?? 'proj_1'
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (quem.area !== 'dashboard') return NextResponse.json({ error: 'Sem acesso ao financeiro.' }, { status: 403 })
   try {
     const entries = await getCashflow(projectId)
     return NextResponse.json(entries)

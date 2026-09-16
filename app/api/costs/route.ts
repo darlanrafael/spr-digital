@@ -10,6 +10,9 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const projectId = searchParams.get('projectId') ?? 'proj_1'
   const type = searchParams.get('type') // 'fixed' | 'variable' | 'meta'
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (quem.area !== 'dashboard') return NextResponse.json({ error: 'Sem acesso ao financeiro.' }, { status: 403 })
   try {
     if (type === 'fixed') {
       return NextResponse.json(await getFixedCosts())

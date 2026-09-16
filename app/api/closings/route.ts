@@ -12,6 +12,11 @@ export async function GET(req: NextRequest) {
     // vinha inteiro por aqui, e bastava abrir o endereco no navegador.
     const quem = lerIdentidade(req)
     if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    // O financeiro do DRE e sistema separado do modulo de terapeutas: so quem
+    // e da area 'dashboard' le. Guarda vem ANTES da logica de esconder a
+    // divisao entre socios (Tarefa 10) - depois dela, so quem e do dashboard
+    // chega, e dentro do dashboard o socio continua sem ver a divisao.
+    if (quem.area !== 'dashboard') return NextResponse.json({ error: 'Sem acesso ao financeiro.' }, { status: 403 })
     return NextResponse.json(deveEsconderDivisaoDeSocios(quem) ? semDivisaoDeSocios(closings) : closings)
   } catch {
     return NextResponse.json({ error: 'Erro ao buscar fechamentos' }, { status: 500 })
