@@ -1751,6 +1751,68 @@ function FechamentosContent() {
                   </div>
                 )}
 
+                {/* Quem paga o prejuizo: os socios (padrao) ou a empresa.
+                    Pedido do usuario em 11/09/2026. Ele foi explicito sobre
+                    o texto: "a empresa ta pagando.. isso so precisa constar
+                    nos minimos detalhes para melhor orientacao". */}
+                {alertas.length > 0 && alertasSelecionados.length > 0 && podeVerRepasse && (
+                  <div className={`rounded-xl border overflow-hidden ${empresaAbsorve ? 'bg-purple-500/[0.07] border-purple-500/40' : 'bg-gray-900 border-white/10'}`}>
+                    <div className="p-4">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={empresaAbsorve}
+                          onChange={e => setEmpresaAbsorve(e.target.checked)}
+                          className="w-4 h-4 mt-0.5 accent-purple-500 cursor-pointer shrink-0"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-white">
+                            A empresa absorve estes {formatCurrency(alertasTotal)}, em vez de descontar dos sócios
+                          </span>
+                          <span className="block text-xs text-gray-400 mt-1">
+                            Desmarcado (padrão): o valor é descontado do repasse de cada sócio, na proporção mostrada
+                            na coluna <strong className="text-gray-300">Quem absorve</strong>.
+                          </span>
+                        </span>
+                      </label>
+
+                      {empresaAbsorve && (
+                        <div className="mt-3 ml-7 rounded-lg bg-black/25 border border-purple-500/25 p-3">
+                          <p className="text-xs font-semibold text-purple-300">A EMPRESA ESTÁ PAGANDO</p>
+                          <ul className="mt-2 space-y-1.5 text-[11px] text-gray-300">
+                            <li>
+                              <strong className="text-white">Sai do caixa da empresa.</strong> Ao confirmar, é lançada
+                              uma saída de {formatCurrency(alertasTotal)} no Caixa, do tipo reembolso, com a lista
+                              completa de quem gerou o prejuízo.
+                            </li>
+                            <li>
+                              <strong className="text-white">Os sócios não pagam nada disto.</strong> O repasse de cada um
+                              fica igual ao repasse original: a coluna Deduções vai para zero.
+                            </li>
+                            <li>
+                              <strong className="text-white">O prejuízo não some, só muda de dono.</strong> O caixa da
+                              empresa fica {formatCurrency(alertasTotal)} menor, e é de lá que sai o dinheiro devolvido
+                              ao cliente.
+                            </li>
+                            <li>
+                              <strong className="text-white">Os estornos não voltam a aparecer.</strong> Marcados como
+                              abatidos neste fechamento, eles não reaparecem no próximo - independentemente de quem pagou.
+                            </li>
+                            <li>
+                              <strong className="text-white">Fica registrado no fechamento.</strong> O histórico grava que
+                              a empresa absorveu, não os sócios, para não haver dúvida depois.
+                            </li>
+                          </ul>
+                          <p className="mt-2 text-[11px] text-gray-500">
+                            Efeito no caixa: saída de <strong className="text-purple-300">{formatCurrency(alertasTotal)}</strong>
+                            {reservaCaixa > 0 && <> (a reserva de {formatCurrency(reservaCaixa)} entra normalmente, então o efeito líquido no caixa é de {formatCurrency(reservaCaixa - alertasTotal)})</>}.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {podeVerRepasse && (
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-4">Divisão entre Sócios</h3>
@@ -1998,68 +2060,6 @@ function FechamentosContent() {
                         <p className="text-xs text-amber-400/80 mt-1">
                           Se houver algum reembolso parcial aprovado, ele NAO esta sendo deduzido nesta tela. Confira antes de confirmar o fechamento. Detalhe: {erroReembolsosParciais}
                         </p>
-                      </div>
-                    )}
-
-                    {/* Quem paga o prejuizo: os socios (padrao) ou a empresa.
-                        Pedido do usuario em 11/09/2026. Ele foi explicito sobre
-                        o texto: "a empresa ta pagando.. isso so precisa constar
-                        nos minimos detalhes para melhor orientacao". */}
-                    {alertas.length > 0 && alertasSelecionados.length > 0 && podeVerRepasse && (
-                      <div className={`rounded-xl border overflow-hidden ${empresaAbsorve ? 'bg-purple-500/[0.07] border-purple-500/40' : 'bg-gray-900 border-white/10'}`}>
-                        <div className="p-4">
-                          <label className="flex items-start gap-3 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={empresaAbsorve}
-                              onChange={e => setEmpresaAbsorve(e.target.checked)}
-                              className="w-4 h-4 mt-0.5 accent-purple-500 cursor-pointer shrink-0"
-                            />
-                            <span className="min-w-0">
-                              <span className="block text-sm font-semibold text-white">
-                                A empresa absorve estes {formatCurrency(alertasTotal)}, em vez de descontar dos sócios
-                              </span>
-                              <span className="block text-xs text-gray-400 mt-1">
-                                Desmarcado (padrão): o valor é descontado do repasse de cada sócio, na proporção mostrada
-                                na coluna <strong className="text-gray-300">Quem absorve</strong>.
-                              </span>
-                            </span>
-                          </label>
-
-                          {empresaAbsorve && (
-                            <div className="mt-3 ml-7 rounded-lg bg-black/25 border border-purple-500/25 p-3">
-                              <p className="text-xs font-semibold text-purple-300">A EMPRESA ESTÁ PAGANDO</p>
-                              <ul className="mt-2 space-y-1.5 text-[11px] text-gray-300">
-                                <li>
-                                  <strong className="text-white">Sai do caixa da empresa.</strong> Ao confirmar, é lançada
-                                  uma saída de {formatCurrency(alertasTotal)} no Caixa, do tipo reembolso, com a lista
-                                  completa de quem gerou o prejuízo.
-                                </li>
-                                <li>
-                                  <strong className="text-white">Os sócios não pagam nada disto.</strong> O repasse de cada um
-                                  fica igual ao repasse original: a coluna Deduções vai para zero.
-                                </li>
-                                <li>
-                                  <strong className="text-white">O prejuízo não some, só muda de dono.</strong> O caixa da
-                                  empresa fica {formatCurrency(alertasTotal)} menor, e é de lá que sai o dinheiro devolvido
-                                  ao cliente.
-                                </li>
-                                <li>
-                                  <strong className="text-white">Os estornos não voltam a aparecer.</strong> Marcados como
-                                  abatidos neste fechamento, eles não reaparecem no próximo - independentemente de quem pagou.
-                                </li>
-                                <li>
-                                  <strong className="text-white">Fica registrado no fechamento.</strong> O histórico grava que
-                                  a empresa absorveu, não os sócios, para não haver dúvida depois.
-                                </li>
-                              </ul>
-                              <p className="mt-2 text-[11px] text-gray-500">
-                                Efeito no caixa: saída de <strong className="text-purple-300">{formatCurrency(alertasTotal)}</strong>
-                                {reservaCaixa > 0 && <> (a reserva de {formatCurrency(reservaCaixa)} entra normalmente, então o efeito líquido no caixa é de {formatCurrency(reservaCaixa - alertasTotal)})</>}.
-                              </p>
-                            </div>
-                          )}
-                        </div>
                       </div>
                     )}
 
