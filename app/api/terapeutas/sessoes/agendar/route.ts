@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { liquidoDoPacote, type VendaComValor } from '@/lib/dinheiro-do-pacote'
 import { paraWhatsApp } from '@/lib/telefone'
 import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { buscarConflitosAgenda, buscarConflitosMultiTerapeuta, mensagemConflito, soCompromissos } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
@@ -48,6 +50,17 @@ export async function POST(req: NextRequest) {
   if (!valido) {
     const { error, status } = erroAcesso(acesso)
     return NextResponse.json({ error }, { status })
+  }
+
+  // A terapeuta so agenda na propria agenda - o corpo pode mandar o
+  // terapeuta_id de OUTRA (a tela nunca deixa a terapeuta chegar nesta rota,
+  // mas chamada direta sim). Comercial e admin liberados - e o trabalho
+  // deles agendar para as duas. Vem ANTES de qualquer leitura de venda:
+  // corpo com sale_id inventado nao pode nem chegar la.
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAgirNaSessao(quem, terapeuta_id)) {
+    return NextResponse.json({ error: 'Você só pode agendar na sua própria agenda.' }, { status: 403 })
   }
 
   const client = getSupabaseAdmin()
@@ -130,6 +143,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Diagnostico Guiado precisa do Pedro e da Denise ativos como terapeutas.' },
         { status: 409 },
+      )
+    }
+
+    // O pacote do Diagnostico grava sessao para os DOIS terapeutas sempre -
+    // o terapeuta_id do corpo (ja conferido acima) nem entra no pacote
+    // montado la embaixo. Sem esta segunda guarda, a terapeuta passaria o
+    // proprio id no corpo (bate com ela, guarda de cima libera) e mesmo
+    // assim criaria sessoes na agenda do OUTRO terapeuta, que nunca deu
+    // consentimento nenhum. So passa quem e liberado para os dois ids ao
+    // mesmo tempo - impossivel para uma terapeuta so, ja que pedroId e
+    // deniseId sao sempre pessoas diferentes.
+    if (!podeAgirNaSessao(quem, pedroId) || !podeAgirNaSessao(quem, deniseId)) {
+      return NextResponse.json(
+        { error: 'O Diagnóstico Guiado agenda para os dois terapeutas - só comercial ou admin pode criar esse pacote.' },
+        { status: 403 },
       )
     }
   }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario } from '@/lib/terapeutas-auth'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { datasDoLancamento, type PayloadLancamentoManual } from '@/lib/criar-lancamento-manual'
 import { avisoDeDuplicata, type VendaExistente } from '@/lib/lancamento-manual-duplicata'
 import { buscarConflitosAgenda } from '@/lib/agenda-conflitos'
@@ -44,6 +46,17 @@ export async function POST(req: NextRequest) {
 
   const { valido, usuario } = await verificarSenhaUsuario(usuario_email, senha)
   if (!valido) return NextResponse.json({ error: 'Senha inválida' }, { status: 401 })
+
+  // A terapeuta so lanca manualmente para a PROPRIA agenda - a tela ([id]/
+  // page.tsx) so manda o proprio id, mas chamada direta poderia mandar
+  // qualquer um. Comercial e admin continuam lancando para qualquer
+  // terapeuta. Antes de qualquer leitura/escrita (inclusive a pre-reserva de
+  // horario, que ja bloqueia agenda).
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAgirNaSessao(quem, payload.terapeuta_id)) {
+    return NextResponse.json({ error: 'Você só pode lançar para a sua própria agenda.' }, { status: 403 })
+  }
 
   const client = getSupabaseAdmin()
   const { data: terapeuta, error: terapErr } = await client

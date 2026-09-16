@@ -4812,3 +4812,53 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
 
     Este era o ultimo achado pendente do plano de autenticacao (`.superpowers/sdd/2026-09-15-autenticacao-api/`). Relatorio completo em `task-14-report.md` na mesma pasta.
 
+---
+
+84. **16/09/2026 - comercial e terapeuta liam o financeiro inteiro do DRE. Achado na revisao final da branch, Tarefa I1.** Commit `23c9446`.
+
+    ## 84.1. O furo
+
+    Os `GET` de `/api/closings`, `/api/cashflow`, `/api/costs` e `/api/sales` devolviam o financeiro do DRE (fechamentos com o array `socios`, caixa, custos, vendas com valores) para **qualquer usuario autenticado** - inclusive `sistema:comercial` e `sistema:terapeuta`, que sao do modulo de terapeutas, um sistema separado. As guardas de escrita (Tarefas 12/14: `podeEditarFechamento`, `podeEditarCaixa`, `podeEditarCustos`, `podeMexerEmVenda`) ja existiam; a LEITURA tinha ficado aberta.
+
+    ## 84.2. A correcao
+
+    Guarda unica logo apos `lerIdentidade`, nas 4 rotas:
+
+    ```ts
+    const quem = lerIdentidade(req)
+    if (!quem) return 401
+    if (quem.area !== 'dashboard') return NextResponse.json({ error: 'Sem acesso ao financeiro.' }, { status: 403 })
+    ```
+
+    Em `closings`, a guarda nova vem ANTES da logica da Tarefa 10 (`deveEsconderDivisaoDeSocios`/`semDivisaoDeSocios`), sem remove-la - as duas camadas coexistem. Nenhum metodo de escrita foi tocado (ja tinham guarda propria). `git diff --stat`: 4 arquivos, 14 linhas.
+
+    ## 84.3. Prova contra o espelho
+
+    Com cracha de comercial e de terapeuta: **403 `"Sem acesso ao financeiro."`** nas 4 rotas (8/8 confirmados). Com cracha de admin do DRE: **200**, incluindo um fechamento de teste inserido por SQL direto (nunca pela rota) com `socios` povoado, confirmando que o admin continua vendo a divisao entre socios normalmente. `tsc` limpo, 777/777 testes, preflight 0 grave. Relatorio completo em `task-I1-report.md`.
+
+---
+
+85. **16/09/2026 - 6 rotas operacionais da agenda dos terapeutas nao conferiam DE QUEM era a sessao/venda. Achado na revisao final da branch, Tarefa I2 (fecha o mesmo furo que a Tarefa 13, nas rotas que ela nao cobriu).** Commit a seguir.
+
+    ## 85.1. O furo
+
+    A Tarefa 13 (achado 79, adjacente) escopou a terapeuta ao proprio `terapeuta_id` nas rotas de SESSAO (`confirmar`/`remarcar`/`PATCH`). Mas 6 outras rotas operacionais autenticavam por senha (`verificarAcesso`/`verificarSenhaUsuario`) sem conferir de quem era a agenda: `agendar`, `empurrar-seguintes`, `compromissos` (POST/DELETE), `vendas/lancamento-manual`, `vendas/editar-paciente`. Uma terapeuta, com a propria senha, agia na agenda de OUTRA por chamada direta - a UI ja impedia isso (o `layout.tsx` redireciona toda sessao `tipo==='terapeuta'` para a propria pagina), mas nenhuma rota conferia por conta propria.
+
+    Lendo cada rota (o brief pedia isso - "cada rota e diferente") apareceram mais dois pontos que ninguem tinha listado: **`compromissos` DELETE nao manda `terapeuta_id` nenhum no corpo** (so o id do compromisso; o dado vem do proprio registro buscado no banco), e **`POST /api/terapeutas/vendas` com `tipo:'remarcacao'` e o MESMO caminho de escrita que `/sessoes/remarcar`** (a rota que a Tarefa 13 fechou) - so que acessivel por outra porta, sem guarda nenhuma, contornando a Tarefa 13 inteira sem precisar de bug nela.
+
+    ## 85.2. A correcao
+
+    Reusa `podeAgirNaSessao` da Tarefa 13 (nenhuma mudanca em `lib/sessao-do-terapeuta.ts`) em cada rota, sempre ANTES da primeira escrita. O `terapeuta_id` da acao vem de lugares diferentes por rota:
+
+    - **No corpo** (`agendar`, `compromissos` POST, `lancamento-manual`): guarda direto contra o valor do corpo.
+    - **Da sessao buscada no banco** (`empurrar-seguintes`, `compromissos` DELETE, `vendas` tipo `remarcacao`/`orientacao_sessao`): select expandido para trazer `terapeuta_id` onde faltava, guarda logo apos o fetch.
+    - **De TODAS as sessoes da venda** (`editar-paciente`): `sales` nao tem coluna `terapeuta_id` - so `sessoes` tem, e o Diagnostico Guiado tem sessoes de dois terapeutas na MESMA venda. A regra virou "pelo menos uma sessao sua nesta venda", nao "a venda inteira e sua".
+
+    **Achado durante a leitura de `agendar`, alem do que o brief previa:** o Diagnostico Guiado sempre cria sessao para os DOIS terapeutas (`pedroId`/`deniseId` calculados do cadastro ativo) - o `terapeuta_id` do corpo nem entra no pacote gravado quando o produto e esse. Uma guarda simples (so contra o corpo) deixava a terapeuta passar o PROPRIO id (bate, libera) e mesmo assim criar sessoes na agenda do outro terapeuta. Fechado com uma segunda guarda, logo apos `pedroId`/`deniseId` calculados: `podeAgirNaSessao(quem, pedroId) && podeAgirNaSessao(quem, deniseId)` - so passa quem e liberado para os dois ao mesmo tempo, o que uma terapeuta sozinha nunca e.
+
+    **Decisao deliberada de NAO escopar** as sessoes "seguintes" que `empurrar-seguintes` move (so a sessao-base e escopada): o Diagnostico Guiado divide as sessoes do pacote em bloco entre os dois terapeutas, e empurrar a partir da ultima sessao de um arrasta as sessoes do outro - isso e o proprio produto (a rota e chamada pela propria pagina da terapeuta para continuar um pacote conjunto que ela participa), nao um furo. Tambem ficaram de fora, documentados como decisao e nao esquecimento: `tipo:'solicitacao_reembolso'` (so cria um pedido revisado por `/aprovacoes`, nao mexe em `sessoes`/`sales`) e o insert generico de nota/prontuario em `POST /vendas` (e outra pergunta - acesso a prontuario, nao agenda).
+
+    ## 85.3. Prova contra o espelho
+
+    `scripts/provar-acesso.ts` ganhou um bloco novo cobrindo as 6 rotas de forma generica. Complementado por curl direto para os casos que precisavam de fixture sob controle manual (compromisso do Pedro para o DELETE; venda reclassificada como Diagnostico Guiado, via `UPDATE sales SET oferta_nome=...`, revertido depois, para a guarda dupla do `agendar`; uma orientacao do Pedro para o PUT de `/vendas`). Em toda rota: Denise mexendo na agenda do Pedro -> **403**, com o dado no banco confirmado identico antes/depois; Denise na propria agenda -> passa da guarda (as vezes barrada por outra regra depois, ex. sessao sem data - mas nao mais por 403); comercial -> passa. Banco do espelho conferido de volta ao estado inicial ao final (nenhum fixture desta prova ficou para tras). `tsc` limpo, 777/777 testes, preflight 0 grave. Relatorio completo em `task-I2-report.md`.
+

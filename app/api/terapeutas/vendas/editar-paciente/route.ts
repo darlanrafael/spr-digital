@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 
 // Edita nome/e-mail/telefone da venda (dado que a tela de prontuário lê
 // direto de `sales`, não existe uma tabela "paciente" separada — corrigir um
@@ -37,6 +39,30 @@ export async function PUT(req: NextRequest) {
 
     const { data: anterior } = await supabase
       .from('sales').select('nome,email,telefone,produto,plataforma,valor_pago_cliente,data_hora').eq('id', sale_id).single()
+
+    // O paciente e da terapeuta so quando ela tem PELO MENOS UMA sessao
+    // nesta venda. `sales` nao tem coluna terapeuta_id - quem tem e
+    // `sessoes` (uma linha por sessao, e o Diagnostico Guiado tem sessoes de
+    // DOIS terapeutas na mesma venda). Por isso confere contra TODOS os
+    // terapeuta_id que aparecem nas sessoes da venda, nao so um: exigir "a
+    // venda inteira e sua" bloquearia a terapeuta de corrigir o nome do
+    // proprio paciente num pacote conjunto; exigir so "a primeira sessao e
+    // sua" deixaria passar quem so tem sessao NENHUMA nesta venda.
+    // Sem sessao nenhuma (venda ainda nao agendada), fail-closed: null cai
+    // no mesmo "nao libera terapeuta" que uma sessao sem terapeuta_id.
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    const { data: sessoesDaVenda } = await supabase
+      .from('sessoes').select('terapeuta_id').eq('sale_id', sale_id)
+    const idsEnvolvidos = [...new Set(
+      (sessoesDaVenda ?? []).map(s => (s as { terapeuta_id: string | null }).terapeuta_id).filter((t): t is string => !!t)
+    )]
+    const podeEditar = idsEnvolvidos.length > 0
+      ? idsEnvolvidos.some(tid => podeAgirNaSessao(quem, tid))
+      : podeAgirNaSessao(quem, null)
+    if (!podeEditar) {
+      return NextResponse.json({ error: 'Este paciente não é seu.' }, { status: 403 })
+    }
 
     // Trocar NOME ou E-MAIL exige motivo escrito.
     //

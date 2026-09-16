@@ -455,6 +455,185 @@ async function main() {
     }
   }
 
+  console.log('\n=== COM CRACHA DE TERAPEUTA: nao age na AGENDA de outro terapeuta (Tarefa I2) ===')
+  // A Tarefa 13 fechou sessao (confirmar/remarcar/PATCH). Estas 6 rotas
+  // OPERACIONAIS continuavam sem confinar a terapeuta a propria agenda:
+  // agendar, empurrar-seguintes, compromissos (POST/DELETE), lancamento-
+  // manual, editar-paciente, e dois tipos dentro de POST /vendas
+  // ('remarcacao' e 'orientacao_sessao' - o PRIMEIRO e o MESMO caminho de
+  // escrita que /sessoes/remarcar, so que batido direto, contornando a
+  // guarda da Tarefa 13 sem precisar de bug nenhum nela).
+  //
+  // '00000000-0000-0000-0000-000000000000' como terapeuta_id "de outro": nao
+  // precisa de um segundo terapeuta real cadastrado neste ambiente para
+  // provar a guarda - qualquer id que nao seja o da Denise prova a regra, e
+  // um id que nao existe de verdade tambem garante que, se a guarda falhar,
+  // a escrita real cai num erro de FK/nao encontrado em vez de gravar algo
+  // com aparencia valida.
+  const OUTRO_ID_INVENTADO = '00000000-0000-0000-0000-000000000000'
+  if (!crachaTerapeuta || !terapeutaIdDoLogado) {
+    pular('Denise nao age na agenda de outro terapeuta (I2)',
+      'a terapeuta de teste precisa ter entrado e ter terapeuta_id vinculado')
+  } else {
+    // agendar: sale_id inventado de proposito - o 404 "Venda nao encontrada"
+    // so pode vir DEPOIS da guarda, entao nada e gravado nos dois casos.
+    conferir('Denise NAO agenda passando terapeuta_id de outro (403)',
+      await status('/api/terapeutas/sessoes/agendar', crachaTerapeuta, 'POST', JSON.stringify({
+        sale_id: 'prova-i2-nao-existe', terapeuta_id: OUTRO_ID_INVENTADO,
+        data_primeira_sessao: '2099-01-01T10:00',
+        usuario_email: 'terapeuta-teste@espelho.local', senha: 'teste123',
+      })), 403)
+    conferir('Denise agendando na PROPRIA agenda passa da guarda (nao e 403)',
+      (await status('/api/terapeutas/sessoes/agendar', crachaTerapeuta, 'POST', JSON.stringify({
+        sale_id: 'prova-i2-nao-existe', terapeuta_id: terapeutaIdDoLogado,
+        data_primeira_sessao: '2099-01-01T10:00',
+        usuario_email: 'terapeuta-teste@espelho.local', senha: 'teste123',
+      }))) === 403, false)
+
+    // compromissos POST: data em 2099 de proposito, titulo identificavel -
+    // se a guarda falhasse isto criaria um registro visivel para limpar; no
+    // caminho esperado (403 antes do insert) nada e gravado, conferido pela
+    // contagem antes/depois.
+    const { count: comprAntes } = await c.from('compromissos_terapeuta')
+      .select('*', { count: 'exact', head: true }).eq('terapeuta_id', OUTRO_ID_INVENTADO)
+    conferir('Denise NAO lanca compromisso na agenda de outro terapeuta (403)',
+      await status('/api/terapeutas/compromissos', crachaTerapeuta, 'POST', JSON.stringify({
+        terapeuta_id: OUTRO_ID_INVENTADO, titulo: 'PROVA I2 - nao deveria existir',
+        inicio: '2099-01-01T10:00', fim: '2099-01-01T11:00',
+        usuario_email: 'terapeuta-teste@espelho.local', senha: 'teste123',
+      })), 403)
+    const { count: comprDepois } = await c.from('compromissos_terapeuta')
+      .select('*', { count: 'exact', head: true }).eq('terapeuta_id', OUTRO_ID_INVENTADO)
+    conferir('nenhum compromisso foi criado pela tentativa recusada', comprDepois, comprAntes)
+
+    // compromissos DELETE: precisa de um compromisso de OUTRO terapeuta real
+    // ja existente no banco para tentar apagar.
+    const { data: comprDeOutro } = await c.from('compromissos_terapeuta')
+      .select('id').neq('terapeuta_id', terapeutaIdDoLogado).limit(1).maybeSingle()
+    if (!comprDeOutro) {
+      pular('Denise nao apaga compromisso de outro terapeuta (I2)',
+        'nenhum compromisso de outro terapeuta no banco deste ambiente')
+    } else {
+      const idComprAlvo = (comprDeOutro as { id: string }).id
+      conferir('Denise NAO apaga compromisso de outro terapeuta (403)',
+        await status('/api/terapeutas/compromissos', crachaTerapeuta, 'DELETE', JSON.stringify({
+          id: idComprAlvo, usuario_email: 'terapeuta-teste@espelho.local', senha: 'teste123',
+        })), 403)
+      const { data: aindaExiste } = await c.from('compromissos_terapeuta')
+        .select('id').eq('id', idComprAlvo).maybeSingle()
+      conferir('o compromisso de outro terapeuta continua existindo', !!aindaExiste, true)
+    }
+
+    // lancamento-manual: payload minimo, terapeuta_id de outro.
+    conferir('Denise NAO lanca manual para outro terapeuta (403)',
+      await status('/api/terapeutas/vendas/lancamento-manual', crachaTerapeuta, 'POST', JSON.stringify({
+        terapeuta_id: OUTRO_ID_INVENTADO, nome: 'Prova I2', email: 'prova-i2@example.com',
+        usuario_email: 'terapeuta-teste@espelho.local', senha: 'teste123',
+      })), 403)
+
+    // empurrar-seguintes, editar-paciente e vendas (remarcacao/orientacao_sessao)
+    // precisam de uma sessao REAL de outro terapeuta para provar contra ela.
+    const { data: deOutraSessao } = await c.from('sessoes')
+      .select('id,sale_id,terapeuta_id,data_agendada').neq('terapeuta_id', terapeutaIdDoLogado)
+      .limit(1).maybeSingle()
+    const outra = deOutraSessao as { id: string; sale_id: string; data_agendada: string | null } | null
+    if (!outra) {
+      pular('Denise nao mexe em sessao/venda de outro terapeuta (empurrar/editar-paciente/vendas) (I2)',
+        'nenhuma sessao de outro terapeuta no banco deste ambiente')
+    } else {
+      const { data: antesEmpurrar } = await c.from('sessoes').select('data_agendada').eq('id', outra.id).single()
+      conferir('Denise NAO empurra as seguintes a partir de sessao de outro terapeuta (403)',
+        await status('/api/terapeutas/sessoes/empurrar-seguintes', crachaTerapeuta, 'POST', JSON.stringify({
+          sessao_id: outra.id, usuario_email: 'terapeuta-teste@espelho.local', senha: 'teste123',
+        })), 403)
+      const { data: depoisEmpurrar } = await c.from('sessoes').select('data_agendada').eq('id', outra.id).single()
+      conferir('a sessao de outro terapeuta NAO mudou de data pela tentativa recusada',
+        (depoisEmpurrar as { data_agendada: string | null } | null)?.data_agendada,
+        (antesEmpurrar as { data_agendada: string | null } | null)?.data_agendada)
+
+      // POST /vendas tipo=remarcacao: o MESMO update de sessoes que
+      // /sessoes/remarcar faz, batido direto por outra porta.
+      const { data: antesRemarcarV } = await c.from('sessoes').select('data_agendada,status').eq('id', outra.id).single()
+      conferir('Denise NAO remarca sessao de outro terapeuta via /vendas tipo=remarcacao (403)',
+        await status('/api/terapeutas/vendas', crachaTerapeuta, 'POST', JSON.stringify({
+          sale_id: outra.sale_id, tipo: 'remarcacao', titulo: 'x', descricao: 'x',
+          dados_extras: {
+            sessao_id: outra.id, nova_data: '2099-01-01T10:00:00.000Z',
+            data_anterior: outra.data_agendada, solicitado_por: 'x', motivo: 'x',
+          },
+          usuario_email: 'terapeuta-teste@espelho.local', usuario_nome: 'x', usuario_tipo: 'terapeuta',
+          senha: 'teste123',
+        })), 403)
+      const { data: depoisRemarcarV } = await c.from('sessoes').select('data_agendada,status').eq('id', outra.id).single()
+      conferir('a sessao de outro terapeuta NAO mudou pela tentativa recusada em /vendas (remarcacao)',
+        JSON.stringify(depoisRemarcarV), JSON.stringify(antesRemarcarV))
+
+      // POST /vendas tipo=orientacao_sessao
+      const { data: antesOrient } = await c.from('ocorrencias_prontuario')
+        .select('id').eq('sessao_id', outra.id).eq('tipo', 'orientacao_sessao').maybeSingle()
+      conferir('Denise NAO grava orientacao em sessao de outro terapeuta (403)',
+        await status('/api/terapeutas/vendas', crachaTerapeuta, 'POST', JSON.stringify({
+          sale_id: outra.sale_id, sessao_id: outra.id, tipo: 'orientacao_sessao',
+          titulo: 'ORIENTAÇÃO DA SESSÃO:', descricao: 'prova I2',
+          usuario_email: 'terapeuta-teste@espelho.local', usuario_nome: 'x', usuario_tipo: 'terapeuta',
+          senha: 'teste123',
+        })), 403)
+      const { data: depoisOrient } = await c.from('ocorrencias_prontuario')
+        .select('id').eq('sessao_id', outra.id).eq('tipo', 'orientacao_sessao').maybeSingle()
+      conferir('nenhuma orientacao foi criada pela tentativa recusada', !!depoisOrient, !!antesOrient)
+
+      // editar-paciente: so prova exclusao de verdade se NENHUMA sessao da
+      // venda achada for da propria Denise (a regra e "pelo menos uma sessao
+      // sua nesta venda", nao "a venda inteira e sua" - pacote conjunto do
+      // Diagnostico tem sessao dos dois na MESMA venda).
+      const { data: sessoesDaVendaAlvo } = await c.from('sessoes')
+        .select('terapeuta_id').eq('sale_id', outra.sale_id)
+      const idsDaVendaAlvo = new Set(
+        (sessoesDaVendaAlvo ?? []).map(s => (s as { terapeuta_id: string | null }).terapeuta_id)
+      )
+      if (idsDaVendaAlvo.has(terapeutaIdDoLogado)) {
+        pular('Denise nao edita paciente de venda que nao e sua (I2)',
+          'a venda achada tem sessao da propria Denise tambem (pacote conjunto) - nao serve para provar exclusao')
+      } else {
+        const { data: antesPac } = await c.from('sales').select('nome,email,telefone').eq('id', outra.sale_id).single()
+        const ap = antesPac as { nome: string; email: string; telefone: string | null } | null
+        conferir('Denise NAO edita paciente de venda que nao e sua (403)',
+          await status('/api/terapeutas/vendas/editar-paciente', crachaTerapeuta, 'PUT', JSON.stringify({
+            sale_id: outra.sale_id, nome: ap?.nome ?? 'x', email: ap?.email ?? 'x@x.com',
+            telefone: ap?.telefone ?? '',
+            usuario_email: 'terapeuta-teste@espelho.local', usuario_nome: 'x', usuario_tipo: 'terapeuta',
+            senha: 'teste123',
+          })), 403)
+        const { data: depoisPac } = await c.from('sales').select('nome,email,telefone').eq('id', outra.sale_id).single()
+        conferir('os dados do paciente NAO mudaram pela tentativa recusada',
+          JSON.stringify(depoisPac), JSON.stringify(antesPac))
+      }
+    }
+  }
+
+  // Comercial passa da guarda de agenda em qualquer terapeuta - e o trabalho
+  // dele. Senha teste123 vale so no espelho (mesma limitacao ja documentada
+  // acima para PATCH /api/sales e converter-moeda): rodando contra producao,
+  // sem a senha real do comercial, a camada ANTIGA (verificarAcesso) recusa
+  // antes desta guarda nova rodar - o "nao e 403" ainda passa (vira 401), so
+  // que sem exercitar de fato o codigo desta tarefa. Documentado, nao
+  // escondido.
+  if (!crachaComercial) {
+    pular('comercial passa da guarda de agenda (I2)', 'nenhum comercial entrou ainda')
+  } else {
+    conferir('comercial passa da guarda em compromissos POST (nao e 403)',
+      (await status('/api/terapeutas/compromissos', crachaComercial, 'POST', JSON.stringify({
+        terapeuta_id: OUTRO_ID_INVENTADO, titulo: 'x', inicio: '2099-01-01T10:00', fim: '2099-01-01T11:00',
+        usuario_email: emailComercial || 'x', senha: 'teste123',
+      }))) === 403, false)
+    conferir('comercial passa da guarda em agendar (nao e 403)',
+      (await status('/api/terapeutas/sessoes/agendar', crachaComercial, 'POST', JSON.stringify({
+        sale_id: 'prova-i2-nao-existe', terapeuta_id: OUTRO_ID_INVENTADO,
+        data_primeira_sessao: '2099-01-01T10:00',
+        usuario_email: emailComercial || 'x', senha: 'teste123',
+      }))) === 403, false)
+  }
+
   if (falhas > 0) {
     console.log(`\n${falhas} FALHA(S)\n`)
     process.exit(1)

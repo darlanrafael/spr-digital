@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 
 export async function POST(req: NextRequest) {
   try {
@@ -38,6 +40,15 @@ export async function POST(req: NextRequest) {
     if (!valido) {
       const { error, status } = erroAcesso(acesso)
       return NextResponse.json({ error }, { status })
+    }
+
+    // A terapeuta so lanca compromisso na propria agenda - comercial e admin
+    // lancam para qualquer uma (bloqueio de sala, reuniao, folga alheia).
+    // Antes do insert.
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeAgirNaSessao(quem, terapeuta_id)) {
+      return NextResponse.json({ error: 'Você só pode lançar compromisso na sua própria agenda.' }, { status: 403 })
     }
 
     const supabase = getSupabaseAdmin()
@@ -106,9 +117,22 @@ export async function DELETE(req: NextRequest) {
     }
 
     const supabase = getSupabaseAdmin()
+    // terapeuta_id entra no select so pra guarda abaixo - sem ele a guarda
+    // recusaria toda apagada da propria terapeuta (campo undefined nunca
+    // bate com terapeutaId dela).
     const { data: compromisso } = await supabase
-      .from('compromissos_terapeuta').select('id,titulo').eq('id', id).single()
+      .from('compromissos_terapeuta').select('id,titulo,terapeuta_id').eq('id', id).single()
     if (!compromisso) return NextResponse.json({ error: 'Compromisso não encontrado' }, { status: 404 })
+
+    // Mesma regra do POST: a terapeuta so apaga compromisso da PROPRIA
+    // agenda. O corpo do DELETE so manda o id do compromisso (nao manda
+    // terapeuta_id nenhum) - por isso o terapeuta_id vem do proprio registro
+    // buscado acima, e nao do corpo.
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeAgirNaSessao(quem, (compromisso as { terapeuta_id: string | null }).terapeuta_id)) {
+      return NextResponse.json({ error: 'Este compromisso não é seu.' }, { status: 403 })
+    }
 
     const { error } = await supabase.from('compromissos_terapeuta').delete().eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

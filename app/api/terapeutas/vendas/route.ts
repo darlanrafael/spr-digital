@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { classificarVendas, COLUNAS_DA_TELA_DE_VENDAS, termosDeProduto } from '@/lib/vendas-por-situacao'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -349,6 +351,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error }, { status })
     }
 
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+
     const supabase = getSupabaseAdmin()
 
     if (tipo === 'remarcacao' && dados_extras) {
@@ -358,8 +363,16 @@ export async function POST(req: NextRequest) {
       const solicitado_por = dados_extras.solicitado_por as string
       const motivo = dados_extras.motivo as string
 
+      // terapeuta_id entra no select so pra guarda abaixo. Este e o MESMO
+      // caminho de escrita que /api/terapeutas/sessoes/remarcar (fechado na
+      // Tarefa 13) - sem a guarda aqui tambem, a Tarefa 13 ficava trivial de
+      // contornar batendo direto nesta rota com tipo:'remarcacao'.
       const { data: sessaoData } = await supabase
-        .from('sessoes').select('paciente_nome').eq('id', sessao_id).single()
+        .from('sessoes').select('paciente_nome,terapeuta_id').eq('id', sessao_id).single()
+
+      if (!podeAgirNaSessao(quem, (sessaoData as { terapeuta_id: string | null } | null)?.terapeuta_id ?? null)) {
+        return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
+      }
 
       // Erro conferido: sem isto uma falha aqui grava no historico uma
       // remarcacao que NAO aconteceu, e a sessao fica na data antiga enquanto o
@@ -424,9 +437,16 @@ export async function POST(req: NextRequest) {
       }
 
       const { data: sessaoRow, error: sessaoErr } = await supabase
-        .from('sessoes').select('id,data_agendada').eq('id', sessao_id).single()
+        .from('sessoes').select('id,data_agendada,terapeuta_id').eq('id', sessao_id).single()
       if (sessaoErr || !sessaoRow) {
         return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
+      }
+
+      // A orientacao e escrita clinica ligada a UMA sessao de UM terapeuta -
+      // a terapeuta so orienta a propria sessao. Antes do laco de
+      // duplicidade e da escrita.
+      if (!podeAgirNaSessao(quem, (sessaoRow as { terapeuta_id: string | null }).terapeuta_id)) {
+        return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
       }
 
       if (sessaoRow.data_agendada) {
@@ -524,6 +544,9 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error }, { status })
     }
 
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+
     const supabase = getSupabaseAdmin()
 
     const { data: existente, error: fetchErr } = await supabase
@@ -537,7 +560,12 @@ export async function PUT(req: NextRequest) {
 
     if (existente.sessao_id) {
       const { data: sessaoRow } = await supabase
-        .from('sessoes').select('data_agendada').eq('id', existente.sessao_id).single()
+        .from('sessoes').select('data_agendada,terapeuta_id').eq('id', existente.sessao_id).single()
+      // Mesma regra do POST: a terapeuta so edita orientacao da PROPRIA
+      // sessao. Antes da checagem de janela de 40 min e da escrita.
+      if (!podeAgirNaSessao(quem, (sessaoRow as { terapeuta_id: string | null } | null)?.terapeuta_id ?? null)) {
+        return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
+      }
       if (sessaoRow?.data_agendada) {
         const faltamMs = new Date(sessaoRow.data_agendada).getTime() - Date.now()
         if (faltamMs < 40 * 60 * 1000) {
@@ -547,6 +575,12 @@ export async function PUT(req: NextRequest) {
           )
         }
       }
+    } else if (!podeAgirNaSessao(quem, null)) {
+      // Orientacao sem sessao_id vinculada (nao deveria existir na pratica,
+      // mas a coluna permite null): sem sessao para provar de quem e, fail-
+      // closed para terapeuta - mesma regra de "sessao sem terapeuta_id nao
+      // libera terapeuta".
+      return NextResponse.json({ error: 'Esta orientação não está vinculada a uma sessão sua.' }, { status: 403 })
     }
 
     const { data: ocorrencia, error: updErr } = await supabase

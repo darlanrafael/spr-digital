@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
+import { lerIdentidade } from '@/lib/identidade-da-chamada'
+import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { buscarConflitosMultiTerapeuta, mensagemConflito } from '@/lib/agenda-conflitos'
 import { novasDatasSeguintes, formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
@@ -52,6 +54,20 @@ export async function POST(req: NextRequest) {
   const { data: sessao, error: fetchErr } = await client
     .from('sessoes').select('*').eq('id', sessao_id).single()
   if (fetchErr || !sessao) return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
+
+  // A terapeuta so empurra a partir de uma sessao PROPRIA - a base a partir
+  // da qual a regua de 7 dias e recalculada. As "seguintes" que isto move
+  // podem pertencer ao OUTRO terapeuta do mesmo pacote do Diagnostico (o
+  // pacote alterna Pedro/Denise) - isso e intencional, o programa e conjunto
+  // e mover a base sempre arrasta o resto do pacote junto, para os dois
+  // lados. O que a guarda impede e a terapeuta usar uma sessao que NAO e
+  // dela como ponto de partida (ex: empurrar a partir da sessao do Pedro).
+  // Antes de qualquer outra checagem (data, trava de produto, escrita).
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAgirNaSessao(quem, (sessao as { terapeuta_id: string | null }).terapeuta_id)) {
+    return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
+  }
 
   // Sem data na sessão-base não existe régua pra empurrar: new Date(null) vira
   // 1970 e o pacote inteiro seria remarcado pra 51 anos atrás, em silêncio.
