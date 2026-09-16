@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
 import { entreguesDesdeOFechamento } from '@/lib/entregues-desde-o-fechamento'
+import { lerIdentidade, terapeutaIdQueValeu } from '@/lib/identidade-da-chamada'
 
 type SessaoPendente = {
   id: string
@@ -100,8 +101,13 @@ async function buscarEntregues(terapeutaId: string): Promise<SessaoPendente[]> {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl
-    const terapeutaId = searchParams.get('terapeutaId')
-    if (!terapeutaId) return NextResponse.json({ error: 'terapeutaId é obrigatório' }, { status: 400 })
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    // NAO confia no parametro: a terapeuta so ve o fechamento dela; quem
+    // administra o modulo (admin/comercial) e o DRE passam o id que quiserem.
+    const terapeutaId = terapeutaIdQueValeu(quem, searchParams.get('terapeutaId'))
+    if (terapeutaId === 'all' || terapeutaId === '')
+      return NextResponse.json({ error: 'terapeutaId é obrigatório' }, { status: 400 })
 
     const supabase = getSupabaseAdmin()
     const [{ sessoes, total }, futurasResp, historicoResp, entregues] = await Promise.all([

@@ -24,27 +24,17 @@ import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 // existe para o CEO enxergar não existia de fato.
 export async function GET(req: NextRequest) {
   try {
-    const client = getSupabaseAdmin()
-
     // A lista traz nome do paciente, produto e a `justificativa` de texto livre
-    // que o comercial digita sobre ele - o campo mais sensível do módulo. Sem
-    // nenhuma checagem, bastava a URL.
+    // que o comercial digita sobre ele - o campo mais sensível do módulo.
     //
-    // A checagem é por usuário ATIVO, não por senha nem por token, e isso é uma
-    // escolha consciente: a tela de Aprovações guarda só `{nome, email, tipo}`
-    // em `localStorage`, sem token, e `verificarAcesso` por token só passa para
-    // quem tem `dispensa_senha_nas_acoes`. Exigir qualquer um dos dois deixaria
-    // a conferência do CEO inacessível para ele mesmo.
-    //
-    // O que isto protege: varredura anônima da URL. O que NÃO protege: alguém
-    // que saiba um e-mail cadastrado. As rotas GET de /vendas e /aprovacoes têm
-    // exatamente a mesma lacuna e precisam da mesma decisão - autenticação de
-    // GET neste módulo é item aberto, registrado no spr-digital.md.
-    const email = (req.nextUrl.searchParams.get('usuario_email') ?? '').trim().toLowerCase()
-    if (!email) return NextResponse.json({ error: 'Informe o usuário.' }, { status: 401 })
-    const { data: quem } = await client
-      .from('usuarios_sistema').select('id').ilike('email', email).eq('ativo', true).maybeSingle()
-    if (!quem) return NextResponse.json({ error: 'Usuário não autorizado.' }, { status: 401 })
+    // Antes a checagem era por usuário ATIVO (email na query, sem papel nem
+    // escopo) - a mesma lacuna do POST/DELETE desta rota. Agora exige cracha
+    // (`lerIdentidade`) e o mesmo portão de papel que o POST/DELETE já usam
+    // (`podeMexerEmVenda`): terapeuta/socio fora, admin/comercial dentro.
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para esta lista.' }, { status: 403 })
+    const client = getSupabaseAdmin()
     const { data, error } = await client
       .from('ocorrencias_pacote')
       // Colunas nomeadas, nao `*`: o dia em que a tabela ganhar uma coluna

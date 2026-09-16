@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { alertasDeEstornoComSessao, ESTORNOS_DE_PLATAFORMA, type VendaParaAlerta, type SessaoParaAlerta } from '@/lib/estorno-com-sessao'
 
 // Vendas estornadas NA PLATAFORMA que ainda têm sessão futura marcada.
@@ -17,13 +18,9 @@ export async function GET(req: NextRequest) {
   try {
     const client = getSupabaseAdmin()
 
-    // Mesma checagem do GET de pacotes: a lista traz nome, e-mail e produto de
-    // paciente. Ver o comentário lá sobre o que ela protege e o que não.
-    const email = (req.nextUrl.searchParams.get('usuario_email') ?? '').trim().toLowerCase()
-    if (!email) return NextResponse.json({ error: 'Informe o usuário.' }, { status: 401 })
-    const { data: quem } = await client
-      .from('usuarios_sistema').select('id').ilike('email', email).eq('ativo', true).maybeSingle()
-    if (!quem) return NextResponse.json({ error: 'Usuário não autorizado.' }, { status: 401 })
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    if (!podeMexerEmVenda(quem)) return NextResponse.json({ error: 'Sem permissão para esta lista.' }, { status: 403 })
 
     const agoraISO = new Date().toISOString()
 
