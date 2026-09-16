@@ -6,6 +6,7 @@ import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 import { ehPendenteDeAgendamento, COLUNAS_DO_DASHBOARD } from '@/lib/vendas-por-situacao'
+import { lerIdentidade, terapeutaIdQueValeu } from '@/lib/identidade-da-chamada'
 
 type SaleRow = {
   id: string
@@ -136,7 +137,12 @@ export async function GET(req: NextRequest) {
     const preset = searchParams.get('datePreset') ?? 'all'
     const dateStart = searchParams.get('dateStart') ?? undefined
     const dateEnd = searchParams.get('dateEnd') ?? undefined
-    const terapeutaId = searchParams.get('terapeutaId') ?? 'all'
+    // NAO confia no parametro: quem manda e a identidade que o middleware
+    // conferiu. Terapeuta recebe o proprio `terapeuta_id`, sempre - antes disto,
+    // pedindo `terapeutaId=all` ela recebia o faturamento das duas.
+    const quem = lerIdentidade(req)
+    if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+    const terapeutaId = terapeutaIdQueValeu(quem, searchParams.get('terapeutaId'))
 
     const { from, to } = getDateRange(preset, dateStart, dateEnd)
     const supabase = getSupabaseAdmin()

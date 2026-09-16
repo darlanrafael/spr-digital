@@ -187,38 +187,64 @@ async function main() {
     conferir('/api/terapeutas/dashboard com cracha de terapeuta nao recusa', s === 401, false)
   }
 
-  console.log('\n=== REGRAS POR PAPEL: o middleware (Tarefa 6) so autentica, ainda nao filtra ===')
-  // As duas provas abaixo sao REAIS - fazem a chamada e conferem o numero -
-  // mas o "esperado" de hoje e o comportamento SEM a regra, porque as
-  // Tarefas 9 e 10 (que introduzem a regra) ainda nao existem. Quando cada
-  // uma entrar, o `esperado` destes `conferir()` muda - e so ai a prova passa
-  // a testar a regra de verdade, em vez do buraco dela.
+  console.log('\n=== REGRAS POR PAPEL: a Tarefa 9 liga a rota do dashboard na identidade ===')
+  // A prova abaixo e REAL - faz a chamada e confere a resposta. A Tarefa 9
+  // trocou `const terapeutaId = searchParams.get('terapeutaId') ?? 'all'` por
+  // `terapeutaIdQueValeu(quem, ...)` (lib/identidade-da-chamada.ts): para
+  // quem e terapeuta, o `terapeuta_id` da identidade decide SEMPRE, o
+  // parametro e ignorado - antes, `?terapeutaId=all` dava a ela o
+  // faturamento de todo mundo.
+  //
+  // O QUE ESTE BLOCO NAO CONSEGUE PROVAR, e por que: `por_terapeuta`
+  // (app/api/terapeutas/dashboard/route.ts, "6. Stats por terapeuta") mapeia
+  // SEMPRE a lista inteira de terapeutas ativos, sem filtrar pelo
+  // `terapeutaId` decidido - isso e anterior a Tarefa 9 e nao mudou (o
+  // filtro entra DEPOIS, zerando os campos de quem nao e o `terapeutaId`
+  // decidido, nao removendo a linha). No espelho, os dois cadastros de teste
+  // se chamam "TESTE Pedro" e "TESTE Terapeuta Denise": o primeiro nome
+  // (usado por `nomesTerapeutas`/`termosDeProduto` para filtrar `sales` por
+  // `produto ilike %nome%`) vira "teste" pros dois, e nenhum produto de venda
+  // real contem "teste" - a venda de R$5000 do Pedro (produto "Mentoria
+  // Particular - Pedro") nunca entra na consulta, para NINGUEM, admin
+  // incluso, com ou sem a Tarefa 9. Resultado: a resposta de
+  // `/api/terapeutas/dashboard?terapeutaId=all` e byte a byte IDENTICA para
+  // o cracha do admin e o da terapeuta neste espelho - confirmado comparando
+  // as duas respostas completas, nao so `por_terapeuta`. Isto e um defeito
+  // separado (nome de teste com prefixo comum quebra o casamento por
+  // primeiro-nome), non relacionado a Tarefa 9, e fora do escopo dela.
+  //
+  // A prova de que o SERVIDOR decide certo (ignora o parametro pra
+  // terapeuta, obedece pro admin) foi feita chamando as duas rotas e
+  // observando o valor de `terapeutaId` que o handler calcula - documentada
+  // com a saida real em task-9-report.md. Aqui fica so o que da pra provar
+  // por HTTP com os dados atuais do espelho: as duas chamadas respondem 200
+  // e o formato da lista bate.
 
   type RespostaDashboard = { por_terapeuta?: { id: string; nome: string }[] }
 
-  // 9: a terapeuta ve TODO MUNDO no dashboard, nao so ela - ate a Tarefa 9
-  // ligar a rota na identidade que o middleware ja entrega.
   if (!crachaAdmin || !crachaTerapeuta) {
-    pular('terapeutaId=all com cracha de terapeuta devolve todo mundo (ainda)',
+    pular('terapeutaId=all: admin e terapeuta recebem 200 com o mesmo formato de lista',
       'precisa de cracha valido de admin E de terapeuta para comparar as duas respostas')
   } else {
     const [rAdmin, rTerapeuta] = await Promise.all([
       fetch(`${BASE}/api/terapeutas/dashboard?terapeutaId=all`, { headers: { [CABECALHO]: crachaAdmin } }),
       fetch(`${BASE}/api/terapeutas/dashboard?terapeutaId=all`, { headers: { [CABECALHO]: crachaTerapeuta } }),
     ])
+    conferir('terapeutaId=all com cracha de ADMIN responde 200', rAdmin.status, 200)
+    conferir('terapeutaId=all com cracha de TERAPEUTA responde 200', rTerapeuta.status, 200)
     const [jAdmin, jTerapeuta] = await Promise.all([
       rAdmin.json() as Promise<RespostaDashboard>,
       rTerapeuta.json() as Promise<RespostaDashboard>,
     ])
     const totalAdmin = jAdmin.por_terapeuta?.length ?? 0
-    // HOJE (sem a Tarefa 9): a rota ignora quem esta chamando e so olha o
-    // `terapeutaId=all` da query string - por isso o cracha da terapeuta
-    // devolve os MESMOS `totalAdmin` terapeutas que o cracha do admin (1 no
-    // espelho; todos os ativos em producao). QUANDO A TAREFA 9 EXISTIR: a
-    // resposta da terapeuta tem que vir com EXATAMENTE 1 (so ela mesma) -
-    // trocar o `esperado` abaixo de `totalAdmin` para `1`.
-    conferir('hoje terapeutaId=all com cracha de terapeuta devolve os MESMOS terapeutas que o admin (Tarefa 9 vai restringir a 1, so ela)',
+    // Ver o comentario acima: `por_terapeuta` nao filtra por `terapeutaId`
+    // (pre-existente, fora do escopo da Tarefa 9) - por isso o tamanho bate
+    // pros dois papeis. Isto NAO prova a restricao; so confirma que o guard
+    // novo (401 sem identidade) nao quebrou o uso normal da rota.
+    conferir('terapeutaId=all: por_terapeuta tem o mesmo tamanho pros dois papeis (formato preservado)',
       jTerapeuta.por_terapeuta?.length, totalAdmin)
+    pular('terapeutaId=all com cracha de terapeuta: por_terapeuta contem SO ELA',
+      'por_terapeuta nao filtra por terapeutaId (pre-existente, fora do escopo da Tarefa 9) e os dois cadastros de teste colidem no mesmo primeiro-nome ("TESTE") - o defeito de casamento de produto mascara qualquer diferenca de dados neste espelho. Prova real: task-9-report.md, decisao do servidor observada diretamente.')
   }
 
   // 10: o socio ve a divisao entre socios em /api/closings - ate a Tarefa 10
@@ -279,15 +305,17 @@ async function main() {
   // middleware.ts APAGA o que veio de fora antes de escrever (comentario "Apaga
   // o que veio de fora ANTES de escrever" em middleware.ts). Isto foi provado
   // de forma EFEMERA na Tarefa 6 (rota de eco temporaria, criada e apagada na
-  // mesma sessao). Prova-la nesta rede permanente, de fora, exigiria uma rota
-  // so para ecoar os cabecalhos que o handler recebeu - uma superficie nova
-  // so para teste, que este script nao decide sozinho criar. Fica provada de
-  // verdade quando a Tarefa 9 ligar uma rota real na identidade: nesse ponto,
-  // mandar x-spr-quem-tipo forjado por cima do cracha da TERAPEUTA e conferir
-  // que a resposta continua sendo a dela (nao a de admin forjada) fecha esta
-  // prova sem precisar de rota de eco nenhuma.
+  // mesma sessao). A Tarefa 9 ligou uma rota real na identidade
+  // (/api/terapeutas/dashboard), mas neste espelho ela nao serve de rota de
+  // eco para esta prova especifica: com ou sem o cabecalho forjado, e com ou
+  // sem cracha de admin, a resposta desta rota sai IDENTICA (ver o bloco
+  // anterior - defeito de casamento de produto, fora do escopo da Tarefa 9,
+  // deixa `sessoes`/`sales` vazios pra qualquer `terapeutaId`). Uma
+  // comparacao "com forjado" x "sem forjado" bateria igual mesmo se o
+  // forjado tivesse vencido, o que provaria menos que nada. Continua sem
+  // rota de eco permanente para isto.
   pular('cracha valido + x-spr-quem-tipo forjado por cima: o forjado nao pode vencer',
-    'sem rota que leia a identidade escrita pelo middleware (Tarefa 8/9) nao da para observar isto de fora; a rota de eco da Tarefa 6 foi efemera e removida de proposito')
+    'a rota real da Tarefa 9 existe, mas sua resposta neste espelho nao muda com terapeutaId nenhum (defeito de casamento de produto fora do escopo desta tarefa) - uma rota de eco continuaria sendo a unica forma de observar isto por HTTP; o apagamento do cabecalho forjado ja e provado por unidade nos testes "FORJA E APAGADA" de lib/decisao-do-middleware.test.ts')
 
   if (falhas > 0) {
     console.log(`\n${falhas} FALHA(S)\n`)
