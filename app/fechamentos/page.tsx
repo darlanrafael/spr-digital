@@ -19,7 +19,7 @@ import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
 import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/lib/etiqueta-fechamento'
 import { getSupabaseClient } from '@/lib/supabase'
 import { precisaConverter } from '@/lib/moeda-da-venda'
-import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
+import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, divisaoDeMentoriaPedro, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
 import { divisaoDoLucro } from '@/lib/base-da-reserva-de-caixa'
@@ -611,7 +611,8 @@ function FechamentosContent() {
     const escolhaManual = pct !== null && Number.isFinite(pct) && pct >= 0 && pct <= 100
       ? { [SOCIO_NAMES[0]]: pct, [SOCIO_NAMES[1]]: 100 - pct }
       : null
-    const { divisao, fonte } = divisaoQueVale({ origem, escolhaManual, divisaoDoFechamento })
+    const mentoriaPedro = origem ? null : divisaoDeMentoriaPedro(a.produto)
+    const { divisao, fonte } = divisaoQueVale({ origem, escolhaManual, mentoriaPedro, divisaoDoFechamento })
     return { alerta: a, chave, valor: a.valor, divisao, fonte, origem }
   }), [alertasSelecionados, closings, divisaoManualDoAlerta, divisaoDoFechamento])
 
