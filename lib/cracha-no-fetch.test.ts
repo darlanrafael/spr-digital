@@ -92,3 +92,93 @@ test('endereco absoluto do PROPRIO site tambem leva o cracha', async () => {
   await fetchComCracha(falso as typeof fetch, () => 'abc')('http://localhost/api/sales')
   assert.equal(vista!.get(CABECALHO_DO_CRACHA), 'abc')
 })
+// --- ATAQUE por mutacao: os testes acima nao cobriam crachaGuardado nem os
+// caminhos de window. Estes fecham os 9 sobreviventes da mutacao de 16/09.
+
+import { crachaGuardado, instalarCrachaNoFetch } from './cracha-no-fetch'
+
+// helper: monta um window falso com o localStorage dado
+function comWindow(store: Record<string,string>, fn: () => void) {
+  const g: any = globalThis
+  const antes = g.window
+  g.window = { localStorage: { getItem: (k: string) => store[k] ?? null }, location: { origin: 'http://localhost' } }
+  try { fn() } finally { g.window = antes }
+}
+
+test('crachaGuardado: sem window (servidor) retorna null', () => {
+  // linha 18: `typeof window === undefined`. No Node window nao existe.
+  const g: any = globalThis
+  assert.equal(typeof g.window, 'undefined')
+  assert.equal(crachaGuardado(), null)
+})
+
+test('crachaGuardado: le o token da sessao do DRE', () => {
+  comWindow({ spr_session: JSON.stringify({ token: 'abc123', email: 'a@b.c' }) }, () => {
+    assert.equal(crachaGuardado(), 'abc123')
+  })
+})
+
+test('crachaGuardado: le o token da sessao de TERAPEUTAS quando nao ha DRE', () => {
+  comWindow({ terapeutas_session: JSON.stringify({ token: 'xyz789' }) }, () => {
+    assert.equal(crachaGuardado(), 'xyz789')
+  })
+})
+
+test('crachaGuardado: DRE tem prioridade sobre terapeutas', () => {
+  comWindow({
+    spr_session: JSON.stringify({ token: 'do-dre' }),
+    terapeutas_session: JSON.stringify({ token: 'do-terapeuta' }),
+  }, () => { assert.equal(crachaGuardado(), 'do-dre') })
+})
+
+test('ATAQUE: token que NAO e string e ignorado (linha 24)', () => {
+  // `typeof s.token === 'string'`. Se um numero ou objeto vier no token, nao
+  // pode ser usado como credencial.
+  comWindow({ spr_session: JSON.stringify({ token: 12345 }) }, () => {
+    assert.equal(crachaGuardado(), null, 'token numerico nao vale')
+  })
+  comWindow({ spr_session: JSON.stringify({ token: { a: 1 } }) }, () => {
+    assert.equal(crachaGuardado(), null, 'token objeto nao vale')
+  })
+})
+
+test('ATAQUE: token VAZIO e ignorado (linha 24, o segundo &&)', () => {
+  // `&& s.token`: string vazia e falsy, nao pode virar cabecalho vazio.
+  comWindow({ spr_session: JSON.stringify({ token: '' }) }, () => {
+    assert.equal(crachaGuardado(), null, 'token vazio nao vale')
+  })
+})
+
+test('ATAQUE: sessao SEM campo token e ignorada', () => {
+  comWindow({ spr_session: JSON.stringify({ email: 'a@b.c' }) }, () => {
+    assert.equal(crachaGuardado(), null)
+  })
+})
+
+test('ATAQUE: JSON corrompido no localStorage nao derruba (linha 24 catch)', () => {
+  comWindow({ spr_session: '{quebrado!!' }, () => {
+    assert.doesNotThrow(() => crachaGuardado())
+    assert.equal(crachaGuardado(), null)
+  })
+})
+
+test('ATAQUE: instalarCrachaNoFetch nao instala duas vezes (linha 72-73)', () => {
+  // `instalado` trava a segunda instalacao. Instalar duas vezes embrulharia o
+  // embrulho, dobrando o cabecalho ou pior.
+  const g: any = globalThis
+  const antes = g.window
+  let trocas = 0
+  const fetchOriginal = async () => new Response('{}')
+  g.window = {
+    localStorage: { getItem: () => null },
+    location: { origin: 'http://localhost' },
+    get fetch() { return fetchOriginal },
+    set fetch(_v) { trocas++ },
+  }
+  try {
+    instalarCrachaNoFetch()
+    instalarCrachaNoFetch()
+    instalarCrachaNoFetch()
+    assert.equal(trocas, 1, 'so pode trocar o fetch UMA vez, nao importa quantas chamadas')
+  } finally { g.window = antes }
+})
