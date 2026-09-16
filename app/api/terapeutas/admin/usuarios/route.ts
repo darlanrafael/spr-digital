@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { hashSenha, registrarAtividade } from '@/lib/terapeutas-auth'
+import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Criar usuario, trocar senha e mudar percentual de comissao sao coisas de
+  // admin. O menu do comercial ja nao oferece o caminho (components/Header.tsx:34),
+  // mas a rota aceitava qualquer chamada - inclusive de quem nunca teve acesso.
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAdministrar(quem)) {
+    return NextResponse.json({ error: 'Só um administrador pode fazer isso.' }, { status: 403 })
+  }
+
   const client = getSupabaseAdmin()
   const { data, error } = await client
     .from('usuarios_sistema')
@@ -13,6 +23,12 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAdministrar(quem)) {
+    return NextResponse.json({ error: 'Só um administrador pode fazer isso.' }, { status: 403 })
+  }
+
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
@@ -56,6 +72,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAdministrar(quem)) {
+    return NextResponse.json({ error: 'Só um administrador pode fazer isso.' }, { status: 403 })
+  }
+
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
@@ -110,6 +132,12 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const quem = lerIdentidade(req)
+  if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
+  if (!podeAdministrar(quem)) {
+    return NextResponse.json({ error: 'Só um administrador pode fazer isso.' }, { status: 403 })
+  }
+
   let body: Record<string, unknown>
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })

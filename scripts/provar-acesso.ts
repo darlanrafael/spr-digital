@@ -317,6 +317,22 @@ async function main() {
   pular('cracha valido + x-spr-quem-tipo forjado por cima: o forjado nao pode vencer',
     'a rota real da Tarefa 9 existe, mas sua resposta neste espelho nao muda com terapeutaId nenhum (defeito de casamento de produto fora do escopo desta tarefa) - uma rota de eco continuaria sendo a unica forma de observar isto por HTTP; o apagamento do cabecalho forjado ja e provado por unidade nos testes "FORJA E APAGADA" de lib/decisao-do-middleware.test.ts')
 
+  console.log('\n=== COM CRACHA DE COMERCIAL: administracao recusada ===')
+  const { data: com } = await c.from('usuarios_sistema')
+    .select('session_token,nome').eq('tipo', 'comercial')
+    .not('session_token', 'is', null).limit(1).maybeSingle()
+  const crachaComercial = (com as { session_token: string | null } | null)?.session_token
+  if (!crachaComercial) {
+    pular('administracao com cracha de comercial', 'nenhum comercial entrou ainda')
+  } else {
+    conferir('POST admin/usuarios com cracha de comercial',
+      await status('/api/terapeutas/admin/usuarios', crachaComercial, 'POST', '{}'), 403)
+    conferir('PATCH admin/terapeutas com cracha de comercial',
+      await status('/api/terapeutas/admin/terapeutas', crachaComercial, 'PATCH', '{}'), 403)
+    conferir('o comercial continua vendo o dashboard',
+      await status('/api/terapeutas/dashboard', crachaComercial), 200)
+  }
+
   if (falhas > 0) {
     console.log(`\n${falhas} FALHA(S)\n`)
     process.exit(1)
