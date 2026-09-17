@@ -50,3 +50,28 @@ test('toda readequacao registrada diz o que a plataforma ainda mostra', () => {
     assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(x.data), `${x.cliente} com data fora do formato`)
   }
 })
+
+test('produto NO SISTEMA selecionado -> readequacao aparece', () => {
+  const l = readequacoesDoPeriodo({ inicio: '2026-08-01', fim: '2026-08-31', produtosSelecionados: ['B'], readequacoes: [r()] })
+  assert.equal(l.length, 1)
+})
+
+test('produto NA PLATAFORMA selecionado -> readequacao aparece', () => {
+  const l = readequacoesDoPeriodo({ inicio: '2026-08-01', fim: '2026-08-31', produtosSelecionados: ['A'], readequacoes: [r()] })
+  assert.equal(l.length, 1)
+})
+
+test('nenhum dos dois produtos selecionado -> readequacao nao aparece', () => {
+  const l = readequacoesDoPeriodo({ inicio: '2026-08-01', fim: '2026-08-31', produtosSelecionados: ['X'], readequacoes: [r()] })
+  assert.equal(l.length, 0)
+})
+
+test('produtosSelecionados vazio -> nada aparece (nenhum produto em apuracao)', () => {
+  const l = readequacoesDoPeriodo({ inicio: '2026-08-01', fim: '2026-08-31', produtosSelecionados: [], readequacoes: [r()] })
+  assert.equal(l.length, 0)
+})
+
+test('produtosSelecionados undefined -> comportamento original (so filtro de data)', () => {
+  const l = readequacoesDoPeriodo({ inicio: '2026-08-01', fim: '2026-08-31', readequacoes: [r()] })
+  assert.equal(l.length, 1)
+})

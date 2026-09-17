@@ -46,14 +46,26 @@ export const READEQUACOES_PRODUTO: ReadequacaoProduto[] = [
 export function readequacoesDoPeriodo({
   inicio,
   fim,
+  produtosSelecionados,
   readequacoes = READEQUACOES_PRODUTO,
 }: {
   inicio: string
   fim: string
+  /**
+   * Produtos selecionados no filtro do fechamento. Quando fornecido, a
+   * readequacao so entra se um dos dois produtos envolvidos (o que a plataforma
+   * mostra OU o que o sistema conta) estiver selecionado - os dois estao
+   * envolvidos na mesma venda. Quando `undefined`, nao filtra por produto.
+   */
+  produtosSelecionados?: string[]
   readequacoes?: ReadequacaoProduto[]
 }): ReadequacaoProduto[] {
   if (!inicio || !fim) return []
   return readequacoes
     .filter(r => r.data >= inicio && r.data <= fim)
+    .filter(r =>
+      produtosSelecionados === undefined
+      || produtosSelecionados.includes(r.produtoNaPlataforma)
+      || produtosSelecionados.includes(r.produtoNoSistema))
     .sort((a, b) => a.data.localeCompare(b.data))
 }
