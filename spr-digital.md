@@ -5199,3 +5199,73 @@ npx tsx scripts/seed.ts  # Popular banco com dados iniciais
     ## 90.6. Por que registrar isto
 
     Esses erros nao mudaram o resultado final (o sistema entrou em producao correto e provado), mas cada um custou tempo e confianca, e todos tem a mesma raiz: concluir rapido demais (por leitura, por pressa, por uma unica prova) em vez de fechar a cadeia inteira com execucao. As travas criadas - prova por execucao obrigatoria, hook de pre-commit contra mutante, dado de teste plausivel, revisao em camadas ate zerar, provar as duas pontas - existem para que o proximo trabalho grande nao repita nenhum deles.
+
+---
+
+# 91. Reembolso com venda nao carregada: investigacao + guardrail (trava + aviso)
+
+**Data:** 16-17/09/2026. **Branch:** `feat/correcoes-fechamento`. **Arquivos de codigo:** `lib/alertas-reembolso-parcial.ts`, `types/index.ts`, `app/fechamentos/page.tsx`. **Spec:** `docs/superpowers/specs/2026-09-16-aviso-reembolso-venda-nao-carregada-design.md`. **Plano:** `docs/superpowers/plans/2026-09-17-aviso-reembolso-venda-nao-carregada.md`. **Commits:** `42217a4` (Task 1), `8063dc6` (Task 2), `8398f3a` (fix round 1). Base da feature: `3b2654c`.
+
+Este item registra TUDO com redundancia proposital: o relato do dono, a investigacao com prova por execucao, os meus erros no meio e como contornei cada um, a feature construida, e a validacao rodando. A conclusao central, repetida aqui para nao se perder: **nao havia bug de calculo**; o que enganou foi a tela mostrar um rateio degradado (50/50) em silencio quando a lista de vendas do NAVEGADOR estava velha. A feature e uma blindagem (avisar + travar), nao um conserto de conta.
+
+## 91.1. O relato do dono (o sintoma percebido)
+
+Testando na tela de Fechamento (dev apontando pro banco espelho), o dono montou este cenario: os Custos vieram todos zerados, entao ele lancou UM custo manualmente (Custos do Funil); o Faturamento veio zerado (sem vendas no periodo); ele avancou; e no Repasse apareceu o reembolso parcial do Miguel Pires. Dois problemas relatados:
+1. Ao clicar "abater", o custo lancado manualmente parecia nao somar.
+2. Ao abater o reembolso, o split saiu ERRADO: 50/50 em vez do 65/35 acordado para mentoria individual do Pedro (SPR 35 / Pedro 65).
+
+O dono foi enfatico: "quando nao apura venda nenhuma, nao funciona". E cobrou, com razao, que eu TESTASSE em vez de teorizar, e que usasse a skill (systematic-debugging) em vez de concordar.
+
+## 91.2. A investigacao (systematic-debugging), tudo provado rodando
+
+**Causa raiz do 50/50.** O rateio 65/35 vem de `divisaoDeMentoriaPedro(produto)` em `lib/rateio-das-deducoes.ts`, que decide pelo NOME do produto. Esse nome vem de `vendaPorSaleId` (`app/fechamentos/page.tsx`), montado a partir da lista `sales` carregada no cliente. Quando a venda do reembolso NAO esta nessa lista, `calcularAlertasReembolsoParcial` (`lib/alertas-reembolso-parcial.ts`) cai no default `produto: 'Reembolso parcial'`, `divisaoDeMentoriaPedro` devolve `null`, e o split degrada para o 50/50 do fechamento, SEM avisar.
+
+**O que provei rodando contra o espelho (nao por leitura):**
+- **`getSales` carrega TODAS as vendas do projeto, sem filtro de data.** Em `contexts/AppContext.tsx` ele e chamado com `dateStart`/`dateEnd` `undefined`, e as duas linhas de filtro de data em `lib/services.ts` (`if (dateStart) ...`, `if (dateEnd) ...`) nao aplicam nada. A paginacao e keyset por `id` (cursor `id > ultimo`), entao nenhuma pagina e perdida.
+- **Existe uma foreign key `solicitacoes_reembolso_sale_id_fkey` (sale_id -> sales.id).** Provado tentando inserir uma solicitacao com `sale_id` inexistente: o Postgres recusou com `23503` ("Key (sale_id)=(...) is not present in table sales"). Ou seja: uma solicitacao de reembolso NUNCA aponta para venda inexistente; a venda SEMPRE existe no banco.
+- **A CHECK `sales_status_check` aceita exatamente 5 status:** `aprovada`, `reembolsada`, `chargeback`, `cancelada`, `em_protesto`. Provado por PATCH: 'pendente' e outros ~8 candidatos foram recusados com `23514`; os 5 acima passaram (e revertidos). Esses 5 sao EXATAMENTE os que `getSales` carrega (via `AppContext`). Reembolso parcial mantem a venda em `aprovada`.
+- **Conclusao logica, fechada:** em qualquer carga consistente do servidor, a venda do reembolso esta SEMPRE na lista `sales` carregada, e o 65/35 aplica corretamente. Nao existe estado valido de servidor em que o alerta aparece COM split 50/50: ou a venda esta `aprovada` (carregada, 65/35 certo), ou tem outro dos 5 status (carregada, mas `calcularAlertasReembolsoParcial` PULA o alerta, pois `if (venda && venda.status !== 'aprovada') continue`), ou a venda nao pode faltar (FK). O estado degradado (alerta + 50/50) SO e alcancavel com a lista `sales` do NAVEGADOR dessincronizada do servidor: cache velho de cliente.
+
+**Reproducao do caso CORRETO (venda presente).** Rodei o cenario exato do dono com a venda no banco: zero vendas no periodo (periodo outubro), custo manual de R$ 5.000, reembolso do Miguel (R$ 1.560) marcado. Resultado na tela:
+- Lucro Bruto: **-R$ 5.000,00** (o custo manual E somado; o Lucro Bruto = Faturamento liquido - Custos).
+- Prejuizo a ratear: **-R$ 6.560,00** = prejuizo do periodo -R$ 5.000 MAIS o reembolso R$ 1.560.
+- Split do Miguel: **65/35 - "mentoria do Pedro (65/35)"**. SPR -R$ 3.046 (=-2.500 do periodo, menos R$ 546 = 35% de 1.560); Pedro -R$ 3.514 (=-2.500, menos R$ 1.014 = 65%).
+
+Ou seja: os DOIS bugs relatados NAO reproduzem com a venda no banco. O 50/50 que o dono viu foi a venda do Miguel fora da lista carregada (eu tinha apagado e re-semeado a venda num teste anterior da reserva, e a aba nao recarregou).
+
+## 91.3. Meus erros no meio, e como contornei cada um (transparencia)
+
+- **CASCADE da FK apagou a solicitacao junto.** Para provar o modo de falha, deletei a venda `venda-miguel-teste` do espelho. A FK tem `ON DELETE CASCADE`, entao a solicitacao de reembolso foi apagada JUNTO. Meu primeiro restore trouxe so a VENDA de volta; a solicitacao ficou faltando. Percebi ao consultar a tabela e ver `[]`. **Como contornei:** re-inseri a solicitacao a partir do snapshot que eu tinha em memoria; passei a tratar "deletar venda" como operacao que mexe em duas tabelas (venda + solicitacao) e a restaurar as DUAS. Licao: mapear os efeitos em cascata ANTES de deletar dado de teste.
+- **Concluir "e so cache" cedo demais.** A skill systematic-debugging, na secao "When Process Reveals 'No Root Cause'", avisa que 95% das conclusoes "e ambiental / e cache" sao investigacao INCOMPLETA. Eu tinha parado ai. **Como contornei:** completei a investigacao ate esgotar os caminhos de servidor com prova (FK + CHECK constraint + getSales), transformando "acho que e cache" em "provei que nenhum estado valido de servidor produz o sintoma".
+- **Interceptacao sem CORS zerou TODAS as vendas na validacao.** Ao validar no navegador real, interceptei `/rest/v1/sales` para remover so a venda do Miguel. As primeiras rodadas voltaram "0 produtos / 0 vendas" - o `req.respond` do puppeteer nao incluia `Access-Control-Allow-Origin`, entao o browser BLOQUEAVA a resposta cross-origin (localhost -> supabase) e o `getSales` falhava, zerando tudo. **Como contornei:** adicionei os headers CORS (`access-control-allow-origin: *`, `content-range`) e repliquei os headers da requisicao (`apikey`, `authorization`, `x-client-info`) no replay do fetch. So entao a interceptacao removeu SO o Miguel, mantendo o resto.
+
+## 91.4. Decisao de desenho (aprovada pelo dono)
+
+Nao ha bug de calculo. A fragilidade real: a tela engana em silencio quando o cliente esta velho (mostra 50/50 sem avisar). O handling apropriado (systematic-debugging, passo "implement appropriate handling / error message") e AVISAR e TRAVAR, com duas saidas: dar refresh (a venda carrega e o 65/35 volta) ou digitar o % manualmente (a escolha manual sobrepoe). O dono escolheu "travar o Confirmar" com a saida do "% manual".
+
+## 91.5. A feature construida (SDD: 2 tasks + 1 fix round)
+
+**Task 1 (commit `42217a4`) - deteccao.** Campo novo `ClosingAlert.vendaNaoCarregada?: boolean` em `types/index.ts`. Em `calcularAlertasReembolsoParcial` (`lib/alertas-reembolso-parcial.ts`), no `achados.push`, alem do `produto: venda?.produto ?? 'Reembolso parcial'` que ja existia, marca `...(venda ? {} : { vendaNaoCarregada: true })`. So nasce no reembolso PARCIAL; nunca em `calcularAlertasPendentes`. No caminho normal (venda carregada) o spread e `{}` (no-op estrutural), entao NENHUM calculo muda. Dois testes novos em `lib/alertas-reembolso-parcial.test.ts` (mapa vazio -> flag true + produto default; mapa com a venda -> flag falsy + produto real).
+
+**Task 2 (commit `8063dc6`) - trava + aviso na tela** (`app/fechamentos/page.tsx`):
+- Predicado `reembolsoComVendaNaoCarregada`: `!empresaAbsorve && alertasSelecionados.some(a => a.vendaNaoCarregada && !temManualValido)`. So trava quando o alerta esta MARCADO para abater, NAO quando a empresa absorve, e NAO quando ha um % manual valido digitado. A checagem de "% valido" (`Number(String(digitado).replace(',', '.'))`, `Number.isFinite`, `0..100`) e DUPLICADA de proposito da que existe em `deducoesDetalhadas` - refatorar exigiria mexer no caminho do calculo de dinheiro, o que o Global Constraint proibe. As duas copias precisam ficar em sync manualmente.
+- O botao "Confirmar fechamento" ganhou `|| reembolsoComVendaNaoCarregada` no `disabled` (junto de `periodSales.length === 0` e `conferencia.naoConvertidas.length > 0`).
+- Na coluna "Quem absorve", a etiqueta fraca "sem origem - confira" virou, no caso degradado, um texto vermelho "venda nao carregada - de refresh ou digite o %"; a borda do campo de % fica vermelha; e um banner vermelho aparece na secao explicando a saida (refresh ou % manual) e que o fechamento fica travado ate resolver.
+
+**Fix round 1 (commit `8398f3a`) - achado do review final (opus).** Havia um sub-caso raro em que a trava disparava indevidamente e o banner mentia: quando a venda do reembolso nao esta carregada MAS o `saleId` ja aparece como comprador num fechamento anterior, `divisaoOriginalDoAlerta` retorna nao-null e o split usa a ORIGEM (correta), nao o 50/50 degradado. Correcao: o estado "genuinamente degradado" e `a.vendaNaoCarregada && !divisaoOriginalDoAlerta(a, closings)`. Aplicado nos quatro pontos (predicado da trava, etiqueta, borda, e por consequencia o banner). Quando ha origem, cai no ramo antigo ("fechamento de origem"), sem travar nem pintar de vermelho.
+
+**Revisao.** Cada task teve implementer fresco + reviewer independente (opus na Task 2 e no review final, por ser a que decide dinheiro). Review final: "Ready to merge = Yes", sem Critical/Important; o unico Minor (o over-lock com origem) foi o que virou o fix round acima. `npx tsc --noEmit` limpo; `npm test` 793/793 verde.
+
+## 91.6. Validacao rodando (navegador real, Chrome headless via puppeteer)
+
+O estado degradado NAO pode ser produzido no banco (FK + CHECK impedem), so por cache de cliente. Reproduzi de forma fiel interceptando a resposta REST de `/rest/v1/sales` e removendo a linha `venda-miguel-teste`, mantendo a solicitacao (que carrega por outra query, sem join). Provado na tela:
+- A linha do Miguel mostra a etiqueta vermelha "venda nao carregada - de refresh ou digite o %".
+- O split degrada visivelmente para **50/50** (SPR -R$ 780 / Pedro -R$ 780, = 50% de 1.560), NAO 65/35.
+- Ao marcar "abater", o banner vermelho aparece e o botao "Confirmar fechamento" fica cinza/desabilitado.
+- Ao digitar 35 no % do Miguel, o banner SOME (o predicado `reembolsoComVendaNaoCarregada` vai a false), confirmando a saida manual.
+- Com a venda presente (sem interceptacao), nada disso aparece e o split e 65/35 - o caminho normal fica intacto.
+
+## 91.7. Estado atual e o que falta
+
+Branch `feat/correcoes-fechamento`, HEAD `8398f3a`. Testes 793/793 verdes, `tsc` limpo, review final aprovado. **Falta apenas o merge na main + deploy** (decisao do dono; e so codigo, SEM migracao de banco desta vez). O espelho foi deixado integro ao fim (venda `venda-miguel-teste` presente e `aprovada`, solicitacao presente, dado de validacao removido).
+
