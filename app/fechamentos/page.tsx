@@ -2128,22 +2128,6 @@ function FechamentosContent() {
                             <span className="text-gray-500">Reserva de caixa (30%)</span>
                             <span className="text-amber-400">-{formatCurrency(reservaCaixa)}</span>
                           </div>
-                          {/* Task 11 (16/09/2026): quem revisa precisa ver os
-                              reembolsos aceitos ANTES de confirmar, nao so
-                              depois no Histórico. Sem esta linha o resumo
-                              pulava direto da reserva pro lucro real e o
-                              usuario nao sabia que havia deducao (ou
-                              absorcao pela empresa) no meio do caminho. */}
-                          {alertasSelecionados.length > 0 && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">
-                                {empresaAbsorve ? 'Reembolsos absorvidos pela empresa' : '(-) Reembolsos abatidos dos sócios'}
-                              </span>
-                              <span className={empresaAbsorve ? 'text-purple-300' : 'text-red-400'}>
-                                {empresaAbsorve ? formatCurrency(alertasTotal) : `-${formatCurrency(deducaoDosSocios)}`}
-                              </span>
-                            </div>
-                          )}
                           <div className="flex justify-between border-t border-white/5 pt-2">
                             {/* Task 9 (16/09/2026) trouxe o toggle "empresa absorve o
                                 prejuizo do periodo": quando ligado, os socios ficam
@@ -2162,6 +2146,22 @@ function FechamentosContent() {
                           {prejuizoAbsorvidoPeloPeriodo && (
                             <p className="text-[11px] text-gray-500 -mt-1">
                               Prejuízo do período: {formatCurrency(Math.abs(lucroReal))}, absorvido pela empresa - os sócios não ratearão nada dele.
+                            </p>
+                          )}
+                          {/* Task 11, fix round 1 (16/09/2026): esta nota ficava ANTES
+                              do total (entre a Reserva e o total em negrito), como se
+                              fosse mais uma linha do funil que soma no total. Mas
+                              totalFatiaSocios (o total acima) e BRUTO de reembolsos -
+                              quem via a tela lia um funil cumulativo em que o total
+                              ignorava a linha de cima, e o total (bruto) do Bloco 1
+                              parecia contradizer o total (liquido, lucroAposDeducoes)
+                              do Bloco 2 logo abaixo. Agora e uma nota fora do funil,
+                              no mesmo estilo da nota de prejuizo absorvido acima. */}
+                          {alertasSelecionados.length > 0 && (
+                            <p className="text-[11px] text-gray-500 -mt-1">
+                              {empresaAbsorve
+                                ? `Reembolsos absorvidos pela empresa: ${formatCurrency(alertasTotal)}`
+                                : `(-) Reembolsos abatidos dos sócios: ${formatCurrency(deducaoDosSocios)}`}
                             </p>
                           )}
                         </div>
