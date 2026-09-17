@@ -19,7 +19,7 @@ import { separarJaFechadas } from '@/lib/vendas-ja-fechadas'
 import { CORES_ETIQUETA, COR_PADRAO, classeEtiqueta, type CorEtiqueta } from '@/lib/etiqueta-fechamento'
 import { getSupabaseClient } from '@/lib/supabase'
 import { precisaConverter } from '@/lib/moeda-da-venda'
-import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, divisaoDeMentoriaPedro, descricaoDoPrejuizoNoCaixa } from '@/lib/rateio-das-deducoes'
+import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, divisaoDeMentoriaPedro, descricaoDoPrejuizoNoCaixa, totalAbsorvidoPelaEmpresa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
 import { divisaoDoLucro } from '@/lib/base-da-reserva-de-caixa'
@@ -50,6 +50,40 @@ export default function FechamentosPage() {
     <ProtectedRoute>
       <FechamentosContent />
     </ProtectedRoute>
+  )
+}
+
+function tipoLegivel(tipo: string): string {
+  return tipo === 'chargeback' ? 'Chargeback' : tipo === 'reembolso_parcial' ? 'Reembolso parcial' : 'Reembolso'
+}
+
+type ItemAbsorvido = { data: string; nome: string; produto: string; valor: number; tipo: string }
+
+function BlocoAbsorvidoPelaEmpresa({ reembolsos, prejuizoPeriodo }: { reembolsos: ItemAbsorvido[]; prejuizoPeriodo: number }) {
+  const total = totalAbsorvidoPelaEmpresa({ reembolsos, prejuizoPeriodo })
+  if (total <= 0) return null
+  return (
+    <div className="mt-3 rounded-lg bg-purple-500/[0.07] border border-purple-500/30 p-3">
+      <p className="text-xs font-semibold text-purple-300">O que a empresa absorveu (não saiu do repasse dos sócios)</p>
+      <ul className="mt-2 space-y-1 text-[11px] text-gray-300">
+        {reembolsos.map((r, i) => (
+          <li key={i} className="flex justify-between gap-3">
+            <span className="text-gray-400">{r.data} · {r.nome} · {r.produto} <span className="text-gray-600">({tipoLegivel(r.tipo)})</span></span>
+            <span className="text-purple-300 whitespace-nowrap">{formatCurrency(r.valor)}</span>
+          </li>
+        ))}
+        {prejuizoPeriodo > 0 && (
+          <li className="flex justify-between gap-3">
+            <span className="text-gray-400">Prejuízo do período absorvido</span>
+            <span className="text-purple-300 whitespace-nowrap">{formatCurrency(prejuizoPeriodo)}</span>
+          </li>
+        )}
+      </ul>
+      <div className="mt-2 pt-2 border-t border-purple-500/20 flex justify-between text-xs font-semibold">
+        <span className="text-purple-200">Total absorvido pela empresa</span>
+        <span className="text-purple-200">{formatCurrency(total)}</span>
+      </div>
+    </div>
   )
 }
 
@@ -2174,11 +2208,6 @@ function FechamentosContent() {
                             </span>
                             <span className={`font-bold text-base ${totalFatiaSocios >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(totalFatiaSocios)}</span>
                           </div>
-                          {prejuizoAbsorvidoPeloPeriodo && (
-                            <p className="text-[11px] text-gray-500 -mt-1">
-                              Prejuízo do período: {formatCurrency(Math.abs(lucroReal))}, absorvido pela empresa - os sócios não ratearão nada dele.
-                            </p>
-                          )}
                           {/* Task 11, fix round 1 (16/09/2026): esta nota ficava ANTES
                               do total (entre a Reserva e o total em negrito), como se
                               fosse mais uma linha do funil que soma no total. Mas
@@ -2186,18 +2215,19 @@ function FechamentosContent() {
                               quem via a tela lia um funil cumulativo em que o total
                               ignorava a linha de cima, e o total (bruto) do Bloco 1
                               parecia contradizer o total (liquido, lucroAposDeducoes)
-                              do Bloco 2 logo abaixo. Agora e uma nota fora do funil,
-                              no mesmo estilo da nota de prejuizo absorvido acima. */}
-                          {alertasSelecionados.length > 0 && (
+                              do Bloco 2 logo abaixo. Agora e uma nota fora do funil. */}
+                          {alertasSelecionados.length > 0 && !empresaAbsorve && (
                             <p className="text-[11px] text-gray-500 -mt-1">
-                              {empresaAbsorve
-                                ? `Reembolsos absorvidos pela empresa: ${formatCurrency(alertasTotal)}`
-                                : `(-) Reembolsos abatidos dos sócios: ${formatCurrency(deducaoDosSocios)}`}
+                              (-) Reembolsos abatidos dos sócios: {formatCurrency(deducaoDosSocios)}
                             </p>
                           )}
                         </div>
                       </div>
                     </div>
+                    <BlocoAbsorvidoPelaEmpresa
+                      reembolsos={empresaAbsorve ? alertasSelecionados.map(a => ({ data: formatDate(a.data), nome: a.nome, produto: a.produto, valor: a.valor, tipo: a.tipo ?? 'reembolso' })) : []}
+                      prejuizoPeriodo={prejuizoAbsorvidoPeloPeriodo ? Math.abs(lucroReal) : 0}
+                    />
 
                     {/* Bloco 2 — Repasse entre sócios */}
                     {/* Task 11 (16/09/2026): "Valor a receber" e o Total agora
@@ -2645,6 +2675,8 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 // falso. Sem esta distincao o historico mente.
                 const daEmpresa = closing.alertas.filter(a => a.absorvidoPelaEmpresa)
                 const dosSocios = closing.alertas.filter(a => !a.absorvidoPelaEmpresa)
+                const prejuizoAbsorvido = closing.socios?.some(s => s.empresaAbsorveuPrejuizoDoPeriodo) ? Math.abs(closing.lucroReal) : 0
+                const totalAbsorvido = totalAbsorvidoPelaEmpresa({ reembolsos: daEmpresa.map(a => ({ valor: a.valor })), prejuizoPeriodo: prejuizoAbsorvido })
                 return (
                   <>
                     {dosSocios.length > 0 && (
@@ -2652,9 +2684,9 @@ function ClosingCard({ closing }: { closing: Closing }) {
                         {dosSocios.length} devolução{dosSocios.length !== 1 ? 'es' : ''} deduzida{dosSocios.length !== 1 ? 's' : ''} dos sócios
                       </span>
                     )}
-                    {daEmpresa.length > 0 && (
+                    {totalAbsorvido > 0 && (
                       <span className="inline-flex items-center gap-1 bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
-                        {formatCurrency(daEmpresa.reduce((t, a) => t + a.valor, 0))} absorvido pela empresa
+                        {formatCurrency(totalAbsorvido)} absorvido pela empresa
                       </span>
                     )}
                   </>
@@ -2773,11 +2805,10 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 empresa" dos reembolsos (Seção 4) e nunca dizia que o
                 prejuizo do periodo em si tinha sido absorvido pela empresa,
                 mesmo lucroReal negativo. */}
-            {closing.socios?.some(s => s.empresaAbsorveuPrejuizoDoPeriodo) && (
-              <p className="mt-2 text-[11px] text-purple-300 font-semibold">
-                A empresa absorveu o prejuízo do período: {formatCurrency(Math.abs(closing.lucroReal))}
-              </p>
-            )}
+            <BlocoAbsorvidoPelaEmpresa
+              reembolsos={closing.alertas.filter(a => a.absorvidoPelaEmpresa).map(a => ({ data: formatDate(a.data), nome: a.nome, produto: a.produto, valor: a.valor, tipo: a.tipo ?? 'reembolso' }))}
+              prejuizoPeriodo={closing.socios?.some(s => s.empresaAbsorveuPrejuizoDoPeriodo) ? Math.abs(closing.lucroReal) : 0}
+            />
             {!!closing.custos_trafego_total && closing.custos_trafego_periodo && (
               <p className="text-[11px] text-gray-600 mt-2">
                 Tráfego: {formatDate(closing.custos_trafego_periodo.inicio)} a {formatDate(closing.custos_trafego_periodo.fim)}
