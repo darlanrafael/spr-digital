@@ -2128,6 +2128,22 @@ function FechamentosContent() {
                             <span className="text-gray-500">Reserva de caixa (30%)</span>
                             <span className="text-amber-400">-{formatCurrency(reservaCaixa)}</span>
                           </div>
+                          {/* Task 11 (16/09/2026): quem revisa precisa ver os
+                              reembolsos aceitos ANTES de confirmar, nao so
+                              depois no Histórico. Sem esta linha o resumo
+                              pulava direto da reserva pro lucro real e o
+                              usuario nao sabia que havia deducao (ou
+                              absorcao pela empresa) no meio do caminho. */}
+                          {alertasSelecionados.length > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">
+                                {empresaAbsorve ? 'Reembolsos absorvidos pela empresa' : '(-) Reembolsos abatidos dos sócios'}
+                              </span>
+                              <span className={empresaAbsorve ? 'text-purple-300' : 'text-red-400'}>
+                                {empresaAbsorve ? formatCurrency(alertasTotal) : `-${formatCurrency(deducaoDosSocios)}`}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex justify-between border-t border-white/5 pt-2">
                             {/* Task 9 (16/09/2026) trouxe o toggle "empresa absorve o
                                 prejuizo do periodo": quando ligado, os socios ficam
@@ -2153,6 +2169,13 @@ function FechamentosContent() {
                     </div>
 
                     {/* Bloco 2 — Repasse entre sócios */}
+                    {/* Task 11 (16/09/2026): "Valor a receber" e o Total agora
+                        mostram fatiaSocio(i) - deducaoDoSocio(nome) e
+                        lucroAposDeducoes, os mesmos numeros gravados como
+                        repasse_final em handleConfirm (~756). Antes esta
+                        tabela mostrava fatiaSocio(i) bruto (sem os reembolsos
+                        abatidos) e totalFatiaSocios: o Revisar nao batia com
+                        o que ia pro banco. */}
                     {podeVerRepasse && (
                     <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
                       <div className="p-4 border-b border-white/10">
@@ -2172,7 +2195,7 @@ function FechamentosContent() {
                               <tr key={nome} className="border-b border-white/5">
                                 <td className="px-4 py-3 text-gray-200 font-medium">{nome}</td>
                                 <td className="px-4 py-3 text-center text-amber-400">{socioPercents[i].toFixed(2)}%</td>
-                                <td className={`px-4 py-3 text-right font-semibold ${fatiaSocio(i) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(fatiaSocio(i))}</td>
+                                <td className={`px-4 py-3 text-right font-semibold ${(fatiaSocio(i) - deducaoDoSocio(nome)) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(fatiaSocio(i) - deducaoDoSocio(nome))}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2180,7 +2203,7 @@ function FechamentosContent() {
                             <tr className="border-t border-white/10 bg-gray-800/20">
                               <td className="px-4 py-3 text-gray-200 font-semibold">Total</td>
                               <td className="px-4 py-3 text-center text-gray-400 font-semibold">100%</td>
-                              <td className={`px-4 py-3 text-right font-bold ${totalFatiaSocios >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(totalFatiaSocios)}</td>
+                              <td className={`px-4 py-3 text-right font-bold ${lucroAposDeducoes >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroAposDeducoes)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -2711,6 +2734,19 @@ function ClosingCard({ closing }: { closing: Closing }) {
                 </div>
               ))}
             </div>
+            {/* Task 11 (16/09/2026): quando a empresa absorveu o PREJUIZO DO
+                PERIODO (nao os reembolsos - sao dois toggles diferentes, ver
+                comentario em ~648), o marcador fica em cada socio
+                (`empresaAbsorveuPrejuizoDoPeriodo`, ~761), nao em `closing`
+                direto. Antes o Historico so mostrava a tag "pago pela
+                empresa" dos reembolsos (Seção 4) e nunca dizia que o
+                prejuizo do periodo em si tinha sido absorvido pela empresa,
+                mesmo lucroReal negativo. */}
+            {closing.socios?.some(s => s.empresaAbsorveuPrejuizoDoPeriodo) && (
+              <p className="mt-2 text-[11px] text-purple-300 font-semibold">
+                A empresa absorveu o prejuízo do período: {formatCurrency(Math.abs(closing.lucroReal))}
+              </p>
+            )}
             {!!closing.custos_trafego_total && closing.custos_trafego_periodo && (
               <p className="text-[11px] text-gray-600 mt-2">
                 Tráfego: {formatDate(closing.custos_trafego_periodo.inicio)} a {formatDate(closing.custos_trafego_periodo.fim)}
