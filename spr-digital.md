@@ -5265,9 +5265,9 @@ O estado degradado NAO pode ser produzido no banco (FK + CHECK impedem), so por 
 - Ao digitar 35 no % do Miguel, o banner SOME (o predicado `reembolsoComVendaNaoCarregada` vai a false), confirmando a saida manual.
 - Com a venda presente (sem interceptacao), nada disso aparece e o split e 65/35 - o caminho normal fica intacto.
 
-## 91.7. Estado atual e o que falta
+## 91.7. Estado ao fim da implementacao (antes do merge)
 
-Branch `feat/correcoes-fechamento`, HEAD `8398f3a`. Testes 793/793 verdes, `tsc` limpo, review final aprovado. **Falta apenas o merge na main + deploy** (decisao do dono; e so codigo, SEM migracao de banco desta vez). O espelho foi deixado integro ao fim (venda `venda-miguel-teste` presente e `aprovada`, solicitacao presente, dado de validacao removido).
+Ao fim das duas tasks + fix round: branch `feat/correcoes-fechamento`, HEAD `8398f3a`. Testes 793/793 verdes, `tsc` limpo, review final aprovado ("Ready to merge = Yes"). O espelho foi deixado integro (venda `venda-miguel-teste` presente e `aprovada`, solicitacao presente, dado de validacao removido). O merge + deploy foram feitos em seguida - ver 91.9 (concluidos: `main` em `8f36847`, deploy Vercel `success`). E so codigo, SEM migracao de banco.
 
 
 ## 91.8. Como foi executado: subagent-driven-development (SDD), passo a passo
