@@ -5307,3 +5307,44 @@ Stat da feature do aviso (`3b2654c..8f36847`, sem contar as 11 correcoes): `app/
 ## 91.11. Item de teste em aberto (nao afeta producao)
 
 Na validacao visual, semeei uma venda extra (`venda-extra-set`, 08/09/2026) para ter `periodSales > 0` e isolar a trava do meu predicado do `periodSales === 0`. Ela nao apareceu no periodo de setembro na tela (motivo nao investigado a fundo - possivelmente selecao de produto/periodo no wizard). Nao bloqueou a validacao: o BANNER e proxy direto do predicado `reembolsoComVendaNaoCarregada` (o botao Confirmar le a mesma variavel), e o banner ligou/desligou corretamente (marcar -> liga; digitar % manual -> desliga). A venda extra foi removida do espelho ao fim. E curiosidade de fixture de teste, sem efeito em producao.
+
+---
+
+# 92. Bloco "O que a empresa absorveu" + etiqueta com total (achado num fechamento real)
+
+**Data:** 17/09/2026. **Arquivos:** `lib/rateio-das-deducoes.ts`, `app/fechamentos/page.tsx`, `lib/rateio-das-deducoes.test.ts`. **Spec:** `docs/superpowers/specs/2026-09-17-bloco-absorvido-pela-empresa-design.md`. **Plano:** `docs/superpowers/plans/2026-09-17-bloco-absorvido-pela-empresa.md`. **Commits:** `f614b0f` (helper), `453fb1d` (teste do clamp), `fb7d1ae` (componente+fiacao), `b3b8c7a` (fix da etiqueta). **Deploy:** Vercel `success` no commit `b3b8c7a`. **Sem migracao, sem mudanca de calculo/Caixa** - so relatorio, retroativo.
+
+## 92.1. O que o dono viu (fechamento REAL close_1789618364181)
+
+Fechando de verdade, com a empresa absorvendo os reembolsos E o prejuizo do periodo, o relatorio confirmado mostrou:
+- Etiqueta: "R$ 4.148,70 absorvido pela empresa" (SO os reembolsos).
+- Noutra linha: "A empresa absorveu o prejuizo do periodo: R$ 1.798,85".
+- Total real absorvido: R$ 5.947,55 (4.148,70 + 1.798,85) - que NAO aparecia em lugar nenhum.
+- E nao havia um bloco unico detalhando tudo que a empresa pagou/absorveu.
+
+O dono: "a etiqueta marca 4.148,70 sendo que o total foi 5.947,55, nao faz sentido" e "nao tem um bloco detalhando tudo que foi descontado/pago pela empresa, erro grave".
+
+## 92.2. Diagnostico (o dinheiro estava certo; o relatorio, nao)
+
+Confirmado no codigo: `handleConfirm` lanca DUAS saidas no Caixa - `cfPrejuizo` (-R$ 4.148,70, reembolsos, `page.tsx:888`) e `cfPrejuizoPeriodo` (-R$ 1.798,85, prejuizo do periodo, `page.tsx:920`), somando R$ 5.947,55. Ou seja: o Caixa da empresa foi debitado o total certo, em dois lancamentos; o fechamento confirmado do dono NAO estava financeiramente errado. Os defeitos eram so de EXIBICAO:
+1. A etiqueta do topo do Historico (`page.tsx:2657`) somava so os reembolsos (`daEmpresa.reduce(...)`), nunca o prejuizo do periodo.
+2. O prejuizo absorvido era mostrado numa linha solta separada, e os dois nunca somavam num total.
+3. Nao existia um bloco consolidado.
+
+## 92.3. A correcao (SDD: 2 tasks + 1 fix round)
+
+- **Task 1 (`f614b0f` + `453fb1d`):** helper puro `totalAbsorvidoPelaEmpresa({ reembolsos, prejuizoPeriodo })` em `lib/rateio-das-deducoes.ts` = soma dos reembolsos + `Math.max(0, prejuizoPeriodo)`. Testado, incluindo o caso de prejuizo NEGATIVO clampado a 0 (o review pediu; o mutante que remove o `Math.max` foi provado morto rodando).
+- **Task 2 (`fb7d1ae`):** componente compartilhado `BlocoAbsorvidoPelaEmpresa` (lista cada reembolso absorvido: data, nome, produto, valor; mais o prejuizo do periodo; mais o TOTAL). Usado na etapa Revisar (dados ao vivo) E no Historico (dados do `closing` salvo). A etiqueta do topo do Historico passou a mostrar o TOTAL (reembolsos + prejuizo). As notas espalhadas redundantes foram removidas.
+- **Fix round 1 (`b3b8c7a`):** a validacao na tela (controlador) pegou que a etiqueta do header do Historico estava presa dentro do guard `closing.alertas.length > 0` - um fechamento so-prejuizo (zero reembolsos) nunca mostrava a etiqueta. Corrigido: a IIFE roda sempre, usando `(closing.alertas ?? [])`; cada badge decide sozinha.
+
+Revisao: implementer fresco por task + reviewer independente (opus na Task 2 e no review final). Review final: "Ready to merge = Yes". `npx tsc --noEmit` limpo; `npm test` 798/798.
+
+## 92.4. Validacao rodando (navegador real contra o espelho)
+
+- **Historico** (fechamento so-prejuizo close_1789610813825, lucro_real -11285): a etiqueta do header mostra "R$ 11.285,00 absorvido pela empresa" (antes do fix nao aparecia); o bloco (no "Ver detalhes") mostra "Prejuizo do periodo absorvido R$ 11.285,00 / Total R$ 11.285,00".
+- **Revisar** (reembolso do Miguel R$ 1.560 + custo manual R$ 5.000 num periodo sem faturamento -> prejuizo R$ 5.000, com os dois "empresa absorve" ligados): o bloco mostra "Miguel Pires - Mentoria Particular - Pedro Roncada R$ 1.560,00 / Prejuizo do periodo absorvido R$ 5.000,00 / Total absorvido pela empresa R$ 6.560,00". Render limpo (screenshot).
+- Detalhe de processo: o dev server tinha de ser reiniciado apontando pro espelho para servir o codigo novo; a interceptacao REST do puppeteer precisou de headers CORS no `req.respond` para nao zerar as vendas do cliente (mesmo aprendizado do item 91.3).
+
+## 92.5. Estado
+
+Producao (main `b3b8c7a`), deploy Vercel `success`. Retroativo: fechamentos confirmados que tiveram absorcao (reembolsos e/ou prejuizo do periodo) passam a mostrar o total certo e o bloco, sem migracao. O fechamento `close_1789618364181` do dono agora exibe "R$ 5.947,55 absorvido pela empresa" e o detalhamento.
