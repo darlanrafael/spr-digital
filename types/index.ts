@@ -149,6 +149,15 @@ export interface ClosingAlert {
    * alguns estornos absorvidos pela empresa e outros descontados.
    */
   absorvidoPelaEmpresa?: boolean
+  /**
+   * A venda deste reembolso nao esta na lista `sales` carregada no cliente, entao
+   * o produto nao pode ser identificado e o rateio 65/35 (mentoria do Pedro)
+   * degrada para o 50/50 do fechamento. Sinaliza cache de cliente velho - a FK
+   * `solicitacoes_reembolso_sale_id_fkey` garante que a venda existe no banco. A
+   * tela usa isto para travar o Confirmar e pedir refresh ou % manual. So nasce
+   * no reembolso PARCIAL. Ver docs/superpowers/specs/2026-09-16-aviso-reembolso-venda-nao-carregada-design.md
+   */
+  vendaNaoCarregada?: boolean
   nome: string
   telefone?: string
   email?: string

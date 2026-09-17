@@ -101,6 +101,10 @@ export function calcularAlertasReembolsoParcial({
       nome: s.paciente_nome,
       email: s.paciente_email ?? undefined,
       produto: venda?.produto ?? 'Reembolso parcial',
+      // Venda nao achada em vendaPorSaleId = lista `sales` do cliente esta velha.
+      // A tela trava o Confirmar e pede refresh ou % manual. So marca quando falta;
+      // no caso normal o campo nem aparece (fica undefined).
+      ...(venda ? {} : { vendaNaoCarregada: true }),
       valor: s.valor_reembolso,
       tipo: 'reembolso_parcial',
       // A data que importa é a da APROVAÇÃO, que é quando o dinheiro sai, e

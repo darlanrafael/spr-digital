@@ -175,3 +175,21 @@ test('venda fora do mapa continua gerando deducao: o mapa pode nao ter carregado
   assert.equal(a.length, 1)
   assert.equal(a[0].produto, 'Reembolso parcial')
 })
+
+test('venda NAO carregada: marca vendaNaoCarregada e produto cai no default', () => {
+  const a = calcularAlertasReembolsoParcial({
+    solicitacoes: [sol()], closings: [], vendaPorSaleId: new Map(),
+  })
+  assert.equal(a.length, 1)
+  assert.equal(a[0].produto, 'Reembolso parcial')
+  assert.equal(a[0].vendaNaoCarregada, true)
+})
+
+test('venda carregada: vendaNaoCarregada fica falsy e produto e o real', () => {
+  const a = calcularAlertasReembolsoParcial({
+    solicitacoes: [sol()], closings: [], vendaPorSaleId: produtos,
+  })
+  assert.equal(a.length, 1)
+  assert.equal(a[0].produto, 'Mentoria Particular - Pedro Roncada')
+  assert.ok(!a[0].vendaNaoCarregada)
+})
