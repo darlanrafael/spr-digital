@@ -371,3 +371,26 @@ Mecanica: novo estado `empresaAbsorvePrejuizo` (default false). So relevante qua
 
 Ordem: Task 9 (dinheiro) -> Task 10 (UI). Prova no espelho com cenario NEGATIVO. Testes: a math por socio
 com/sem o toggle e o encadeamento do caixa. Restricao dura: sem margem no dinheiro; nao quebrar reserva/65/35.
+
+---
+
+# Adendo 3 (16/09) - Revisar e Historico completos e detalhados
+
+Pedido do dono: TUDO tem que aparecer no Revisar (antes de confirmar) e no Historico (depois de fechar), detalhado -
+tanto os reembolsos absorvidos quanto o prejuizo do periodo absorvido pela empresa.
+
+### Task 11: Revisar completo + Historico detalhado
+
+**Files:** Modify `app/fechamentos/page.tsx` (etapa Revisar `activeStep === 4` ~2160-2186; Historico ~2985-3010).
+
+Estado atual:
+- Revisar: a tabela "Repasse entre socios" mostra `fatiaSocio(i)` (bruto), NAO `fatiaSocio(i) - deducaoDoSocio(nome)` (que e o `repasse_final` salvo em ~737). Total mostra `totalFatiaSocios`, nao `lucroAposDeducoes`. Nao lista reembolsos.
+- Historico: mostra reembolsos com tag "pago pela empresa" (~3005), mas NAO mostra o prejuizo do periodo absorvido (`empresaAbsorveuPrejuizoDoPeriodo`, salvo no socio ~761).
+
+O que fazer:
+- [ ] **Revisar - valor real por socio:** trocar o display da coluna "Valor a receber" (2175) para `fatiaSocio(i) - deducaoDoSocio(nome)`, e o Total (2183) para `lucroAposDeducoes`. Isso faz o Revisar bater com o `repasse_final` que ja e salvo. (dinheiro - so display, o valor salvo nao muda.)
+- [ ] **Revisar - detalhar reembolsos:** acrescentar no resumo (perto da linha de Reserva/Prejuizo) uma linha quando `alertasSelecionados.length > 0`: se `empresaAbsorve`, "Reembolsos absorvidos pela empresa: R$ {alertasTotal}"; senao "(-) Reembolsos abatidos dos socios: R$ {deducaoDosSocios}". Deixa claro pra quem revisa.
+- [ ] **Historico - prejuizo absorvido:** quando algum socio do closing tem `empresaAbsorveuPrejuizoDoPeriodo` (ou um flag equivalente salvo), mostrar no detalhe do fechamento, detalhado: "A empresa absorveu o prejuizo do periodo: R$ {abs(closing.lucroReal)}" - no mesmo estilo da tag de reembolso absorvido. Confirmar que `closing.lucroReal` e `closing.socios[].empresaAbsorveuPrejuizoDoPeriodo` estao disponiveis no objeto do historico.
+- [ ] tsc + npm test verdes. Prova no espelho: cenario com reembolso (nao absorvido) confere valor real no Revisar; cenario com empresa absorvendo reembolso e/ou prejuizo mostra as linhas certas no Revisar E no Historico apos confirmar.
+
+Restricao dura: dinheiro - a mudanca e de EXIBICAO (bater com o repasse_final ja salvo), nao muda o valor persistido. Nao quebrar 65/35, reserva, empresa-absorve. Nunca travessao.
