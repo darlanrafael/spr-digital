@@ -165,6 +165,19 @@ export interface Socio {
   repasse_original?: number
   deducoes?: number
   repasse_final?: number
+  /**
+   * A EMPRESA absorveu o prejuizo DESTE PERIODO (lucroReal negativo): a fatia
+   * deste socio ficou 0 por isso, e nao porque o percentual dele e 0%.
+   *
+   * Fica no proprio socio, e nao num campo direto de `Closing`, pelo mesmo
+   * motivo de `ClosingAlert.absorvidoPelaEmpresa` acima: `addClosing` em
+   * lib/services.ts e lista explicita de colunas, e um campo novo direto em
+   * `Closing` e descartado em silencio (foi o que aconteceu com o campo morto
+   * que citava esse mesmo nome, ver o teste em rateio-das-deducoes.test.ts).
+   * `socios` ja e persistido inteiro como jsonb, entao um campo aqui viaja
+   * junto sem precisar tocar em lib/services.ts.
+   */
+  empresaAbsorveuPrejuizoDoPeriodo?: boolean
 }
 
 export interface ClosingProductRow {

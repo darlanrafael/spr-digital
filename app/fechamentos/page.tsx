@@ -608,6 +608,13 @@ function FechamentosContent() {
   // continua sendo descontar dos socios, que e a regra definida em 02/09.
   const [empresaAbsorve, setEmpresaAbsorve] = useState(false)
 
+  // Quando marcado E o periodo deu prejuizo, a EMPRESA absorve o PREJUIZO DO
+  // PERIODO: a fatia de cada socio no prejuizo fica 0 (em vez de ratear a
+  // perda), e o valor integral sai do Caixa como despesa da empresa. Comeca
+  // desmarcado - opt-in. Independente do "empresa absorve" dos reembolsos ali
+  // acima: os dois toggles podem estar ligados, desligados, ou so um dos dois.
+  const [empresaAbsorvePrejuizo, setEmpresaAbsorvePrejuizo] = useState(false)
+
   const deducoesDetalhadas = useMemo(() => alertasSelecionados.map(a => {
     const chave = chaveAlerta(a) ?? ''
     const origem = divisaoOriginalDoAlerta(a, closings)
@@ -631,6 +638,18 @@ function FechamentosContent() {
     [deducoesDetalhadas],
   )
 
+  /**
+   * A fatia deste socio no PERIODO, considerando o toggle "empresa absorve o
+   * prejuizo". So difere de `socioValues[i]` quando o periodo deu prejuizo E o
+   * toggle esta ligado: nesse caso a fatia fica 0 - a EMPRESA absorve o
+   * prejuizo inteiro, e nenhum socio perde nada deste periodo. `socioValues`
+   * fica intocado (e a fatia crua, usada no caso normal).
+   */
+  const prejuizoAbsorvidoPeloPeriodo = empresaAbsorvePrejuizo && lucroReal < 0
+  const fatiaSocio = (i: number) => prejuizoAbsorvidoPeloPeriodo ? 0 : socioValues[i]
+  /** Soma das fatias acima - o que os DOIS socios juntos tem do periodo. */
+  const totalFatiaSocios = prejuizoAbsorvidoPeloPeriodo ? 0 : lucroReal
+
   /** Quanto ESTE socio absorve. Zero quando a empresa esta pagando. */
   const deducaoDoSocio = (nome: string) => empresaAbsorve ? 0 : (deducoesSocio[nome] ?? 0)
   /**
@@ -647,7 +666,7 @@ function FechamentosContent() {
     ? 0
     : Math.round(SOCIO_NAMES.reduce((a, n) => a + (deducoesSocio[n] ?? 0), 0) * 100) / 100
   /** O numero que REALMENTE vai ser dividido entre os socios. */
-  const lucroAposDeducoes = lucroReal - deducaoDosSocios
+  const lucroAposDeducoes = totalFatiaSocios - deducaoDosSocios
 
   // As contas que TEM que fechar, conferidas na propria tela.
   //
@@ -731,10 +750,15 @@ function FechamentosContent() {
     const sociosData = SOCIO_NAMES.map((nome, i) => ({
       nome,
       percentual: socioPercents[i],
-      valor: socioValues[i],
-      repasse_original: socioValues[i],
+      valor: fatiaSocio(i),
+      repasse_original: fatiaSocio(i),
       deducoes: deducaoDoSocio(nome),
-      repasse_final: socioValues[i] - deducaoDoSocio(nome),
+      repasse_final: fatiaSocio(i) - deducaoDoSocio(nome),
+      // Marca, no proprio socio, que a EMPRESA absorveu o prejuizo deste
+      // periodo - a fatia acima e 0 por isso, e nao porque o percentual e 0%.
+      // Ver o porque de nao ficar direto em `Closing` no comentario do campo
+      // em types/index.ts.
+      ...(prejuizoAbsorvidoPeloPeriodo ? { empresaAbsorveuPrejuizoDoPeriodo: true } : {}),
     }))
 
     const productNames = selectedProducts.length > 0
@@ -866,6 +890,29 @@ function FechamentosContent() {
       setCashflow(prev => [...prev, cfPrejuizo!])
     }
 
+    // A EMPRESA absorvendo o PREJUIZO DO PERIODO: saida no Caixa pelo valor
+    // integral do prejuizo, em vez de ratear entre os socios (fatiaSocio ja
+    // ficou 0 para os dois, la em cima). Encadeia depois da reserva E depois
+    // do cfPrejuizo dos reembolsos - as tres coisas sao independentes e
+    // coexistem: reserva entra, reembolsos absorvidos pela empresa saem,
+    // prejuizo do periodo absorvido pela empresa sai, cada um no seu proprio
+    // lancamento, sem um sobrescrever o outro.
+    let cfPrejuizoPeriodo: CashflowEntry | null = null
+    if (empresaAbsorvePrejuizo && lucroReal < 0) {
+      const saldoAntesDoPrejuizoDoPeriodo = cfPrejuizo?.saldoAcumulado ?? cfEntry?.saldoAcumulado ?? lastBalance
+      cfPrejuizoPeriodo = {
+        id: `cf_${Date.now() + 2}`,
+        data: now.toISOString().split('T')[0],
+        descricao: 'PREJUIZO DO PERIODO ABSORVIDO PELA EMPRESA',
+        origem: 'Fechamento Automático',
+        tipo: 'saida_reembolso',
+        valor: -Math.abs(lucroReal),
+        saldoAcumulado: saldoAntesDoPrejuizoDoPeriodo - Math.abs(lucroReal),
+      }
+      try { await svcAddCashflow(cfPrejuizoPeriodo, selectedProject) } catch (e) { console.error(e) }
+      setCashflow(prev => [...prev, cfPrejuizoPeriodo!])
+    }
+
     setConfirmedClosing(newClosing)
     setConfirmed(true)
     setSuccessMsg(
@@ -875,6 +922,9 @@ function FechamentosContent() {
         : '')
       + (cfPrejuizo
         ? ` A EMPRESA absorveu ${formatCurrency(alertasTotal)} de reembolsos: saída lançada no Caixa, sem desconto no repasse dos sócios.`
+        : '')
+      + (cfPrejuizoPeriodo
+        ? ` A EMPRESA absorveu o prejuízo do período (${formatCurrency(Math.abs(lucroReal))}): saída lançada no Caixa, sem descontar dos sócios.`
         : ''),
     )
   }
@@ -1881,14 +1931,16 @@ function FechamentosContent() {
                         <div className="flex-1">
                           <p className="text-sm text-white font-medium">{nome}</p>
                           {/* O que este socio efetivamente recebe ou deve, ja com os
-                              reembolsos. O numero de cima (socioValues) e so a fatia
-                              do lucro do periodo, e era o unico visivel aqui. */}
-                          <p className={`text-xs ${(socioValues[i] - deducaoDoSocio(nome)) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {formatCurrency(socioValues[i] - deducaoDoSocio(nome))}
+                              reembolsos. O numero de cima (fatiaSocio) e so a fatia
+                              do lucro do periodo, e era o unico visivel aqui.
+                              fatiaSocio, e nao socioValues cru: fica 0 quando a
+                              empresa absorve o prejuizo do periodo. */}
+                          <p className={`text-xs ${(fatiaSocio(i) - deducaoDoSocio(nome)) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {formatCurrency(fatiaSocio(i) - deducaoDoSocio(nome))}
                           </p>
                           {deducaoDoSocio(nome) > 0 && (
                             <p className="text-[10px] text-gray-500">
-                              {formatCurrency(socioValues[i])} do período, menos {formatCurrency(deducaoDoSocio(nome))} de reembolsos
+                              {formatCurrency(fatiaSocio(i))} do período, menos {formatCurrency(deducaoDoSocio(nome))} de reembolsos
                             </p>
                           )}
                         </div>
@@ -2045,7 +2097,7 @@ function FechamentosContent() {
                               <tr key={nome} className="border-b border-white/5">
                                 <td className="px-4 py-3 text-gray-200 font-medium">{nome}</td>
                                 <td className="px-4 py-3 text-center text-amber-400">{socioPercents[i].toFixed(2)}%</td>
-                                <td className={`px-4 py-3 text-right font-semibold ${socioValues[i] >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(socioValues[i])}</td>
+                                <td className={`px-4 py-3 text-right font-semibold ${fatiaSocio(i) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(fatiaSocio(i))}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2053,7 +2105,7 @@ function FechamentosContent() {
                             <tr className="border-t border-white/10 bg-gray-800/20">
                               <td className="px-4 py-3 text-gray-200 font-semibold">Total</td>
                               <td className="px-4 py-3 text-center text-gray-400 font-semibold">100%</td>
-                              <td className={`px-4 py-3 text-right font-bold ${lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal)}</td>
+                              <td className={`px-4 py-3 text-right font-bold ${totalFatiaSocios >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(totalFatiaSocios)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -2139,7 +2191,7 @@ function FechamentosContent() {
                             <tbody>
                               {SOCIO_NAMES.map((nome, i) => {
                                 const deducao = deducaoDoSocio(nome)
-                                const original = socioValues[i]
+                                const original = fatiaSocio(i)
                                 const final = original - deducao
                                 return (
                                   <tr key={nome} className="border-b border-white/5">
@@ -2156,9 +2208,9 @@ function FechamentosContent() {
                             <tfoot>
                               <tr className="border-t border-white/10 bg-gray-800/20">
                                 <td className="px-4 py-3 text-gray-200 font-semibold">Total</td>
-                                <td className="px-4 py-3 text-right text-gray-200 font-semibold">{formatCurrency(lucroReal)}</td>
+                                <td className="px-4 py-3 text-right text-gray-200 font-semibold">{formatCurrency(totalFatiaSocios)}</td>
                                 <td className="px-4 py-3 text-right text-red-400 font-semibold">{deducaoDosSocios > 0 ? `-${formatCurrency(deducaoDosSocios)}` : '—'}</td>
-                                <td className={`px-4 py-3 text-right font-bold ${(lucroReal - deducaoDosSocios) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal - deducaoDosSocios)}</td>
+                                <td className={`px-4 py-3 text-right font-bold ${lucroAposDeducoes >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroAposDeducoes)}</td>
                               </tr>
                             </tfoot>
                           </table>
