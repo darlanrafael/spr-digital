@@ -2669,12 +2669,20 @@ function ClosingCard({ closing }: { closing: Closing }) {
                   + etiqueta
                 </button>
               )}
-              {closing.alertas.length > 0 && (() => {
+              {(() => {
                 // Quem absorveu muda o que a etiqueta pode dizer: "deduzida"
                 // significa tirada dos socios, e quando a empresa paga isso e
                 // falso. Sem esta distincao o historico mente.
-                const daEmpresa = closing.alertas.filter(a => a.absorvidoPelaEmpresa)
-                const dosSocios = closing.alertas.filter(a => !a.absorvidoPelaEmpresa)
+                //
+                // Fix round 1: o guard externo era `closing.alertas.length > 0`,
+                // que bloqueava a IIFE inteira (e a etiqueta de totalAbsorvido,
+                // que ja inclui o prejuizo do periodo) quando o fechamento nao
+                // tinha nenhum reembolso mas TINHA prejuizo absorvido pela
+                // empresa - a etiqueta do header nunca aparecia nesse caso
+                // (close_1789610813825). Agora a IIFE roda sempre e cada badge
+                // interna decide por conta propria se aparece.
+                const daEmpresa = (closing.alertas ?? []).filter(a => a.absorvidoPelaEmpresa)
+                const dosSocios = (closing.alertas ?? []).filter(a => !a.absorvidoPelaEmpresa)
                 const prejuizoAbsorvido = closing.socios?.some(s => s.empresaAbsorveuPrejuizoDoPeriodo) ? Math.abs(closing.lucroReal) : 0
                 const totalAbsorvido = totalAbsorvidoPelaEmpresa({ reembolsos: daEmpresa.map(a => ({ valor: a.valor })), prejuizoPeriodo: prejuizoAbsorvido })
                 return (
