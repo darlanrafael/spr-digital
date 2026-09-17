@@ -671,10 +671,13 @@ function FechamentosContent() {
   // Um reembolso marcado para abater, cuja venda nao carregou, rateia num 50/50
   // chutado. Trava o fechamento ate o usuario resolver: refresh (a venda carrega
   // e volta o 65/35) ou % digitado na mao (escolha manual sobrepoe). Se a empresa
-  // absorve, o split nao importa (sai do caixa), entao nao trava.
+  // absorve, o split nao importa (sai do caixa), entao nao trava. Se a venda tem
+  // origem (divisaoOriginalDoAlerta achou um fechamento anterior que ja pagou
+  // essa venda), o split vem de la, correto - nao ha 50/50 chutado, nao trava.
   // A validade do % repete a regra de `escolhaManual` em deducoesDetalhadas.
   const reembolsoComVendaNaoCarregada = !empresaAbsorve && alertasSelecionados.some(a => {
     if (!a.vendaNaoCarregada) return false
+    if (divisaoOriginalDoAlerta(a, closings)) return false
     const chave = chaveAlerta(a) ?? ''
     const digitado = divisaoManualDoAlerta[chave]
     const pct = digitado !== undefined && String(digitado).trim() !== ''
@@ -1829,13 +1832,13 @@ function FechamentosContent() {
                                           placeholder={String(pctAtual)}
                                           onChange={e => setDivisaoManualDoAlerta(v => ({ ...v, [chave]: e.target.value }))}
                                           disabled={!marcado || empresaAbsorve}
-                                          className={`w-12 bg-gray-900 border rounded px-1 py-0.5 text-[11px] text-white text-right disabled:opacity-40 ${a.vendaNaoCarregada ? 'border-red-500' : 'border-white/15'}`}
+                                          className={`w-12 bg-gray-900 border rounded px-1 py-0.5 text-[11px] text-white text-right disabled:opacity-40 ${a.vendaNaoCarregada && !origem ? 'border-red-500' : 'border-white/15'}`}
                                           aria-label={`Percentual da ${SOCIO_NAMES[0]} no estorno de ${a.nome}`}
                                         />
                                         <span className="text-[10px] text-gray-500">/ {100 - pctAtual}</span>
                                       </div>
-                                      <span className={`text-[9px] ${a.vendaNaoCarregada ? 'text-red-400 font-semibold' : 'text-gray-600'}`}>
-                                        {a.vendaNaoCarregada
+                                      <span className={`text-[9px] ${a.vendaNaoCarregada && !origem ? 'text-red-400 font-semibold' : 'text-gray-600'}`}>
+                                        {a.vendaNaoCarregada && !origem
                                           ? 'venda nao carregada - dê refresh ou digite o %'
                                           : empresaAbsorve
                                           ? 'empresa paga'
