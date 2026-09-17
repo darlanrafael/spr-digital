@@ -11,6 +11,7 @@
 export const ROTAS_ABERTAS = [
   '/api/webhooks/hubla',              // a Hubla avisando de venda nova
   '/api/webhooks/kiwify',             // a Kiwify avisando de venda nova
+  '/api/webhooks/reconciliar',        // cron; ja confere x-whatsapp-cron-secret
   '/api/whatsapp/pendentes-vespera',  // cron; ja confere x-whatsapp-cron-secret
   '/api/whatsapp/pendentes-30min',    // cron; idem
   '/api/whatsapp/marcar-enviado',     // cron; idem

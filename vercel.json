@@ -1,0 +1,3 @@
+{
+  "crons": [{ "path": "/api/webhooks/reconciliar", "schedule": "*/15 * * * *" }]
+}

@@ -92,16 +92,25 @@ async function main() {
   console.log('\n=== AS ROTAS ABERTAS (lib/rotas-abertas.ts): nao podem recusar por falta de cracha ===')
   //
   // A fonte da lista e o proprio modulo de producao, nao uma copia colada
-  // aqui: se alguem acrescentar uma 8a rota aberta, este script passa a
+  // aqui: se alguem acrescentar uma 9a rota aberta, este script passa a
   // testa-la sozinho. O que muda de rota para rota e SO como chamar (metodo,
   // corpo, segredo proprio) - por isso a categorizacao abaixo, e um guarda no
-  // final que reprova qualquer rota que caia fora das 3 categorias
+  // final que reprova qualquer rota que caia fora das 4 categorias
   // conhecidas em vez de deixa-la passar batido.
-  const ROTAS_DE_WEBHOOK = ROTAS_ABERTAS.filter(r => r.startsWith('/api/webhooks/'))
+  //
+  // `/api/webhooks/reconciliar` comeca com `/api/webhooks/` mas NAO usa o
+  // segredo de plataforma (HUBLA_WEBHOOK_SECRET/KIWIFY_WEBHOOK_TOKEN): a
+  // guarda dela e `verificarSecretCron` (x-whatsapp-cron-secret), igual as
+  // rotas de cron do WhatsApp. Por isso sai de ROTAS_DE_WEBHOOK antes do
+  // filtro por prefixo pegar errado, e ganha categoria propria abaixo (nao
+  // entra em ROTAS_DE_CRON porque, ao contrario delas, ela e money-adjacent -
+  // ver o bloco proprio mais abaixo).
+  const ROTAS_DE_WEBHOOK = ROTAS_ABERTAS.filter(r => r.startsWith('/api/webhooks/') && r !== '/api/webhooks/reconciliar')
   const ROTAS_DE_CRON = ROTAS_ABERTAS.filter(r => r.startsWith('/api/whatsapp/'))
   const ROTAS_DE_LOGIN = ROTAS_ABERTAS.filter(r => r.endsWith('/login'))
+  const ROTAS_DE_RECONCILIACAO = ROTAS_ABERTAS.filter(r => r === '/api/webhooks/reconciliar')
   const SEM_CATEGORIA = ROTAS_ABERTAS.filter(r =>
-    !ROTAS_DE_WEBHOOK.includes(r) && !ROTAS_DE_CRON.includes(r) && !ROTAS_DE_LOGIN.includes(r))
+    !ROTAS_DE_WEBHOOK.includes(r) && !ROTAS_DE_CRON.includes(r) && !ROTAS_DE_LOGIN.includes(r) && !ROTAS_DE_RECONCILIACAO.includes(r))
   for (const r of SEM_CATEGORIA) {
     // Rota nova em lib/rotas-abertas.ts que este script ainda nao sabe testar.
     // FALHA de proposito: silenciar uma rota aberta nova, em silencio, e
@@ -147,6 +156,19 @@ async function main() {
         { 'x-whatsapp-cron-secret': SEGREDO_CRON })
       conferir(`${r} continua aberta (nao 401)`, s === 401, false)
     }
+  }
+
+  // /api/webhooks/reconciliar: mesma guarda das rotas de cron acima, mas
+  // diferente delas ela nao le corpo nenhum - decide sozinha, a partir do
+  // que esta em `webhook_events`, e PODE INSERIR VENDA REAL em `sales`. Nao
+  // ha corpo invalido que a deixe segura de chamar (ela nao olha o corpo).
+  // Por isso nao e exercitada aqui: chamar de verdade arriscaria inserir
+  // venda de producao so para provar o middleware. A prova de acesso desta
+  // rota fica para o controlador, contra o espelho de teste (Step 5 do
+  // brief da Tarefa 4).
+  for (const r of ROTAS_DE_RECONCILIACAO) {
+    pular(`${r} continua aberta`,
+      'rota money-adjacent (pode inserir venda real em sales, sem corpo que a proteja) - nao chamada aqui de proposito; prova fica pro espelho')
   }
 
   // Os dois logins: corpo sem email/senha cai na validacao (400) antes de

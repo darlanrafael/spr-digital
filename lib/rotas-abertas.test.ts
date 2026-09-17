@@ -3,12 +3,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ehRotaAberta, ROTAS_ABERTAS } from './rotas-abertas'
 
-test('as SETE rotas que nao podem exigir cracha estao abertas', () => {
+test('as OITO rotas que nao podem exigir cracha estao abertas', () => {
   // Exigir cracha nos dois webhooks PARA A ENTRADA DE VENDAS EM SILENCIO:
   // a Hubla e a Kiwify nao tem login, e nenhum erro apareceria em tela.
   for (const r of [
     '/api/webhooks/hubla',
     '/api/webhooks/kiwify',
+    '/api/webhooks/reconciliar',
     '/api/whatsapp/pendentes-vespera',
     '/api/whatsapp/pendentes-30min',
     '/api/whatsapp/marcar-enviado',
@@ -17,7 +18,7 @@ test('as SETE rotas que nao podem exigir cracha estao abertas', () => {
   ]) {
     assert.equal(ehRotaAberta(r), true, `${r} tem de ficar aberta`)
   }
-  assert.equal(ROTAS_ABERTAS.length, 7, 'sao exatamente sete, nem mais nem menos')
+  assert.equal(ROTAS_ABERTAS.length, 8, 'sao exatamente oito, nem mais nem menos')
 })
 
 test('as rotas que DEVEM exigir cracha nao estao na lista', () => {
@@ -54,7 +55,7 @@ test('endereco com parametro continua sendo a mesma rota', () => {
 })
 test('FUZZING: nenhuma variacao maliciosa abre uma rota fechada', () => {
   const abertasExatas = [
-    '/api/webhooks/hubla','/api/webhooks/kiwify','/api/whatsapp/pendentes-vespera',
+    '/api/webhooks/hubla','/api/webhooks/kiwify','/api/webhooks/reconciliar','/api/whatsapp/pendentes-vespera',
     '/api/whatsapp/pendentes-30min','/api/whatsapp/marcar-enviado',
     '/api/dashboard-usuarios/login','/api/terapeutas/login',
   ]
@@ -68,9 +69,9 @@ test('FUZZING: nenhuma variacao maliciosa abre uma rota fechada', () => {
   let vazou = 0
   for (const f of fechadas) {
     for (const t of truques(f)) {
-      // ehRotaAberta so pode dizer true para as 7 exatas (apos limpeza).
+      // ehRotaAberta so pode dizer true para as 8 exatas (apos limpeza).
       if (ehRotaAberta(t)) {
-        // so e aceitavel se a forma LIMPA for uma das 7 exatas
+        // so e aceitavel se a forma LIMPA for uma das 8 exatas
         const limpo = t.split('?')[0].split('#')[0].trim().replace(/\/+$/,'')
         if (!abertasExatas.includes(limpo)) { vazou++; console.error('VAZOU:', JSON.stringify(t)) }
       }
@@ -79,9 +80,9 @@ test('FUZZING: nenhuma variacao maliciosa abre uma rota fechada', () => {
   assert.equal(vazou, 0, 'alguma variacao de rota fechada foi tratada como aberta')
 })
 
-test('FUZZING inverso: as 7 abertas continuam abertas com querystring e barra', () => {
+test('FUZZING inverso: as 8 abertas continuam abertas com querystring e barra', () => {
   const abertas = [
-    '/api/webhooks/hubla','/api/webhooks/kiwify','/api/whatsapp/pendentes-vespera',
+    '/api/webhooks/hubla','/api/webhooks/kiwify','/api/webhooks/reconciliar','/api/whatsapp/pendentes-vespera',
     '/api/whatsapp/pendentes-30min','/api/whatsapp/marcar-enviado',
     '/api/dashboard-usuarios/login','/api/terapeutas/login',
   ]
