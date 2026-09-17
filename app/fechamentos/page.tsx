@@ -1919,6 +1919,65 @@ function FechamentosContent() {
                   </div>
                 )}
 
+                {/* Quem paga o PREJUIZO DO PERIODO (lucroReal negativo, o
+                    resultado do periodo inteiro): os socios, rateado pelo
+                    percentual de cada (padrao), ou a empresa. A logica
+                    (fatiaSocio, prejuizoAbsorvidoPeloPeriodo, a saida no
+                    Caixa) e da Task 9 - aqui e so o controle na tela.
+                    Separado do checkbox de reembolsos acima: sao dois
+                    prejuizos diferentes (estornos de vendas x resultado do
+                    periodo) e o usuario escolhe cada um, podem estar
+                    ligados, desligados, ou so um dos dois. */}
+                {lucroReal < 0 && podeVerRepasse && (
+                  <div className={`rounded-xl border overflow-hidden ${empresaAbsorvePrejuizo ? 'bg-red-500/[0.07] border-red-500/40' : 'bg-gray-900 border-white/10'}`}>
+                    <div className="p-4">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={empresaAbsorvePrejuizo}
+                          onChange={e => setEmpresaAbsorvePrejuizo(e.target.checked)}
+                          className="w-4 h-4 mt-0.5 accent-red-500 cursor-pointer shrink-0"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-white">
+                            A empresa absorve o prejuízo do período ({formatCurrency(Math.abs(lucroReal))})
+                          </span>
+                          <span className="block text-xs text-gray-400 mt-1">
+                            Desmarcado (padrão): o prejuízo é rateado entre os sócios, na proporção mostrada em
+                            {' '}<strong className="text-gray-300">Divisão entre Sócios</strong> abaixo.
+                          </span>
+                        </span>
+                      </label>
+
+                      {empresaAbsorvePrejuizo && (
+                        <div className="mt-3 ml-7 rounded-lg bg-black/25 border border-red-500/25 p-3">
+                          <p className="text-xs font-semibold text-red-300">A EMPRESA ESTÁ PAGANDO O PREJUÍZO DO PERÍODO</p>
+                          <ul className="mt-2 space-y-1.5 text-[11px] text-gray-300">
+                            <li>
+                              <strong className="text-white">Os sócios ficam com R$ 0 do prejuízo deste período.</strong>
+                              {' '}Nenhum dos dois rateia a perda: a fatia de cada um vai para zero.
+                            </li>
+                            <li>
+                              <strong className="text-white">Sai do caixa da empresa.</strong> Ao confirmar, é lançada
+                              uma saída de {formatCurrency(Math.abs(lucroReal))} no Caixa, como prejuízo do período
+                              absorvido pela empresa.
+                            </li>
+                            <li>
+                              <strong className="text-white">É separado dos reembolsos.</strong> Este toggle não tem
+                              relação com o checkbox de reembolsos acima - os dois podem estar ligados, desligados,
+                              ou só um dos dois.
+                            </li>
+                            <li>
+                              <strong className="text-white">Fica registrado no fechamento.</strong> O histórico grava
+                              que a empresa absorveu o prejuízo do período, para não haver dúvida depois.
+                            </li>
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {podeVerRepasse && (
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-4">Divisão entre Sócios</h3>
@@ -2070,9 +2129,25 @@ function FechamentosContent() {
                             <span className="text-amber-400">-{formatCurrency(reservaCaixa)}</span>
                           </div>
                           <div className="flex justify-between border-t border-white/5 pt-2">
-                            <span className="text-white font-semibold">{lucroReal >= 0 ? 'Lucro real disponível para repasse' : 'Prejuízo a ratear entre sócios'}</span>
-                            <span className={`font-bold text-base ${lucroReal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(lucroReal)}</span>
+                            {/* Task 9 (16/09/2026) trouxe o toggle "empresa absorve o
+                                prejuizo do periodo": quando ligado, os socios ficam
+                                com 0, nao com o lucroReal cru. Antes esta linha sempre
+                                mostrava lucroReal, e ai contradizia a secao "Repasse
+                                entre socios" logo abaixo (que ja usa totalFatiaSocios):
+                                aqui em vermelho com o prejuizo, la em 0. Agora as duas
+                                usam totalFatiaSocios e concordam. */}
+                            <span className="text-white font-semibold">
+                              {prejuizoAbsorvidoPeloPeriodo
+                                ? 'Prejuízo dos sócios no período'
+                                : lucroReal >= 0 ? 'Lucro real disponível para repasse' : 'Prejuízo a ratear entre sócios'}
+                            </span>
+                            <span className={`font-bold text-base ${totalFatiaSocios >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(totalFatiaSocios)}</span>
                           </div>
+                          {prejuizoAbsorvidoPeloPeriodo && (
+                            <p className="text-[11px] text-gray-500 -mt-1">
+                              Prejuízo do período: {formatCurrency(Math.abs(lucroReal))}, absorvido pela empresa - os sócios não ratearão nada dele.
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
