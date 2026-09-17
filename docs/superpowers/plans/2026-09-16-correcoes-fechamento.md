@@ -332,3 +332,42 @@ const lucroDaParteComReserva = lucroBrutoComReserva > 0
 - [ ] **Step 3:** commit.
 
 Ordem: Task 5 (dinheiro, TDD) -> 6 (fiacao do toggle) -> 7 (empresa absorve) -> 8 (etiqueta). Ao fim, prova na tela no espelho e revisao final.
+
+---
+
+# Adendo 2 (16/09) - a empresa poder absorver o PREJUIZO do periodo
+
+Hoje o "empresa absorve" so cobre reembolsos. O dono quer poder mandar o PREJUIZO do periodo
+(quando custos > entradas) pro caixa da empresa tambem, como escolha (opt-in), independente dos reembolsos.
+
+Mecanica: novo estado `empresaAbsorvePrejuizo` (default false). So relevante quando `lucroReal < 0`.
+- Marcado: a fatia de prejuizo de cada socio vira 0 (os socios nao absorvem a perda do periodo), e no
+  handleConfirm sai uma saida no Caixa no valor do prejuizo absorvido (|lucroReal|), com descricao clara.
+- Desmarcado: comportamento de hoje (prejuizo dividido entre os socios via socioValues).
+- Independente do `empresaAbsorve` (reembolsos). Nao mexe na reserva nem no 65/35.
+
+### Task 9: absorver o prejuizo no calculo por socio (page.tsx, com atencao redobrada)
+
+**Files:** Modify `app/fechamentos/page.tsx` (estado + `socioValues`/`repasse` por socio + `handleConfirm` caixa + card).
+
+- [ ] Estado `const [empresaAbsorvePrejuizo, setEmpresaAbsorvePrejuizo] = useState(false)` junto dos outros.
+- [ ] A fatia do socio no periodo passa a considerar o toggle: quando `empresaAbsorvePrejuizo && lucroReal < 0`,
+      a fatia de prejuizo de cada socio e 0 (ex.: `const fatiaSocio = (empresaAbsorvePrejuizo && lucroReal < 0) ? 0 : socioValues[i]`),
+      e o display/`repasse_original`/`repasse_final` usam `fatiaSocio` no lugar de `socioValues[i]` cru.
+      NAO alterar `socioValues` original (mantido para o caso normal); derivar `fatiaSocio`.
+- [ ] `handleConfirm`: quando `empresaAbsorvePrejuizo && lucroReal < 0`, lancar uma saida no Caixa de valor
+      `Math.abs(lucroReal)` (tipo saida/reembolso-prejuizo), com descricao "PREJUIZO DO PERIODO ABSORVIDO PELA EMPRESA".
+      Some ao lancamento que ja existe para os reembolsos absorvidos (nao sobrescrever; podem coexistir).
+      O `saldoAcumulado` deve encadear certo com a reserva e com o cfPrejuizo dos reembolsos.
+- [ ] Guardar no Closing um marcador de que a empresa absorveu o prejuizo (ex.: campo/flag), pra o historico.
+
+### Task 10: o controle na tela (UI do "empresa absorve o prejuizo")
+
+**Files:** Modify `app/fechamentos/page.tsx` (area do "empresa absorve", ~1815).
+
+- [ ] Mostrar, SO quando `lucroReal < 0` e `podeVerRepasse`, um checkbox "A empresa absorve o prejuizo do periodo
+      (R$ X)" ligado a `empresaAbsorvePrejuizo`, separado do checkbox dos reembolsos, com explicacao clara do efeito
+      (socios ficam com 0 do prejuizo; sai do caixa da empresa ao confirmar).
+
+Ordem: Task 9 (dinheiro) -> Task 10 (UI). Prova no espelho com cenario NEGATIVO. Testes: a math por socio
+com/sem o toggle e o encadeamento do caixa. Restricao dura: sem margem no dinheiro; nao quebrar reserva/65/35.
