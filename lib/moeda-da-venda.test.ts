@@ -128,7 +128,7 @@ test('os dois webhooks leem a moeda do payload', () => {
   // Teste de fiacao. A funcao pode estar perfeita e nao ser chamada: foi assim
   // que a Kiwify passou meses com o campo `currency` chegando e sendo ignorado.
   for (const [arq, fn] of [
-    ['app/api/webhooks/hubla/route.ts', 'moedaDaHubla'],
+    ['lib/hubla-sale.ts', 'moedaDaHubla'],
     ['app/api/webhooks/kiwify/route.ts', 'moedaDaKiwify'],
   ]) {
     const texto = readFileSync(new URL('../' + arq, import.meta.url), 'utf8')
@@ -186,7 +186,7 @@ test('moeda detectada com payload INCOMPLETO ainda marca a venda', () => {
   assert.equal(moedaDaHubla(incompleto as never), 'USD', 'a moeda E detectavel')
   assert.equal(valoresInternacionaisDaHubla(incompleto as never), null, 'mas os valores nao')
 
-  const rota = readFileSync(new URL('../app/api/webhooks/hubla/route.ts', import.meta.url), 'utf8')
+  const rota = readFileSync(new URL('../lib/hubla-sale.ts', import.meta.url), 'utf8')
   assert.ok(
     !/moeda:\s*valoresEmMoeda \? moeda : null/.test(rota),
     'o webhook voltou a so marcar quando conseguiu normalizar',
