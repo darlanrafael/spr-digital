@@ -5269,3 +5269,41 @@ O estado degradado NAO pode ser produzido no banco (FK + CHECK impedem), so por 
 
 Branch `feat/correcoes-fechamento`, HEAD `8398f3a`. Testes 793/793 verdes, `tsc` limpo, review final aprovado. **Falta apenas o merge na main + deploy** (decisao do dono; e so codigo, SEM migracao de banco desta vez). O espelho foi deixado integro ao fim (venda `venda-miguel-teste` presente e `aprovada`, solicitacao presente, dado de validacao removido).
 
+
+## 91.8. Como foi executado: subagent-driven-development (SDD), passo a passo
+
+A feature foi construida com a skill `subagent-driven-development`: um subagente IMPLEMENTER fresco por task (contexto isolado, so o brief), seguido de um REVIEWER independente, e um review final de branch inteira. Um ledger em `.superpowers/sdd/<plano>/progress.md` rastreou o progresso (sobrevive a compactacao de contexto). Modelos escolhidos por custo/risco (o mais capaz, opus, so onde decide dinheiro).
+
+- **Task 1 (flag `vendaNaoCarregada`).** Implementer sonnet: TDD (2 testes RED antes, GREEN depois), commit `42217a4`, 793/793. Reviewer sonnet: veredito "Spec compliant / Approved", zero Critical/Important; dois Minor opcionais (uma assercao extra num teste pre-existente; a assercao `!a[0].vendaNaoCarregada` aceitar undefined/false, texto vindo do proprio brief). Registrados como deferred no ledger.
+- **Task 2 (trava + aviso).** Implementer sonnet: 4 mudancas em `app/fechamentos/page.tsx` localizadas por texto-ancora, commit `8063dc6`, tsc limpo + 793/793. Reviewer OPUS (por tocar o botao Confirmar = dinheiro): "Spec compliant / Approved"; conferiu byte a byte que o ramo "venda carregada" (flag falsy) reproduz o comportamento original nos 4 pontos, e que o check de "% valido" e identico ao de `deducoesDetalhadas`. Uma finding "Important, plan-mandated": a duplicacao intencional do check (apresentada ao dono no pre-flight, aceita, registrada com ruling no ledger).
+- **Review final de branch (opus).** Veredito "Ready to merge = Yes", zero Critical/Important. Um unico Minor: a trava disparava indevidamente e o banner mentia no sub-caso "venda nao carregada MAS com origem de fechamento anterior" (o split ali vem da origem, correto, nao e 50/50).
+- **Fix round 1 (do Minor do review final).** Resume do mesmo implementer da Task 2, commit `8398f3a`: condicao passou a ser `a.vendaNaoCarregada && !divisaoOriginalDoAlerta(a, closings)` nos 4 pontos. Re-review scoped (sonnet): "All findings addressed, no new breakage"; confirmou tambem que nao ha falso negativo na trava e que os dois `divisaoOriginalDoAlerta` (predicado e render) recebem o mesmo `a`/`closings` (funcao pura, sem divergencia).
+
+## 91.9. Merge, deploy e verificacao (finishing-a-development-branch)
+
+Executado com a skill `finishing-a-development-branch`, com evidencia fresca em cada passo (nao "deve ter funcionado"):
+- **Suite completa na arvore a integrar:** `npm test` = **793 pass / 0 fail**; `npx tsc --noEmit` exit 0.
+- **Divergencia conferida antes de mergear:** `main` == `origin/main` (0/0); a branch estava ESTRITAMENTE a frente (`HEAD..main` = 0 commits), entao o merge foi **fast-forward limpo**, sem conflito. A branch ja continha o auth (mergeado antes), confirmado no historico.
+- **Merge local** `feat/correcoes-fechamento` -> `main`: fast-forward para `8f36847` (13 arquivos no resumo do ff: os specs/planos + o codigo). **Testes no resultado merjado:** 793/793 + tsc exit 0 (rodados DE NOVO na main, nao reaproveitados da branch).
+- **Push:** `e9a2ce2..8f36847  main -> main`; `main` e `origin/main` em sync (0/0).
+- **Deploy Vercel (producao):** disparado pelo push. Monitorado pelo status do commit no GitHub (a Vercel posta o status): `pending` -> `pending` -> **`success`** ("Deployment has completed") em ~30s. Verificado no ar, nao apenas disparado.
+- **Cleanup:** branch `feat/correcoes-fechamento` deletada (`git branch -d`, merge confirmado); workspace do SDD (`.superpowers/sdd/2026-09-17-...`) removido (o historico do git e o registro agora).
+
+O que foi para producao NESTE deploy: as **11 correcoes do Fechamento** da rodada anterior (cambio, busca por periodo, reembolsos movidos para a etapa Repasse, regra 65/35 do Pedro, toggle da reserva de caixa, empresa absorve o prejuizo do periodo) MAIS **este aviso** (trava + venda nao carregada). Tudo na mesma branch, um deploy so.
+
+## 91.10. Tabela de commits (rastreabilidade)
+
+| Commit | Tipo | O que e |
+|---|---|---|
+| `d40b634` | docs | spec do aviso (`docs/superpowers/specs/2026-09-16-aviso-reembolso-venda-nao-carregada-design.md`) |
+| `3b2654c` | docs | plano de implementacao (`docs/superpowers/plans/2026-09-17-...`) |
+| `42217a4` | feat | Task 1: flag `vendaNaoCarregada` (tipo + lib + 2 testes) |
+| `8063dc6` | feat | Task 2: trava do Confirmar + aviso (etiqueta, borda, banner) |
+| `8398f3a` | fix | fix round 1: nao travar quando ha origem de fechamento anterior |
+| `8f36847` | docs | este item 91 no `spr-digital.md` |
+
+Stat da feature do aviso (`3b2654c..8f36847`, sem contar as 11 correcoes): `app/fechamentos/page.tsx` +39/-4, `lib/alertas-reembolso-parcial.ts` +4, `lib/alertas-reembolso-parcial.test.ts` +18, `types/index.ts` +9, `spr-digital.md` +70. Total 5 arquivos.
+
+## 91.11. Item de teste em aberto (nao afeta producao)
+
+Na validacao visual, semeei uma venda extra (`venda-extra-set`, 08/09/2026) para ter `periodSales > 0` e isolar a trava do meu predicado do `periodSales === 0`. Ela nao apareceu no periodo de setembro na tela (motivo nao investigado a fundo - possivelmente selecao de produto/periodo no wizard). Nao bloqueou a validacao: o BANNER e proxy direto do predicado `reembolsoComVendaNaoCarregada` (o botao Confirmar le a mesma variavel), e o banner ligou/desligou corretamente (marcar -> liga; digitar % manual -> desliga). A venda extra foi removida do espelho ao fim. E curiosidade de fixture de teste, sem efeito em producao.
