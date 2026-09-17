@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, descricaoDoPrejuizoNoCaixa,
-  divisaoDeMentoriaPedro,
+  divisaoDeMentoriaPedro, totalAbsorvidoPelaEmpresa,
 } from './rateio-das-deducoes'
 
 const SPR = 'SPR DIGITAL LTDA'
@@ -293,4 +293,24 @@ test('escolha manual sobrepoe tudo, inclusive mentoriaPedro', () => {
   const manual = { 'SPR DIGITAL LTDA': 20, 'Pedro Roncada': 80 }
   const r = divisaoQueVale({ origem: null, escolhaManual: manual, mentoriaPedro: MP, divisaoDoFechamento: F })
   assert.deepEqual(r, { divisao: manual, fonte: 'manual' })
+})
+
+test('totalAbsorvidoPelaEmpresa: soma reembolsos + prejuizo do periodo', () => {
+  const t = totalAbsorvidoPelaEmpresa({
+    reembolsos: [{ valor: 1560 }, { valor: 2588.70 }],
+    prejuizoPeriodo: 1798.85,
+  })
+  assert.equal(Math.round(t * 100) / 100, 5947.55)
+})
+
+test('totalAbsorvidoPelaEmpresa: so reembolsos (sem prejuizo)', () => {
+  assert.equal(totalAbsorvidoPelaEmpresa({ reembolsos: [{ valor: 100 }, { valor: 50 }], prejuizoPeriodo: 0 }), 150)
+})
+
+test('totalAbsorvidoPelaEmpresa: so prejuizo (sem reembolsos)', () => {
+  assert.equal(totalAbsorvidoPelaEmpresa({ reembolsos: [], prejuizoPeriodo: 1798.85 }), 1798.85)
+})
+
+test('totalAbsorvidoPelaEmpresa: nada absorvido = 0', () => {
+  assert.equal(totalAbsorvidoPelaEmpresa({ reembolsos: [], prejuizoPeriodo: 0 }), 0)
 })

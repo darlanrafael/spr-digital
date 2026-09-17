@@ -216,3 +216,17 @@ export function descricaoDoPrejuizoNoCaixa(params: {
     ...linhas,
   ].join('\n')
 }
+
+/**
+ * Total que a EMPRESA absorveu num fechamento: a soma dos reembolsos que ela
+ * pagou (em vez de descontar dos socios) MAIS o prejuizo do periodo que ela
+ * absorveu. Os dois sao toggles independentes na tela; aqui so somam para o
+ * relatorio. `prejuizoPeriodo` entra como >= 0 (e um valor absoluto de prejuizo).
+ */
+export function totalAbsorvidoPelaEmpresa(params: {
+  reembolsos: { valor: number }[]
+  prejuizoPeriodo: number
+}): number {
+  const totalReembolsos = params.reembolsos.reduce((t, r) => t + r.valor, 0)
+  return totalReembolsos + Math.max(0, params.prejuizoPeriodo)
+}
