@@ -597,8 +597,8 @@ function FechamentosContent() {
   // produto antigo, então a conferência do usuário contra o painel não fecha
   // sem que alguém explique a diferença.
   const readequacoes = useMemo(
-    () => readequacoesDoPeriodo({ inicio: periodo.inicio, fim: periodo.fim }),
-    [periodo.inicio, periodo.fim],
+    () => readequacoesDoPeriodo({ inicio: periodo.inicio, fim: periodo.fim, produtosSelecionados: selectedProducts }),
+    [periodo.inicio, periodo.fim, selectedProducts],
   )
 
   // Quais reembolsos o usuário aceitou abater NESTE fechamento.
