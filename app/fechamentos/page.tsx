@@ -2751,24 +2751,6 @@ function ClosingCard({ closing }: { closing: Closing }) {
       {expanded && (
         <div className="border-t border-white/10">
 
-            {readequacoesDoFechamento.length > 0 && (
-              <div className="mt-1 mb-3 bg-sky-500/10 border border-sky-500/30 rounded-lg p-3">
-                <p className="text-xs font-semibold text-sky-300">
-                  Venda{readequacoesDoFechamento.length !== 1 ? 's' : ''} atribuida{readequacoesDoFechamento.length !== 1 ? 's' : ''} de outro produto ({readequacoesDoFechamento.length})
-                </p>
-                <ul className="mt-2 space-y-1.5 text-[11px] text-gray-300">
-                  {readequacoesDoFechamento.map(r => (
-                    <li key={r.saleId}>
-                      {formatDate(r.data)} · {r.cliente} · {formatCurrency(r.valor)} - na plataforma consta{' '}
-                      <span className="text-amber-400">{r.produtoNaPlataforma}</span>, no sistema conta como{' '}
-                      <span className="text-emerald-400">{r.produtoNoSistema}</span>
-                      <p className="text-gray-500 mt-0.5">{r.motivo}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
 
           {/* Faixa de contexto — o período apurado tem que estar visível junto
               dos números que ele gerou. Antes só existia no cabeçalho do card,
@@ -2952,6 +2934,24 @@ function ClosingCard({ closing }: { closing: Closing }) {
             </div>
           )}
 
+
+          {readequacoesDoFechamento.length > 0 && (
+            <div className="mt-1 mb-3 bg-sky-500/10 border border-sky-500/30 rounded-lg p-3">
+              <p className="text-xs font-semibold text-sky-300">
+                Venda{readequacoesDoFechamento.length !== 1 ? 's' : ''} atribuida{readequacoesDoFechamento.length !== 1 ? 's' : ''} de outro produto ({readequacoesDoFechamento.length})
+              </p>
+              <ul className="mt-2 space-y-1.5 text-[11px] text-gray-300">
+                {readequacoesDoFechamento.map(r => (
+                  <li key={r.saleId}>
+                    {formatDate(r.data)} · {r.cliente} · {formatCurrency(r.valor)} - na plataforma consta{' '}
+                    <span className="text-amber-400">{r.produtoNaPlataforma}</span>, no sistema conta como{' '}
+                    <span className="text-emerald-400">{r.produtoNoSistema}</span>
+                    <p className="text-gray-500 mt-0.5">{r.motivo}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Seção 2 — Detalhamento por produto */}
           {closing.byProduct && closing.byProduct.length > 0 && (
