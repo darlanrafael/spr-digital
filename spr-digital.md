@@ -5348,3 +5348,34 @@ Revisao: implementer fresco por task + reviewer independente (opus na Task 2 e n
 ## 92.5. Estado
 
 Producao (main `b3b8c7a`), deploy Vercel `success`. Retroativo: fechamentos confirmados que tiveram absorcao (reembolsos e/ou prejuizo do periodo) passam a mostrar o total certo e o bloco, sem migracao. O fechamento `close_1789618364181` do dono agora exibe "R$ 5.947,55 absorvido pela empresa" e o detalhamento.
+
+---
+
+# 93. Aviso de readequacao filtrado pelos produtos selecionados
+
+**Data:** 17/09/2026. **Arquivos:** `lib/readequacoes-produto.ts`, `app/fechamentos/page.tsx`, `lib/readequacoes-produto.test.ts`. **Spec:** `docs/superpowers/specs/2026-09-17-readequacao-gated-por-produto-design.md`. **Plano:** `docs/superpowers/plans/2026-09-17-readequacao-gated-por-produto.md`. **Commits:** `77baa23` (lib+testes), `85982f6` (tela). **Deploy:** Vercel `success` no `85982f6`. Sem mudanca de calculo/Caixa/banco - so QUANDO o aviso aparece.
+
+## 93.1. O problema (achado pelo dono num fechamento real)
+
+O aviso "Conferencia com a plataforma: N venda mudou de produto" (readequacoes) aparecia sempre que a data da venda caia na janela do fechamento, INDEPENDENTE dos produtos selecionados no filtro. `readequacoesDoPeriodo({ inicio, fim })` filtrava so por data. Resultado: fechando produtos que nao tinham nada a ver com a readequacao, o aviso da Paula Caroline (Diagnostico Guiado) aparecia como ruido.
+
+## 93.2. A regra (decisao do dono)
+
+Cada readequacao envolve DOIS produtos: o que a plataforma (Hubla) ainda mostra (`produtoNaPlataforma`, ex "Mentoria Particular - Pedro Roncada") e o que o sistema passou a contar (`produtoNoSistema`, ex "Diagnostico Guiado..."). Os dois estao envolvidos na mesma venda. Nas palavras do dono: "quando um ou outro produto for selecionado, tanto faz, o alerta vem; se nenhum dos dois estiver selecionado, nao aparece".
+
+Regra: a readequacao so entra se `produtosSelecionados.includes(produtoNaPlataforma) || produtosSelecionados.includes(produtoNoSistema)` (alem do filtro de data que ja existia).
+
+## 93.3. A implementacao (SDD: 2 tasks)
+
+- **Task 1 (`77baa23`):** `readequacoesDoPeriodo` ganhou o parametro opcional `produtosSelecionados?: string[]`. Quando fornecido, filtra pela regra OR acima; quando `undefined`, comportamento ORIGINAL (so data) - preserva os testes antigos. 5 testes novos (produto no sistema, produto na plataforma, nenhum dos dois, array vazio, undefined).
+- **Task 2 (`85982f6`):** a tela passa `produtosSelecionados: selectedProducts` no `useMemo` de `readequacoes`, com `selectedProducts` nas dependencias.
+
+Match por string exata (`includes`), a mesma convencao que o fechamento ja usa para `selectedProducts.includes(s.produto)` e que ~15 arquivos usam para esses nomes de produto. Review final: "Ready to merge = Yes". `tsc` limpo; `npm test` 803/803.
+
+## 93.4. Validacao rodando (navegador real contra o espelho)
+
+Periodo cobrindo 28/08 (data da venda da Paula): com "Mentoria Particular - Pedro Roncada" (o produtoNaPlataforma) selecionado, o aviso de readequacao APARECE na etapa Confirmar; com "Nenhum" produto selecionado, o aviso SOME. O gating por produto funciona na tela.
+
+## 93.5. Estado
+
+Producao (main `85982f6`), deploy Vercel `success`. O aviso de readequacao agora respeita o filtro de produtos: so aparece quando um dos dois produtos envolvidos esta em apuracao.
