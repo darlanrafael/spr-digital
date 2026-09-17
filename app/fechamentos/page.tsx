@@ -668,6 +668,22 @@ function FechamentosContent() {
   /** O numero que REALMENTE vai ser dividido entre os socios. */
   const lucroAposDeducoes = totalFatiaSocios - deducaoDosSocios
 
+  // Um reembolso marcado para abater, cuja venda nao carregou, rateia num 50/50
+  // chutado. Trava o fechamento ate o usuario resolver: refresh (a venda carrega
+  // e volta o 65/35) ou % digitado na mao (escolha manual sobrepoe). Se a empresa
+  // absorve, o split nao importa (sai do caixa), entao nao trava.
+  // A validade do % repete a regra de `escolhaManual` em deducoesDetalhadas.
+  const reembolsoComVendaNaoCarregada = !empresaAbsorve && alertasSelecionados.some(a => {
+    if (!a.vendaNaoCarregada) return false
+    const chave = chaveAlerta(a) ?? ''
+    const digitado = divisaoManualDoAlerta[chave]
+    const pct = digitado !== undefined && String(digitado).trim() !== ''
+      ? Number(String(digitado).replace(',', '.'))
+      : null
+    const temManual = pct !== null && Number.isFinite(pct) && pct >= 0 && pct <= 100
+    return !temManual
+  })
+
   // As contas que TEM que fechar, conferidas na propria tela.
   //
   // Teste pega o caso que eu imaginei; pre-voo pega o padrao que eu ja errei.
@@ -1813,13 +1829,15 @@ function FechamentosContent() {
                                           placeholder={String(pctAtual)}
                                           onChange={e => setDivisaoManualDoAlerta(v => ({ ...v, [chave]: e.target.value }))}
                                           disabled={!marcado || empresaAbsorve}
-                                          className="w-12 bg-gray-900 border border-white/15 rounded px-1 py-0.5 text-[11px] text-white text-right disabled:opacity-40"
+                                          className={`w-12 bg-gray-900 border rounded px-1 py-0.5 text-[11px] text-white text-right disabled:opacity-40 ${a.vendaNaoCarregada ? 'border-red-500' : 'border-white/15'}`}
                                           aria-label={`Percentual da ${SOCIO_NAMES[0]} no estorno de ${a.nome}`}
                                         />
                                         <span className="text-[10px] text-gray-500">/ {100 - pctAtual}</span>
                                       </div>
-                                      <span className="text-[9px] text-gray-600">
-                                        {empresaAbsorve
+                                      <span className={`text-[9px] ${a.vendaNaoCarregada ? 'text-red-400 font-semibold' : 'text-gray-600'}`}>
+                                        {a.vendaNaoCarregada
+                                          ? 'venda nao carregada - dê refresh ou digite o %'
+                                          : empresaAbsorve
                                           ? 'empresa paga'
                                           : det?.fonte === 'manual' ? 'você definiu'
                                           : det?.fonte === 'mentoria' ? 'mentoria do Pedro (65/35)'
@@ -1853,6 +1871,16 @@ function FechamentosContent() {
                           </tr>
                         </tfoot>
                       </table>
+                      {reembolsoComVendaNaoCarregada && (
+                        <div className="m-4 rounded-lg bg-red-500/15 border border-red-500/40 p-3">
+                          <p className="text-xs font-semibold text-red-300">Venda de um reembolso nao carregada</p>
+                          <p className="text-[11px] text-gray-300 mt-1">
+                            O rateio automatico desse reembolso pode estar errado (caiu no 50/50 porque o produto da
+                            venda nao pode ser identificado). Dê um refresh na pagina para carregar a venda, ou digite
+                            o % manualmente na coluna "Quem absorve". O fechamento fica travado ate resolver.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2323,7 +2351,7 @@ function FechamentosContent() {
                         Voltar
                       </button>
                       {canEdit && (
-                        <button onClick={handleConfirm} disabled={periodSales.length === 0 || conferencia.naoConvertidas.length > 0}
+                        <button onClick={handleConfirm} disabled={periodSales.length === 0 || conferencia.naoConvertidas.length > 0 || reembolsoComVendaNaoCarregada}
                           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors font-semibold">
                           <CheckCircle className="w-4 h-4" /> ✓ Confirmar fechamento
                         </button>
