@@ -129,7 +129,7 @@ test('os dois webhooks leem a moeda do payload', () => {
   // que a Kiwify passou meses com o campo `currency` chegando e sendo ignorado.
   for (const [arq, fn] of [
     ['lib/hubla-sale.ts', 'moedaDaHubla'],
-    ['app/api/webhooks/kiwify/route.ts', 'moedaDaKiwify'],
+    ['lib/kiwify-sale.ts', 'moedaDaKiwify'],
   ]) {
     const texto = readFileSync(new URL('../' + arq, import.meta.url), 'utf8')
     assert.ok(texto.includes(fn), `${arq} nao chama ${fn}`)
