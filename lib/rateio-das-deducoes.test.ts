@@ -314,3 +314,7 @@ test('totalAbsorvidoPelaEmpresa: so prejuizo (sem reembolsos)', () => {
 test('totalAbsorvidoPelaEmpresa: nada absorvido = 0', () => {
   assert.equal(totalAbsorvidoPelaEmpresa({ reembolsos: [], prejuizoPeriodo: 0 }), 0)
 })
+
+test('totalAbsorvidoPelaEmpresa: prejuizo negativo e clampado a 0 (nao subtrai)', () => {
+  assert.equal(totalAbsorvidoPelaEmpresa({ reembolsos: [{ valor: 100 }], prejuizoPeriodo: -500 }), 100)
+})
