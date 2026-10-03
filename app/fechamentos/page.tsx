@@ -22,6 +22,7 @@ import { precisaConverter } from '@/lib/moeda-da-venda'
 import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, divisaoDeMentoriaPedro, descricaoDoPrejuizoNoCaixa, totalAbsorvidoPelaEmpresa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
+import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { divisaoDoLucro } from '@/lib/base-da-reserva-de-caixa'
 import { invariantesDoFechamento } from '@/lib/invariantes-do-fechamento'
 import { PAGAMENTO_DENISE_POR_SESSAO } from '@/lib/diagnostico-guiado'
@@ -512,9 +513,16 @@ function FechamentosContent() {
       // VENDIDAS e nao as entregues.
       if (ehDiagnosticoGuiado(row.id)) {
         const r = repasseDoDiagnostico(vendasDaLinha[row.id] ?? [])
-        const denise = terapeutasComissao.find(t => t.nome.toLowerCase().includes('denise'))
+        // O terapeuta do Diagnostico vem do NOME DO PRODUTO (row.id): o produto
+        // "...- Leomir" e do Leomir, o produto sem nome e da Denise (default).
+        // Mesmo helper da rota de agendar. So o nome importa aqui, por isso o id
+        // do mapa e o proprio nome.
+        const principal = terapeutaPrincipalDoDiagnostico(
+          row.id,
+          terapeutasComissao.map(t => ({ id: t.nome, nome: t.nome })),
+        )
         const sessoes = r.porVenda.reduce((acc, v) => acc + v.sessoesDenise, 0)
-        row.terapeuta_nome = denise?.nome ?? 'Denise Nascimento'
+        row.terapeuta_nome = principal.terapeuta?.nome ?? 'Denise Nascimento'
         row.repasse_terapeuta = r.total
         row.repasse_detalhe = `${sessoes} sessões × ${formatCurrency(PAGAMENTO_DENISE_POR_SESSAO)}`
         continue

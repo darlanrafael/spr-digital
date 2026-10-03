@@ -9,6 +9,7 @@ import { buscarConflitosAgenda, buscarConflitosMultiTerapeuta, mensagemConflito,
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
+import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { validarDatasDoPacote, mensagemDoProblema } from '@/lib/datas-do-pacote'
 import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagendamento-total'
 
@@ -107,41 +108,43 @@ export async function POST(req: NextRequest) {
   }
 
   let pedroId: string | null = null
-  let deniseId: string | null = null
+  let terapeutaPrincipalId: string | null = null
   if (diagnostico) {
     // .order('nome'): sem ordem explícita o PostgREST devolve as linhas na
-    // ordem que quiser, e o laço abaixo sobrescreve a cada volta - com dois
-    // terapeutas ativos que casem com o mesmo nome, qual deles fica com as
-    // sessões mudaria de uma chamada pra outra, em silêncio. Ordenado, ao
-    // menos é sempre o mesmo; e ambiguidade vira erro em vez de sorteio.
+    // ordem que quiser, e o match por nome abaixo precisa ser estável - com
+    // dois Pedros ativos, qual deles fica com as sessões mudaria de uma
+    // chamada pra outra, em silêncio. Ordenado, ao menos é sempre o mesmo; e
+    // ambiguidade vira erro em vez de sorteio.
     const { data: ativos } = await client
       .from('terapeutas').select('id,nome').eq('ativo', true).order('nome', { ascending: true })
-    const candidatosPedro: { id: string; nome: string }[] = []
-    const candidatosDenise: { id: string; nome: string }[] = []
-    for (const t of (ativos ?? []) as { id: string; nome: string }[]) {
-      const n = t.nome.toLowerCase()
-      if (n.includes('pedro')) candidatosPedro.push(t)
-      if (n.includes('denise')) candidatosDenise.push(t)
-    }
-    // Match por substring é frágil por natureza (homônimo, sobrenome que
-    // contenha o nome). Se houver mais de um candidato, ninguém aqui tem
-    // como escolher certo: recusa e diz quem colidiu, pra alguém desativar
-    // ou renomear o cadastro duplicado.
-    const ambiguo = [
-      candidatosPedro.length > 1 ? `Pedro (${candidatosPedro.map(t => t.nome).join(', ')})` : null,
-      candidatosDenise.length > 1 ? `Denise (${candidatosDenise.map(t => t.nome).join(', ')})` : null,
-    ].filter(Boolean)
-    if (ambiguo.length > 0) {
+    const ativosList = (ativos ?? []) as { id: string; nome: string }[]
+
+    // O Pedro sempre pega as PRIMEIRAS sessões do pacote. Match por substring é
+    // frágil (homônimo, sobrenome que contenha o nome): mais de um -> recusa.
+    const candidatosPedro = ativosList.filter(t => t.nome.toLowerCase().includes('pedro'))
+    if (candidatosPedro.length > 1) {
       return NextResponse.json(
-        { error: `Mais de um terapeuta ativo bate com o nome esperado do Diagnóstico Guiado: ${ambiguo.join(' e ')}. Ajuste o cadastro antes de agendar.` },
+        { error: `Mais de um terapeuta ativo bate com "Pedro" (${candidatosPedro.map(t => t.nome).join(', ')}). Ajuste o cadastro antes de agendar.` },
         { status: 409 },
       )
     }
     pedroId = candidatosPedro[0]?.id ?? null
-    deniseId = candidatosDenise[0]?.id ?? null
-    if (!pedroId || !deniseId) {
+
+    // O terapeuta PRINCIPAL (as sessões não-Pedro) vem do NOME DO PRODUTO:
+    // "...- Leomir" -> Leomir; produto sem nome -> Denise (default histórico).
+    // Ver lib/terapeuta-do-diagnostico.ts. Produto que nomeia dois -> recusa.
+    const principal = terapeutaPrincipalDoDiagnostico(sale.produto as string, ativosList)
+    if (principal.ambiguo) {
       return NextResponse.json(
-        { error: 'Diagnostico Guiado precisa do Pedro e da Denise ativos como terapeutas.' },
+        { error: `O produto "${sale.produto}" nomeia mais de um terapeuta do Diagnóstico Guiado. Ajuste o nome do produto ou o cadastro antes de agendar.` },
+        { status: 409 },
+      )
+    }
+    terapeutaPrincipalId = principal.terapeuta?.id ?? null
+
+    if (!pedroId || !terapeutaPrincipalId) {
+      return NextResponse.json(
+        { error: 'Diagnóstico Guiado precisa do Pedro e do terapeuta do produto (ou a Denise, se o produto não nomear ninguém) ativos como terapeutas.' },
         { status: 409 },
       )
     }
@@ -153,8 +156,9 @@ export async function POST(req: NextRequest) {
     // assim criaria sessoes na agenda do OUTRO terapeuta, que nunca deu
     // consentimento nenhum. So passa quem e liberado para os dois ids ao
     // mesmo tempo - impossivel para uma terapeuta so, ja que pedroId e
-    // deniseId sao sempre pessoas diferentes.
-    if (!podeAgirNaSessao(quem, pedroId) || !podeAgirNaSessao(quem, deniseId)) {
+    // terapeutaPrincipalId sao sempre pessoas diferentes (o principal nunca e
+    // o Pedro: ver o filtro em terapeutaPrincipalDoDiagnostico).
+    if (!podeAgirNaSessao(quem, pedroId) || !podeAgirNaSessao(quem, terapeutaPrincipalId)) {
       return NextResponse.json(
         { error: 'O Diagnóstico Guiado agenda para os dois terapeutas - só comercial ou admin pode criar esse pacote.' },
         { status: 403 },
@@ -247,7 +251,9 @@ export async function POST(req: NextRequest) {
         formato: diagnostico,
         primeiraDataISO: new Date(primeiraDataMs).toISOString(),
         pedroId: pedroId!,
-        deniseId: deniseId!,
+        // `deniseId` e o param historico do montarPacote: na verdade e o
+        // terapeuta PRINCIPAL (nao-Pedro), que agora pode ser o Leomir.
+        deniseId: terapeutaPrincipalId!,
         datasISO: datasExplicitas,
       })
     : null
@@ -519,7 +525,7 @@ export async function POST(req: NextRequest) {
           terapeuta_id,
           diagnostico_formato: diagnostico?.formato,
           comissao_por_sessao_pedro: pacote.find(s => s.terapeuta_id === pedroId)?.comissao_valor ?? 0,
-          comissao_por_sessao_denise: pacote.find(s => s.terapeuta_id === deniseId)?.comissao_valor ?? 0,
+          comissao_por_sessao_denise: pacote.find(s => s.terapeuta_id === terapeutaPrincipalId)?.comissao_valor ?? 0,
           comissao_total_pacote: pacote.reduce((a, s) => a + s.comissao_valor, 0),
         }
       : {
