@@ -15,7 +15,7 @@ export function montarCatalogo(
   const mapa = new Map<string, { plataforma: string; produto_id: string; nomes: string[]; freq: Map<string, number> }>()
   for (const ev of eventos) {
     const p = extrair(ev.plataforma, ev.payload)
-    if (!p) continue
+    if (!p || !p.nome.trim()) continue
     const chave = `${p.plataforma}|${p.produto_id}`
     let linha = mapa.get(chave)
     if (!linha) { linha = { plataforma: p.plataforma, produto_id: p.produto_id, nomes: [], freq: new Map() }; mapa.set(chave, linha) }

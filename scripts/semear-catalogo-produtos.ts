@@ -7,7 +7,7 @@ async function main() {
   const BATCH = 1000
   for (let from = 0; ; from += BATCH) {
     const { data, error } = await sb.from('webhook_events')
-      .select('plataforma,payload').range(from, from + BATCH - 1)
+      .select('plataforma,payload').order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, from + BATCH - 1)
     if (error) throw error
     if (!data?.length) break
     for (const e of data) if (e.payload) eventos.push({ plataforma: e.plataforma, payload: e.payload })
@@ -15,20 +15,29 @@ async function main() {
   }
   const linhas = montarCatalogo(eventos)
   console.log('produtos no catálogo:', linhas.length)
+  let ok = 0
+  let falhas = 0
   for (const l of linhas) {
-    const { data: existente } = await sb.from('produtos_catalogo')
+    const rotulo = `${l.plataforma}/${l.produto_id}`
+    const falhou = (etapa: string, msg: string) => { falhas++; console.error(`FALHA ${etapa} em ${rotulo}: ${msg}`) }
+    const { data: existente, error: errSel } = await sb.from('produtos_catalogo')
       .select('id,nome_exibicao,nomes').eq('plataforma', l.plataforma).eq('produto_id', l.produto_id).maybeSingle()
+    if (errSel) { falhou('select', errSel.message); continue }
     if (existente) {
       const nomes = [...new Set([...(existente.nomes ?? []), ...l.nomes])]
-      await sb.from('produtos_catalogo').update({
+      const { error } = await sb.from('produtos_catalogo').update({
         nomes, nome_exibicao: existente.nome_exibicao || l.nome_exibicao, updated_at: new Date().toISOString(),
       }).eq('id', existente.id)
+      if (error) { falhou('update', error.message); continue }
     } else {
-      await sb.from('produtos_catalogo').insert({
+      const { error } = await sb.from('produtos_catalogo').insert({
         plataforma: l.plataforma, produto_id: l.produto_id, nome_exibicao: l.nome_exibicao, nomes: l.nomes,
       })
+      if (error) { falhou('insert', error.message); continue }
     }
+    ok++
   }
-  console.log('seeding concluído')
+  console.log(`seeding terminou: ${ok} ok, ${falhas} falharam`)
+  if (falhas > 0) process.exit(1)
 }
 main().catch(e => { console.error(e); process.exit(1) })
