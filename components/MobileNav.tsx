@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp, Calendar, Users, Heart } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp, Calendar, Users, Heart, Filter, Layers, Package } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 
 const NAV = [
@@ -12,6 +12,9 @@ const NAV = [
   { href: '/fechamentos', label: 'Fechamentos', icon: FileText },
   { href: '/caixa', label: 'Caixa', icon: Wallet },
   { href: '/analises', label: 'Análises', icon: TrendingUp },
+  { href: '/performance-funis', label: 'Perf. Funis', icon: Filter },
+  { href: '/performance-funis/funis', label: 'Funis', icon: Layers },
+  { href: '/performance-funis/produtos', label: 'Produtos', icon: Package },
 ]
 
 const TERAPEUTAS_NAV = [

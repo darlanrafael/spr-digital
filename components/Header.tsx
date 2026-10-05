@@ -18,6 +18,9 @@ const NAV_LINKS: NavLink[] = [
   { href: '/fechamentos', label: 'Fechamentos' },
   { href: '/caixa', label: 'Caixa' },
   { href: '/analises', label: 'Análises' },
+  { href: '/performance-funis', label: 'Performance de Funis' },
+  { href: '/performance-funis/funis', label: 'Funis' },
+  { href: '/performance-funis/produtos', label: 'Produtos de Funis' },
 ]
 
 const TERAPEUTAS_NAV: NavLink[] = [
