@@ -31,7 +31,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   const { id } = await params
   let body: unknown
   try { body = await req.json() } catch { return NextResponse.json({ error: 'JSON inválido' }, { status: 400 }) }
-  const v = validarFunil(body as never)
+  const v = validarFunil(body)
   if (!v.ok) return NextResponse.json({ error: v.erro }, { status: 400 })
   const sb = getSupabaseAdmin()
   const { data: funil, error } = await sb.from('funis')
