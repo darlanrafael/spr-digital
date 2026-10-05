@@ -18,7 +18,10 @@ const NAV_LINKS: NavLink[] = [
   { href: '/fechamentos', label: 'Fechamentos' },
   { href: '/caixa', label: 'Caixa' },
   { href: '/analises', label: 'Análises' },
-  { href: '/performance-funis', label: 'Performance de Funis' },
+]
+
+// Telas de Funis: as APIs exigem admin, então o link só aparece para admin.
+const FUNIS_NAV: NavLink[] = [
   { href: '/performance-funis/funis', label: 'Funis' },
   { href: '/performance-funis/produtos', label: 'Produtos de Funis' },
 ]
@@ -150,7 +153,10 @@ export default function Header() {
                 { href: '/terapeutas/admin', label: 'Admin' },
                 { href: '/terapeutas/aprovacoes', label: 'Aprovações', badge: aprovacoesPendentes },
               ] : []),
-            ] : NAV_LINKS).map(link => {
+            ] : [
+              ...NAV_LINKS,
+              ...(user?.role === 'admin' ? FUNIS_NAV : []),
+            ]).map(link => {
               const active = isTerapeutas
                 ? (link.href === '/terapeutas' ? pathname === '/terapeutas' : pathname.startsWith(link.href))
                 : pathname === link.href

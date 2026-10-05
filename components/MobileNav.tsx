@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp, Calendar, Users, Heart, Filter, Layers, Package } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp, Calendar, Users, Heart, Layers, Package } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 
 const NAV = [
@@ -12,7 +12,10 @@ const NAV = [
   { href: '/fechamentos', label: 'Fechamentos', icon: FileText },
   { href: '/caixa', label: 'Caixa', icon: Wallet },
   { href: '/analises', label: 'Análises', icon: TrendingUp },
-  { href: '/performance-funis', label: 'Perf. Funis', icon: Filter },
+]
+
+// Telas de Funis: as APIs exigem admin, então o link só aparece para admin.
+const FUNIS_NAV = [
   { href: '/performance-funis/funis', label: 'Funis', icon: Layers },
   { href: '/performance-funis/produtos', label: 'Produtos', icon: Package },
 ]
@@ -40,7 +43,7 @@ export default function MobileNav() {
           { href: '/terapeutas/admin', label: 'Admin', icon: Heart },
         ] : []),
       ]
-    : NAV
+    : [...NAV, ...(user?.role === 'admin' ? FUNIS_NAV : [])]
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-gray-900/95 backdrop-blur-md">
