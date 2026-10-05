@@ -28,3 +28,13 @@ test('parseHublaSale devolve null para fatura pai com filhos', () => {
   ev.invoice.childInvoiceIds = ['a', 'b']
   assert.equal(parseHublaSale(ev), null)
 })
+
+test('parseHublaSale grava produto_id do produto-base (não o offer id)', () => {
+  const event = {
+    product: { id: 'BASE123', name: 'Produto X' },
+    products: [{ offers: [{ id: 'OFFER999' }] }],
+    invoice: { id: 'inv1', payer: {}, amount: {}, receivers: [], paymentSession: { utm: {} }, saleDate: '2026-10-01T00:00:00Z' },
+  }
+  const r = parseHublaSale(event)
+  assert.equal(r?.sale.produto_id, 'BASE123')
+})

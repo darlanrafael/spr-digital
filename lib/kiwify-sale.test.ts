@@ -17,3 +17,8 @@ test('parseKiwifySale monta a venda com os valores certos', () => {
   assert.equal(sale.valor_liquido, 350)
   assert.equal(sale.order_id, 'kw-1')
 })
+
+test('parseKiwifySale grava produto_id', () => {
+  const order = { Product: { product_id: 'KW1', product_name: 'P' }, Customer: {}, Commissions: {}, TrackingParameters: {}, order_id: 'o1' }
+  assert.equal(parseKiwifySale(order).produto_id, 'KW1')
+})
