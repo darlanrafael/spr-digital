@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, TrendingUp, Calendar, Users, Heart, Layers, Package } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, Calendar, Users, Heart, Layers, Package } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 
 const NAV = [
@@ -11,7 +11,6 @@ const NAV = [
   { href: '/dre', label: 'DRE', icon: BarChart2 },
   { href: '/fechamentos', label: 'Fechamentos', icon: FileText },
   { href: '/caixa', label: 'Caixa', icon: Wallet },
-  { href: '/analises', label: 'Análises', icon: TrendingUp },
 ]
 
 // Telas de Funis: as APIs exigem admin, então o link só aparece para admin.

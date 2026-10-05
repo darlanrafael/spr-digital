@@ -17,7 +17,6 @@ const NAV_LINKS: NavLink[] = [
   { href: '/dre', label: 'DRE' },
   { href: '/fechamentos', label: 'Fechamentos' },
   { href: '/caixa', label: 'Caixa' },
-  { href: '/analises', label: 'Análises' },
 ]
 
 // Telas de Funis: as APIs exigem admin, então o link só aparece para admin.
