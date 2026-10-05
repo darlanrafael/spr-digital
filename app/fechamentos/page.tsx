@@ -23,6 +23,7 @@ import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, divisaoDeMen
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
 import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
+import { terapeutaDaComissao } from '@/lib/terapeuta-da-comissao'
 import { divisaoDoLucro } from '@/lib/base-da-reserva-de-caixa'
 import { invariantesDoFechamento } from '@/lib/invariantes-do-fechamento'
 import { PAGAMENTO_DENISE_POR_SESSAO } from '@/lib/diagnostico-guiado'
@@ -231,8 +232,9 @@ function FechamentosContent() {
       })
   }, [])
   function matchTerapeutaComissao(produtoNome: string): { nome: string; percentual_comissao: number } | null {
-    const lower = produtoNome.toLowerCase()
-    return terapeutasComissao.find(t => lower.includes(t.nome.trim().split(' ')[0].toLowerCase())) ?? null
+    // Num produto "Pedro | X" a comissao e de X (o Pedro e socio, 0%), nao do
+    // primeiro nomeado na ordem da lista. Ver lib/terapeuta-da-comissao.ts.
+    return terapeutaDaComissao(produtoNome, terapeutasComissao)
   }
 
   function addTermoTrafego() {

@@ -21,7 +21,9 @@ test('fechamento anterior a venda nao mostra a readequacao', () => {
 })
 
 test('fechamento posterior tambem nao mostra: a conferencia daquele periodo ja bate', () => {
-  assert.equal(readequacoesDoPeriodo({ inicio: '2026-09-01', fim: '2026-09-30' }).length, 0)
+  // Lista de teste propria (nao a real), pra o teste nao quebrar quando entram
+  // readequacoes novas em outros meses (ex.: a do Diego em 28/09/2026).
+  assert.equal(readequacoesDoPeriodo({ inicio: '2026-09-01', fim: '2026-09-30', readequacoes: [r({ data: '2026-08-28' })] }).length, 0)
 })
 
 test('as bordas do periodo entram', () => {

@@ -36,6 +36,16 @@ export const READEQUACOES_PRODUTO: ReadequacaoProduto[] = [
     plataforma: 'Hubla',
     motivo: 'O comercial fechou um Diagnóstico Guiado por uma oferta criada dentro do produto de Mentoria. Corrigido em 02/09/2026, com o formato confirmado pelo usuário.',
   },
+  {
+    saleId: '95be7a74-9f57-49bd-912f-36e73309b145',
+    cliente: 'Diego Rizzo Bruno',
+    produtoNaPlataforma: 'Mentoria Particular - Pedro | Denise',
+    produtoNoSistema: 'Mentoria Particular - Pedro | Leomir',
+    data: '2026-09-28',
+    valor: 550,
+    plataforma: 'Hubla',
+    motivo: 'Venda feita pela oferta/link da Denise (Mentoria Particular - Pedro | Denise), mas era do Leomir. Produto corrigido no sistema para a Mentoria do Leomir em 05/10/2026, a pedido do dono.',
+  },
 ]
 
 /**
