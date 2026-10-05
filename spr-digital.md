@@ -5583,6 +5583,20 @@ A conexao com o Meta ja existe (`lib/meta.ts`, token `META_ACCESS_TOKEN`, 5 cont
 - Ligar vendas/faturamento/taxas/imposto/repasse do banco (mesma logica de `lib/formatters.ts`).
 - Deploy em producao depois de aprovado.
 
+## 100.6. Campos da Meta PROVADOS RODANDO (05/10/2026) - corrige o 100.4/100.5
+
+O dono colocou o `META_ACCESS_TOKEN` no `.env.local` local (copiado da Vercel; **aviso dado: rotacionar depois, apareceu no chat**). Rodei consultas reais contra a Graph API v19.0 (`act_<id>/campaigns?fields=name,insights.date_preset(last_30d){...}`). Resultado numa campanha real ("CSP_Vendas_Frio_Advantage_TesteConta", 30d): impressions 251.993, reach 171.358, unique_clicks 4.218, inline_link_clicks 3.958, spend 8.829,12.
+
+**Mapa de campos confirmado (todos retornam valor):**
+- Investido = `spend`
+- Impressoes = `impressions` ; Alcance = `reach`
+- Cliques unicos = `unique_clicks` ; cliques no link = `inline_link_clicks`
+- `actions[]` traz os eventos do funil: `landing_page_view`, `initiate_checkout`, `purchase`, `video_view`, `link_click` etc.
+
+**CTR = `unique_clicks` / `reach` x 100** (ex.: 4218/171358 = 2,46%). Confirmado.
+
+**Hook Rate - DECISAO NOVA (05/10/2026):** o campo literal `video_3_sec_watched_actions` **foi REMOVIDO** da API v19.0 (erro #100, "is not valid for fields param") - o 100.5 estava errado ao assumi-lo. Comparei os substitutos na mesma campanha (/ impressoes): `video_play_actions` 245.054 = 97,2% (so "video comecou", inutil); `actions.video_view` 67.480 = **26,8%**; ThruPlay (`video_thruplay_watched_actions`) 21.756 = 8,6%. **O dono escolheu `actions.video_view`** (historicamente a metrica de "reproducoes de 3 segundos" da Meta) -> **Hook Rate = `actions.video_view` / `impressions` x 100**. So VIDEO; imagem/carrossel mostram "-".
+
 ## 95.6. Adendo (18/09/2026): etiqueta restaurada e informativo pendente
 
 Ao aplicar a opcao B no `close_1789618364181` (item 95), eu **sobrescrevi por engano a etiqueta de identificacao** do dono, que era **"FECHAMENTO IAR"** (cor verde), trocando por um texto explicativo longo. O dono apontou. **Restaurado** "FECHAMENTO IAR" (verde) em producao e no espelho (confirmado via query e backup `BK_close_1789618364181.json`). Pendente, a pedido do dono: **mover o informativo** (reembolsos > lucro -> empresa absorveu R$ 507,75; socios zerados) do header **para dentro dos Detalhes** (dentro do box "O que a empresa absorveu"), via pequena mudanca de codigo derivando o texto dos numeros gravados - ainda a fazer/aprovar. Fica tambem o selo "6 devolucoes deduzidas dos socios" no header, efeito de como o caso foi representado na mao; a limpeza definitiva depende da correcao da regra (secao PENDENTE).
