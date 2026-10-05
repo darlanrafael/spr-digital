@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { eventoDoWebhook } from '@/lib/evento-do-webhook'
 import { parseHublaSale } from '@/lib/hubla-sale'
 import { parseKiwifySale } from '@/lib/kiwify-sale'
 
@@ -14,15 +15,15 @@ import { parseKiwifySale } from '@/lib/kiwify-sale'
 function alvoDoEvento(plataforma: string, body: Record<string, unknown>): { orderId: string; produtoId: string } | null {
   if (plataforma === 'hubla') {
     if (body.type !== 'invoice.payment_succeeded') return null
-    const event = body.event as Record<string, unknown> | undefined
-    if (!event) return null
+    if (!body.event) return null
+    const event = eventoDoWebhook(plataforma, body)
     const r = parseHublaSale(event)
     if (!r) return null // fatura pai
     const { order_id, produto_id } = r.sale
     return order_id && produto_id ? { orderId: order_id, produtoId: produto_id } : null
   }
   if (plataforma === 'kiwify') {
-    const order = (body.order as Record<string, unknown>) ?? body
+    const order = eventoDoWebhook(plataforma, body)
     if (order.webhook_event_type !== 'order_approved') return null
     const { order_id, produto_id } = parseKiwifySale(order)
     return order_id && produto_id ? { orderId: order_id, produtoId: produto_id } : null

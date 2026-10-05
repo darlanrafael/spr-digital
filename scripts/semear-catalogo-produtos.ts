@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { eventoDoWebhook } from '@/lib/evento-do-webhook'
 import { montarCatalogo } from '@/lib/funis/catalogo-dos-eventos'
 
 async function main() {
@@ -10,7 +11,7 @@ async function main() {
       .select('plataforma,payload').order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, from + BATCH - 1)
     if (error) throw error
     if (!data?.length) break
-    for (const e of data) if (e.payload) eventos.push({ plataforma: e.plataforma, payload: e.payload })
+    for (const e of data) if (e.payload) eventos.push({ plataforma: e.plataforma, payload: eventoDoWebhook(e.plataforma, e.payload) })
     if (data.length < BATCH) break
   }
   const linhas = montarCatalogo(eventos)
