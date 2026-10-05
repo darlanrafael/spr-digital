@@ -6,6 +6,8 @@ import { User, ChevronRight } from 'lucide-react'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import { getSupabaseClient } from '@/lib/supabase'
+import { getSession } from '@/lib/auth'
+import { destinoDaListaDeTerapeutas } from '@/lib/acesso-lista-terapeutas'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -48,15 +50,18 @@ export default function TerapeutasLista() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Admin do dashboard vê a lista inteira — mesma precedência do layout.
+    // Sem o `getSession()` aqui, o Pedro (admin E terapeuta, mesmo email) era
+    // expulso da lista pro próprio painel, mesmo o layout já o liberando.
+    let session: TerapeutaSession | null = null
     const raw = localStorage.getItem('terapeutas_session')
     if (raw) {
-      try {
-        const session = JSON.parse(raw) as TerapeutaSession
-        if (session.tipo === 'terapeuta' && session.terapeuta_id) {
-          router.replace(`/terapeutas/${session.terapeuta_id}`)
-          return
-        }
-      } catch { /* ignore */ }
+      try { session = JSON.parse(raw) as TerapeutaSession } catch { /* ignore */ }
+    }
+    const destino = destinoDaListaDeTerapeutas(!!getSession(), session)
+    if (destino) {
+      router.replace(destino)
+      return
     }
 
     async function load() {

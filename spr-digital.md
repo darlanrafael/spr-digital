@@ -5379,3 +5379,323 @@ Periodo cobrindo 28/08 (data da venda da Paula): com "Mentoria Particular - Pedr
 ## 93.5. Estado
 
 Producao (main `85982f6`), deploy Vercel `success`. O aviso de readequacao agora respeita o filtro de produtos: so aparece quando um dos dois produtos envolvidos esta em apuracao.
+
+## PENDENTE (17/09/2026) — Regra nao trata "reembolsos maiores que o lucro do periodo"
+
+**Achado** ao corrigir close_1789618364181. Hoje o codigo (finalizado 16/09) so zera os socios por absorcao quando `prejuizoAbsorvidoPeloPeriodo = empresaAbsorvePrejuizo && lucroReal < 0`, e `lucroReal` = faturamento liquido - custos, **sem incluir os reembolsos aceitos**. Entao, quando os reembolsos e que empurram o resultado pro negativo (lucro do periodo positivo, mas menor que os reembolsos), o app NAO absorve sozinho.
+
+**Caso real:** close_1789618364181, apos corrigir custos: lucro do periodo = +R$ 3.640,95, reembolsos retroativos "O Resgate" (6) = R$ 4.148,70 -> resultado real = **-R$ 507,75**. Tratado na mao (opcao B): lucro_real = -507,75, socios 0, empresa absorve 507,75, caixa ajustado.
+
+**Correcao pendente na regra** (nao feita agora, a pedido do usuario "coloca como pendente"): considerar os reembolsos aceitos no numero que decide a absorcao — ex.: usar `resultadoAposDeducoes = lucroReal - deducaoDosSocios` para acionar prejuizoAbsorvidoPeloPeriodo/zerar socios — para o app fazer sozinho o que foi feito na mao aqui.
+
+## 95. Correcao manual de 2 fechamentos confirmados (17/09/2026) — custo do Felipe duplicado + trafego no fechamento errado
+
+**Contexto:** o usuario ia fazer o repasse aos socios as 21h de 17/09 e pediu para corrigir dois fechamentos antes. Feito direto no banco de **producao** (jgpgvskrpjoplcocptdy), com backup, recalculo batendo a matematica do app, e verificacao. Backups em scratchpad: `BK_close_1789621356297.json`, `BK_close_1789618364181.json`, `BK_varcosts.json`, `BK_cashflow.json`.
+
+### O que estava errado
+1. O custo variavel **"TRAFEGO PERPETUO CCC - deducao retroativa do fechamento close_1786731068074 (14/08) = R$ 3.682,17"** (3.234,23 x 1,1385) estava lancado no **close_1789618364181**, mas o lugar certo era o **close_1789621356297**.
+2. No **close_1789618364181** o Felipe foi lancado 2x com mesmo valor (R$ 1.757,63): "COMISSAO O RESGATE - FELIPE" e "COMISSAO COMERCIAL FELIPE - IAR". A segunda e duplicata.
+
+### O que foi feito (6 operacoes)
+- `variable_costs` cv_1788986353317 (TRAFEGO 3.682,17): `fechamento_id` movido close_1789618364181 -> **close_1789621356297**.
+- `variable_costs` cv_1789085802866 (Felipe IAR 1.757,63): **excluida**.
+- Recalculo dos dois snapshots + ajuste do caixa (opcao B, ver abaixo).
+
+### close_1789621356297 (entra o TRAFEGO)
+Reserva segue 0 (a mentoria do Pedro joga a base da reserva pra negativo). custos_variaveis 0 -> **3.682,17**; custos_totais 30.703,56 -> **34.385,73**; lucro_bruto/lucro_real 5.186,71 -> **1.504,54**; repasse cada socio (50/50) 2.593,35 -> **R$ 752,27**. Sem lancamento no caixa.
+
+### close_1789618364181 (saem Felipe + TRAFEGO) — vira lucro, mas reembolsos o superam
+custos_variaveis 18.591,02 -> **13.151,22**; custos_totais 119.822,84 -> **114.383,04**; lucro do periodo (faturamento liq - custos) -1.798,85 -> **+3.640,95**.
+PORÉM os **6 reembolsos retroativos de "O RESGATE" = R$ 4.148,70** superam o lucro. Decisao do usuario (opcao B): os reembolsos entram no resultado -> **3.640,95 - 4.148,70 = -R$ 507,75** -> negativo -> **empresa absorve**, socios **R$ 0**.
+Representado no snapshot: lucro_real = **-507,75**, reserva 0, socios 0 com `empresaAbsorveuPrejuizoDoPeriodo=true`, os 6 alertas com `absorbidoPelaEmpresa=false` (pra o card mostrar exatamente "R$ 507,75 absorvido pela empresa" e o caixa lancar so o liquido), e etiqueta explicando. Isso deixa o badge "6 devolucoes deduzidas dos socios" no header — cosmetico; a etiqueta e o box "empresa absorveu R$ 507,75" explicam. A regra do codigo pra fazer isso sozinho ficou como PENDENTE (secao acima).
+
+### Caixa (opcao B)
+Os 2 lancamentos originais do #2 (reembolsos -4.148,70 em cf_1789618365701 e prejuizo do periodo -1.798,85 em cf_1789618365827) viraram **1 so**: cf_1789618365701 **excluido**; cf_1789618365827 atualizado para **-R$ 507,75** com descricao detalhada. Saldo do caixa: 5.751,27 -> **R$ 11.191,07** (9 lancamentos, era 10).
+
+### Repasse das 21h (o que pagar)
+- close_1789621356297: **R$ 752,27 SPR + R$ 752,27 Pedro**.
+- close_1789618364181: **R$ 0,00** (empresa absorveu R$ 507,75, socios zerados).
+
+### Verificacao
+Todos os totais reconferidos via query; soma das linhas de custo == total gravado nos dois; caixa recalculado; card renderizado (copia semeada no espelho) mostrando etiqueta, "R$ 507,75 absorvido", lucro_real -507,75, socios 0, e os 6 reembolsos listados. Em producao os 12 custos fixos seguem ligados (9.326,69), sem aviso de detalhe incompleto.
+
+# 94. Reconciliador de webhooks perdidos + alerta (17/09/2026)
+
+**Data:** 17/09/2026. **Toca dinheiro** (webhooks gravam vendas reais); a refatoracao foi byte-a-byte comportamento-preservado. **Arquivos novos:** `lib/hubla-sale.ts`, `lib/kiwify-sale.ts`, `lib/reconciliador.ts`, `lib/alerta-reconciliacao.ts`, `app/api/webhooks/reconciliar/route.ts`, `vercel.json`; testes `lib/hubla-sale.test.ts`, `lib/kiwify-sale.test.ts`, `lib/reconciliador.test.ts`. **Arquivos tocados:** `app/api/webhooks/hubla/route.ts`, `app/api/webhooks/kiwify/route.ts` (passam a chamar as funcoes puras). **Spec:** `docs/superpowers/specs/2026-09-17-reconciliador-webhooks-design.md`. **Processo:** brainstorming -> writing-plans -> subagent-driven-development, revisor independente (opus) por ser money-critical, review final do branch inteiro.
+
+## 94.1. O problema (achado num levantamento de producao)
+
+Duas vendas pagas na Hubla ("COMO SER PERDOADO", R$ 297 cada - Mauricio em 12/09 e Guilherme em 13/09) **nunca entraram no sistema**. Causa raiz **provada** no `webhook_events`: a Hubla ENVIOU o evento, o webhook TENTOU inserir, e o banco (Supabase) devolveu **"Gateway Timeout"** - o insert falhou (`resultado: insert_error`) e a venda se perdeu. Ao todo, **6 falhas de timeout** na historia: 4 da Kiwify (recuperadas sozinhas, porque a Kiwify **reenvia** o webhook) e 2 da Hubla (perdidas, porque a Hubla **nao reenvia**). Detalhe que viabiliza a solucao: **cada falha ja fica salva em `webhook_events` com o payload completo** (colunas plataforma, tipo_evento, resultado, sale_id, detalhe, payload jsonb), entao o dado pra recuperar a venda ja existe no banco.
+
+## 94.2. Objetivo e decisao do dono
+
+Que uma venda nunca mais se perca por timeout transitorio, com **recuperacao automatica** (auto-cura) e **visibilidade** (alerta). O dono escolheu **reconciliador + alerta**; retry sincrono dentro do webhook ficou fora de proposito.
+
+## 94.3. Componentes
+
+**1. Funcoes puras "payload -> venda" (compartilhadas pelo webhook E pelo reconciliador).** `parseHublaSale(event)` e `parseKiwifySale(order)` montam o objeto `sale` (tipo `SaleInsert`) EXATAMENTE como o webhook monta hoje - incluindo moeda internacional, offerItemId, canonicalParentId/orderId; `parseHublaSale` devolve `null` para os casos que o webhook ignora sem inserir (fatura pai com filhos). Restricao dura: a saida e identica a de hoje, travada por teste de fixture com payload real. Assim a venda recuperada e byte-a-byte igual a que o webhook teria gravado.
+
+**2. Endpoint `app/api/webhooks/reconciliar/route.ts`.** Fluxo: (a) le `webhook_events` onde `resultado IN ('insert_error','exception')` e tipo de pagamento; (b) reconstroi cada `sale` via `parseHublaSale`/`parseKiwifySale` pela `plataforma` do log; (c) checa existencia em `sales` por `order_id` (mesmo dedup do webhook); (d) **se falta**, insere; **se ja existe** (recuperada antes, ou pelo retry da Kiwify, ou o timeout na verdade inseriu mas a resposta estourou), pula; (e) marca os eventos tratados; (f) dispara o alerta se houve recuperada ou nao-recuperada. **Idempotente e seguro:** so INSERE venda que falta, nunca altera venda existente; read-only em todo o resto.
+
+**3. Logica pura `lib/reconciliador.ts`.** `decidirReinsercoes(eventos, orderIdsExistentes)` devolve `{ inserir, semOrderId, erros }`, com try/catch por evento e dedup interno (`vistos`) - dois eventos falhos da mesma venda nao viram duas insercoes.
+
+**4. Alerta `lib/alerta-reconciliacao.ts`.** `alertarReconciliacao(resumo)` best-effort (nunca derruba o reconciliador), POST para `process.env.N8N_RECONCILIACAO_WEBHOOK_URL` (se ausente, no-op), com AbortController de 5s. O n8n monta e envia o WhatsApp. Rodada sem nada a reportar = nenhuma chamada (sem ruido).
+
+**5. Cron `vercel.json`.** `{ "crons": [{ "path": "/api/webhooks/reconciliar", "schedule": "0 6 * * *" }] }` - diario as **06:00 UTC = 03:00 BRT**. O plano Hobby da Vercel **recusa cron sub-diario**; para recuperacao a cada 15 min usar um **cron externo** batendo no endpoint com o secret.
+
+## 94.4. Autenticacao (dois caminhos, sem duplicar logica)
+
+- **GET** (cron nativo da Vercel): exige `Authorization: Bearer ${CRON_SECRET}`. **Falha fechada:** sem a env `CRON_SECRET` configurada, responde 401 (nao roda aberto).
+- **POST** (cron externo / mesmo padrao do WhatsApp): `verificarSecretCron` de `lib/whatsapp-pendentes.ts`, header `x-whatsapp-cron-secret`.
+
+## 94.5. Os 4 achados do review final (opus, money-critical) - todos corrigidos
+
+- **CRITICAL (duplicacao de dinheiro):** a checagem de existencia usava `sales.select('order_id')` **sem filtro** - o PostgREST corta a resposta em ~1000 linhas (classe de defeito ja documentada no projeto), entao uma venda existente alem da linha 1000 seria vista como "faltando" e **reinserida em dobro**. Corrigido com checagem **limitada**: `sales.select('order_id').in('order_id', candidatos)`.
+- **IMPORTANT (cron nunca dispara):** faltava o caminho GET; adicionado GET + `CRON_SECRET` (cron nativo).
+- **IMPORTANT (poison pill):** um unico payload malformado derrubaria a varredura inteira; adicionado **try/catch por evento**.
+- **IMPORTANT (fadiga de alerta):** sem marcar os eventos ja tratados, toda rodada realertaria as mesmas falhas; agora marca `reconcile_recovered` / `reconcile_skipped_no_order_id` / `reconcile_parse_error` (e `reconcile_insert_error` quando a reinsercao falha de novo, deixando pra proxima rodada). Tudo re-revisado e re-validado no espelho.
+
+## 94.6. Validacao rodando (contra o ESPELHO, nunca escrita em producao no dev)
+
+Semeado um `webhook_events` de `insert_error` cuja venda NAO existe -> o reconciliador **insere a venda uma vez**; uma **segunda chamada NAO duplica** (idempotencia por `order_id`). Erros de seed corrigidos no caminho: UUID invalido no espelho ("ev-recon-test-0001" nao e hex) devolvia HTTP 400/22P02, refeito com UUID hex valido.
+
+## 94.7. Deploy
+
+Primeira tentativa de cron `*/15` fez o deploy da Vercel **falhar** (Hobby rejeita sub-diario). Trocado para diario `0 6 * * *` -> deploy `success`.
+
+## 94.8. Config PENDENTE (o dono precisa fazer na Vercel)
+
+- Setar `CRON_SECRET` (pro cron nativo GET autenticar).
+- Setar `N8N_RECONCILIACAO_WEBHOOK_URL` (pro alerta de WhatsApp).
+- Opcional: **cron externo a cada 15 min** batendo no endpoint com o secret, se quiser recuperacao mais rapida que o diario.
+- **Escopo:** o reconciliador previne perdas FUTURAS e recupera vendas que faltam na tabela `sales`. Ele **NAO edita fechamentos ja confirmados** - uma venda recuperada entra no faturamento dali pra frente (igual a venda que chega depois do corte). Consertar as 2 vendas ja perdidas DENTRO do fechamento `close_1789620878154` foi operacao manual separada (ver item 96).
+
+# 96. Vendas perdidas por timeout: apuracao e conserto manual dos fechamentos (17/09/2026)
+
+**Contexto:** o dono estava conferindo os fechamentos que fez na madrugada, cruzando o numero do sistema com o painel da plataforma (Hubla/Kiwify), e achou divergencias. Investigacao com a skill de systematic-debugging; conserto manual, com backup e recompute verificado.
+
+## 96.1. `close_1789621356297` (2 x 12 "Alianca Sagrada") - NAO era bug
+
+O fechamento mostrava **2** vendas de "Alianca Sagrada - Tudo que a biblia fala sobre o casamento", mas na plataforma constava um total de **12**. Apurado: as 12 vendas existem no sistema, so que **divididas 10 + 2 entre fechamentos** (10 cairam em outro fechamento do periodo, 2 neste). Nao havia venda perdida - a divisao por janela de periodo explica o numero. Conclusao do dono: "Certinho, acabei de ver aqui".
+
+## 96.2. `close_1789620878154` (453 no sistema x 456 na plataforma) - 2 vendas realmente perdidas
+
+O fechamento tinha **453** vendas; a plataforma mostrava **456** (diferenca de 3). O dono baixou a planilha da Hubla com as vendas aprovadas e reembolsadas do periodo e me passou pra analisar. Apuracao: **2 vendas genuinamente perdidas** - **Mauricio (12/09)** e **Guilherme (13/09)**, ambas "Como Ser Perdoado", R$ 297 - que sumiram pelo **Gateway Timeout** no insert do webhook (a mesma causa raiz do item 94). O dono observou, com razao, que 456 - 453 = 3 e so achamos 2; a terceira diferenca nao era venda aprovada faltando (fica como ponto de conferencia; o reconciliador do item 94 passa a evitar novas perdas e a dar visibilidade).
+
+## 96.3. O conserto manual (dinheiro, feito com cuidado)
+
+As 2 vendas foram inseridas no fechamento **ja confirmado** `close_1789620878154`: (1) linhas em `sales`; (2) os dados dos clientes na lista de **compradores** do fechamento; (3) recompute dos **agregados** do snapshot.
+
+**Descoberta que mudou o metodo (imposto drift):** ao tentar RECALCULAR o fechamento inteiro do zero pra validar, o imposto batia diferente do gravado (calculo ~R$ 17.159 contra ~R$ 15.836 guardados). Causa: **drift de `valor_com_juros` em vendas antigas** - recalcular tudo do zero nao reproduz o snapshot autoritativo. Por isso troquei para a abordagem **DELTA**: partir dos valores gravados (autoritativos) e somar **apenas a contribuicao das 2 vendas novas**, sem reprocessar o resto. Assim o conserto e cirurgico e nao introduz o drift do historico.
+
+**Efeito no lucro/repasse:** inserir vendas aumenta o faturamento e, na teoria, o lucro e o repasse dos socios daquele fechamento (ponto levantado pelo dono). O ajuste de repasse relacionado foi tratado a parte (ver item 97).
+
+# 97. `close_1789619715169`: repasse 50/50 -> 35/65 + aviso de atribuicao cruzada (17/09/2026)
+
+## 97.1. O ajuste do repasse
+
+O fechamento tinha ficado com o repasse **50% / 50%** entre os socios, mas o correto desse funil e **35% agencia / 65% Pedro**. Ajustado o repasse para 35/65. Garantido tambem que o **lancamento do reembolso** estivesse na mesma proporcao 35/65 (o dono pediu pra eu garantir isso, nao so concordar; **verifiquei** e o reembolso ja estava em 35/65, nao apenas afirmei).
+
+## 97.2. Reconciliacao do que ja foi pago (pendencia do dono)
+
+Se esse fechamento **ja tinha sido pago** 50/50 antes do ajuste, a diferenca precisa ser acertada entre os socios (a agencia/SPR pagou a mais e o Pedro recebeu a menos, ou vice-versa, conforme os valores) - operacao fora do sistema, a cargo do dono.
+
+## 97.3. Aviso de atribuicao cruzada (venda de um produto atribuida a oferta de outro)
+
+Caso real: o **Felipe vendeu um Diagnostico** usando uma **oferta criada dentro da Mentoria Particular do Pedro**. Como a Hubla identifica o produto pela OFERTA, a venda fica "atribuida de outro produto". Isso **precisa estar especificado nos dois fechamentos** (o do Diagnostico e o da Mentoria do Pedro), com o aviso de que aquela venda foi atribuida de outro produto - senao o relatorio mente e a conferencia com a plataforma nao bate. (E o mesmo mecanismo de readequacao dos itens 40, 93 e 98.)
+
+# 98. Bloco de readequacao no Historico do fechamento (derivado, retroativo) (17/09/2026)
+
+**Data:** 17/09/2026. **Arquivos:** `app/fechamentos/page.tsx`. **Spec:** `docs/superpowers/specs/2026-09-17-readequacao-no-historico-design.md`. **Plano:** `docs/superpowers/plans/2026-09-17-readequacao-no-historico.md`. **Commits:** `feat: bloco de readequacao no Historico (derivado, retroativo)` + 3 fixes de posicionamento. Sem mudanca de calculo/Caixa/banco - so exibicao.
+
+## 98.1. O que faltava
+
+O aviso de readequacao (item 93) so existia na tela de **montar** o fechamento (Confirmar). Nos fechamentos **ja confirmados** (Historico), o mesmo aviso nao aparecia - quem abrisse um fechamento antigo nao via que uma venda tinha mudado de produto naquela janela.
+
+## 98.2. A solucao
+
+Um `useMemo` `readequacoesDoFechamento` no `ClosingCard` que **deriva** as readequacoes a partir de `closing.periodo.inicio/fim` + `closing.produtos_incluidos` (chamando o mesmo `readequacoesDoPeriodo` do item 93). E **derivado e retroativo**: nao guarda nada novo no banco; qualquer fechamento cuja janela cobre uma venda readequada passa a mostrar o bloco automaticamente, com o mesmo gating por produto do item 93 (so aparece se um dos dois produtos envolvidos estiver no fechamento).
+
+## 98.3. Posicionamento (3 ajustes ate ficar certo, a pedido do dono)
+
+O bloco andou 3 vezes ate o lugar aprovado: (1) primeiro dentro da area expandida generica; (2) depois junto do "Detalhamento por produto" (dentro dos Detalhes, nao na visao inicial do card); (3) por fim **abaixo** do bloco "Detalhamento por produto". Ordem final na Secao de detalhes: Detalhamento por produto -> **bloco de readequacao** -> Repasse entre socios.
+
+# 99. Correcoes do fechamento (16/09/2026): 65/35 do Miguel na tela, reembolsos na etapa Repasse, toggle de Reserva, empresa absorve prejuizo, busca por periodo
+
+**Data:** 16/09/2026. **Arquivos:** `app/fechamentos/page.tsx`, `lib/base-da-reserva-de-caixa.ts`, `lib/rateio-das-deducoes.ts`, `lib/repasse-do-diagnostico.ts`. **Spec:** `docs/superpowers/specs/2026-09-16-correcoes-fechamento-design.md`. Complementa o item 92 (bloco "o que a empresa absorveu") e prepara o terreno da divisao dos socios usada nos itens 95 e 97.
+
+## 99.1. 65/35 da mentoria individual do Pedro sem origem (caso Miguel Pires)
+
+Ate 11/09 toda deducao de reembolso era rateada pelo percentual digitado NAQUELE fechamento (`alertasTotal * socioPercents[i] / 100`). O dono pegou o erro na tela: fechando o funil IAR a 50/50, o **reembolso parcial do Miguel Pires** - que e Mentoria Particular, combinada em **35/65** - foi rateado 50/50 junto, e a SPR absorvia ~R$ 234 a mais do que o acordado. Correcao: cada deducao passou a usar a **divisao do fechamento que PAGOU aquela venda** (`lib/rateio-das-deducoes.ts`); e um reembolso de mentoria individual do Pedro **sem origem** (sem fechamento anterior que case) passa a assumir **65/35** por padrao (a divisao correta da mentoria do Pedro), em vez do 50/50 chutado.
+
+## 99.2. Reembolsos/chargebacks movidos para a etapa Repasse
+
+Os reembolsos e chargebacks passaram a aparecer na **etapa Repasse** (antes da divisao dos socios), e nao mais soltos - porque e ali que eles impactam quem recebe. O checkbox "empresa absorve" foi junto pra mesma etapa.
+
+## 99.3. Toggle de Reserva de Caixa na tela
+
+`divisaoDoLucro` passou a aceitar `reservarCaixa` opcional (default `true`). Na tela de Fechamento, um toggle liga/desliga a reserva de 30%: desligado, os 100% do lucro que sofreria reserva vao direto pro Lucro Real (socios). O prejuizo nao muda com o toggle - reserva ja e 0 nos dois casos (nao ha como reservar 30% de valor negativo).
+
+## 99.4. Empresa absorve o prejuizo do periodo (toggle)
+
+Checkbox: quando marcado E o periodo deu prejuizo (`lucroReal < 0`), a EMPRESA absorve o prejuizo do periodo - a fatia de cada socio no prejuizo fica 0 (em vez de ratear a perda) e o valor integral sai do Caixa como despesa da empresa (`empresaAbsorveuPrejuizoDoPeriodo` marcado em cada socio). Independente do "empresa absorve" dos reembolsos: os dois toggles coexistem. **Limite conhecido:** so dispara com `lucroReal < 0`, e nao enxerga o caso "reembolsos maiores que o lucro do periodo" - ver a secao PENDENTE e o item 95, onde isso foi tratado na mao.
+
+## 99.5. Revisar bate com o Historico (Task 11) e busca por periodo
+
+Task 11: a tela **Revisar** passou a bater com `repasse_final` e a detalhar os reembolsos, e o **Historico** passou a mostrar o prejuizo absorvido pela empresa (mesmo `lucroReal` negativo). Tirada a nota de reembolsos do funil do Resumo (virou nota fora do funil). E adicionada **busca por nome** no bloco "Produtos deste periodo" (um campo por periodo).
+
+# 100. Performance de Funis - prototipo (Fase 1, dados ficticios) (18/09/2026)
+
+**Data:** 18/09/2026. **Arquivo novo:** `app/performance-funis/page.tsx`. **Tocados:** `components/Header.tsx`, `components/MobileNav.tsx` (item de menu novo). **Estado:** prototipo NAO commitado (esta na working tree), com **dados 100% ficticios**, so pra o dono ver layout/design e decidir antes de ligar dados reais. Processo: brainstorming (design proprio via skill frontend-design). Rodado no localhost apontando pro espelho, validado por screenshot.
+
+## 100.1. O pedido
+
+Uma pagina "Performance de Funis" (item de menu ao lado de Analises) com uma visao por produto isolado: tudo que o detalhamento de produto ja mostra, MAIS quanto foi investido em trafego daquele funil, quanto voltou em vendas e todas as deducoes - resultado liquido, ROAS, margem. E, por cima, um **funil de conversao visual** (referencia que o dono mandou por foto): Cliques no link -> Visualizacoes da pagina de destino -> Acessos ao checkout -> Vendas, com as taxas de conversao entre etapas, fechando no Faturamento.
+
+## 100.2. O que o prototipo tem
+
+- **Nav:** item "Performance de Funis" ao lado de "Analises" (desktop e mobile).
+- **Seletor de datas:** presets (Hoje / 7 dias / 30 dias) + janela De -> Ate funcional.
+- **Abas de funis** + botao "Adicionar funil" (o dono monta e edita os funis; a pagina comeca vazia).
+- **Funil de conversao** (faixas cinza + pilulas laranja de conversao, com silhueta de funil atras): Cliques -> Tx de carregamento -> Visualizacoes -> Tx de conversao da pagina -> Acessos ao checkout -> Tx de conversao do checkout -> Vendas -> Faturamento. Cada taxa e a etapa de baixo dividida pela de cima (conferido com os numeros da referencia: 73,99% / 9,21% / 20,30%).
+- **Resultado (cascata):** Bruto -> -taxas -> -imposto -> -repasse -> = antes do trafego -> -trafego (Meta) -> **Resultado liquido**; KPIs ROAS (bruto/trafego), Margem (liquido/bruto), Investido.
+- **Criativos:** tabela com TODOS os criativos do funil, em ordem **decrescente por volume de vendas**, com todas as metricas (Investido, Vendas, Faturamento, ROAS, CPA, CTR); o nº 1 destacado.
+- **Design (skill frontend-design):** tipografia Space Grotesk (numeros) + Inter (rotulos); duas cores com significado - **laranja = fluxo/volume** (o funil) e **verde-esmeralda = dinheiro que sobra** (liquido positivo), rosa = liquido negativo.
+
+## 100.3. Decisoes travadas
+
+- **Atribuicao de trafego -> produto:** por **termos de campanha** (a sigla/nome do produto na UTM), reaproveitando `getProjectInvestment(termos, dateStart, dateEnd)` da integracao Meta que ja existe.
+- **Onde salvam os funis:** no **banco** (tabela nova `funis`), nao no navegador - porque tudo (trafego, produtos, vendas via webhook) ja esta no banco; o trabalho e o layout.
+- **Vendas e faturamento** vem do NOSSO banco (mais confiavel); o **topo do funil** (cliques, visualizacoes, checkout) vem do Meta.
+
+## 100.4. Descoberta importante sobre a API do Meta (provado lendo o codigo)
+
+A conexao com o Meta ja existe (`lib/meta.ts`, token `META_ACCESS_TOKEN`, 5 contas, endpoint de Insights da Graph API v19.0), MAS hoje o codigo pede da Meta **so o campo `spend`** (o insights esta fixo em `insights...{spend}`). Para o topo do funil sera preciso **estender** a consulta pra pedir tambem `inline_link_clicks` (cliques no link), a acao `landing_page_view` (visualizacoes) e a acao `initiate_checkout` (acessos ao checkout). O token **nao esta na maquina** (so na Vercel), entao provar que a Meta devolve esses campos exige rodar uma consulta real - **nao afirmado por leitura**. O que a Meta realmente retorna depende do pixel disparar esses eventos.
+
+## 100.5. PENDENTE (Fase 2, quando o dono aprovar o visual)
+
+- Criar a tabela `funis` no banco + API (criar/editar/listar/excluir funil).
+- Estender `lib/meta.ts` para trazer cliques / landing_page_view / initiate_checkout (e provar rodando contra a Meta).
+- Metricas dos criativos - formulas DEFINIDAS PELO DONO em 03/10/2026:
+  - **CTR = cliques unicos / alcance x 100** -> campos Meta `unique_clicks` / `reach` (equivale ao `unique_ctr`).
+  - **Hook Rate = reproducoes de video de 3s / impressoes x 100** -> campos Meta `video_3_sec_watched_actions` / `impressions`. So VIDEO; imagem/carrossel mostram "-".
+  - Logo a extensao do `lib/meta.ts` precisa pedir tambem: `reach`, `unique_clicks`, `impressions`, `video_3_sec_watched_actions` (alem de spend / inline_link_clicks / landing_page_view / initiate_checkout). Provar rodando que a Meta devolve cada um.
+- Ligar vendas/faturamento/taxas/imposto/repasse do banco (mesma logica de `lib/formatters.ts`).
+- Deploy em producao depois de aprovado.
+
+## 95.6. Adendo (18/09/2026): etiqueta restaurada e informativo pendente
+
+Ao aplicar a opcao B no `close_1789618364181` (item 95), eu **sobrescrevi por engano a etiqueta de identificacao** do dono, que era **"FECHAMENTO IAR"** (cor verde), trocando por um texto explicativo longo. O dono apontou. **Restaurado** "FECHAMENTO IAR" (verde) em producao e no espelho (confirmado via query e backup `BK_close_1789618364181.json`). Pendente, a pedido do dono: **mover o informativo** (reembolsos > lucro -> empresa absorveu R$ 507,75; socios zerados) do header **para dentro dos Detalhes** (dentro do box "O que a empresa absorveu"), via pequena mudanca de codigo derivando o texto dos numeros gravados - ainda a fazer/aprovar. Fica tambem o selo "6 devolucoes deduzidas dos socios" no header, efeito de como o caso foi representado na mao; a limpeza definitiva depende da correcao da regra (secao PENDENTE).
+
+# OPERACIONAL (30/09/2026, ~21:50 BRT) — Denise: suspensao dos lembretes de 01/10 + comunicado aos pacientes
+
+**Motivo:** perda familiar da terapeuta **Denise Nascimento** (id `c3d598b0-2e43-4376-9492-9176169befe5`); atendimentos de **01/10/2026 suspensos**, retoma normal em **02/10**. Acao operacional pontual a pedido do dono (nao e mudanca de codigo).
+
+- **Suspensao (so 01/10, so a Denise):** marcadas as colunas `lembrete_paciente_30min_enviado_em` e `lembrete_grupo_30min_enviado_em` (sentinela `2026-10-01T00:50:41Z`) nas **3 sessoes agendadas** da Denise em 01/10 - Mario Cezar Da Luz (11:20 BRT), Marcio de Castro Fonseca (18:00), Valdir sabino (19:00). So o lembrete de **30min**; a **vespera ja tinha disparado** hoje (nao reversivel). **02/10 intacto.** Reversivel: nullar as duas colunas de volta. Mecanismo: `buscarPendentes` (lib/whatsapp-pendentes.ts) pula sessao com a coluna de controle preenchida.
+- **Comunicado:** mensagem (comunicado da suspensao, assinada "Denise") enviada por **Z-API** (`send-text`) aos 3 pacientes, **HTTP 200** em cada, com `zaapId`/`messageId` retornados. Numeros formatados pela propria regra do sistema `paraWhatsApp(normalizarTelefoneBR(...))`, provado rodando: `554299381842` (DDD 42, cai o 9), `558499913859` (DDD 84, cai o 9), `5511988056030` (DDD 11, mantem o 9). O app nao envia sozinho (quem envia e o n8n); por isso o disparo deste comunicado foi direto na Z-API.
+
+# 101. Diagnostico Guiado multi-terapeuta: rotear pelo NOME DO PRODUTO (02-03/10/2026)
+
+**Toca dinheiro** (comissao + repasse do fechamento). **Arquivos:** novo `lib/terapeuta-do-diagnostico.ts` (+ `.test.ts`); modificados `app/api/terapeutas/sessoes/agendar/route.ts` e `app/fechamentos/page.tsx`. **Branch:** `feat/diagnostico-multi-terapeuta`. **Commit:** `6fa3351` (merge fast-forward na `main`). **Processo:** brainstorming (regra + escopo) -> TDD -> prova e2e -> self-review -> deploy.
+
+## 101.1. O gatilho
+
+O dono cadastrou um **segundo terapeuta, Leomir Santos** (id `f6518ab1-920e-4f37-a093-7b915af74c1b`, criado 02/10, `percentual_comissao` **10%**, **sem `grupo_whatsapp_id`**), e criou na Hubla um **produto espelho** do Diagnostico com o nome dele: `Diagnóstico Guiado: Programa de acompanhamento Individual - Leomir`. Esperava que "duplicar o produto e por o nome dele" fizesse as vendas caírem pro Leomir. Entao **saiu a 1a venda** desse produto: **Lidia Hirt Stumm** (`sale_id` `f0bd7dfd-df50-45c0-abf1-3c5423873fb5`, oferta `FORMATO 2`, `order_id` `...-TlIdif3vmm4BxFmxbkr7`, R$ 2.497, aprovada, 0 sessoes - ainda nao agendada).
+
+## 101.2. O achado (provado lendo o codigo): Diagnostico estava hardcoded na Denise
+
+Duplicar o produto **nao** roteava pro Leomir. O Diagnostico assumia a Denise em varios lugares:
+- **Rota de agendar** (`.../agendar/route.ts`): achava os terapeutas por nome - `candidatosPedro` (inclui "pedro") e `candidatosDenise` (inclui "denise") - e montava o pacote com `deniseId`. Uma venda do produto do Leomir ainda montaria o pacote com a **Denise**.
+- **Repasse do fechamento** (`fechamentos/page.tsx`, ~517): `terapeutasComissao.find(... includes('denise'))`, gravava o nome da Denise na linha do produto.
+- **Comissao**: `PAGAMENTO_DENISE_POR_SESSAO = 95` em `lib/diagnostico-guiado.ts` - o diagnostico paga **R$ 95 por sessao, fixo**, NAO o percentual (os 30% da Denise / 10% do Leomir nao entram no diagnostico).
+- **`montarPacote`**: `terapeuta_id: doPedro ? pedroId : deniseId`; o Pedro pega as PRIMEIRAS `sessoesPedro`, o resto vai pro "deniseId".
+- **Fora do escopo** (confirmado): a tabela `includes('denise')` em `vendas/page.tsx:211` so e fallback quando o formato NAO e reconhecido; o do Leomir e reconhecido (provado: `formatoDaVenda` devolve F2), entao essa tabela nunca e alcancada pra ele.
+
+Reconhecimento OK sem mapear oferta: `ehDiagnosticoGuiado("...- Leomir")` = true e `formatoDoNomeDaOferta("FORMATO 2")` = 2, entao `formatoDaVenda` devolve `{formato:2,totalSessoes:4,sessoesPedro:1}` pela via do NOME (a oferta `TlIdif3vmm4BxFmxbkr7` nem precisa entrar em `OFERTAS_DIAGNOSTICO`).
+
+## 101.3. A regra (decisao do dono)
+
+- Produto **SEM** "Leomir" no nome (`Diagnóstico Guiado: Programa de acompanhamento Individual`) -> **Denise** (default historico).
+- Produto **COM** "Leomir" no nome -> **Leomir**.
+- O **Pedro continua** pegando as primeiras sessoes nos dois casos (F1: 2; F2/F3: 1). Mesma estrutura, mesmos formatos, **R$ 95/sessao** pro principal.
+
+## 101.4. A implementacao
+
+**Helper novo** `lib/terapeuta-do-diagnostico.ts` -> `terapeutaPrincipalDoDiagnostico(produto, terapeutas): { terapeuta, ambiguo }`. Reaproveita `terapeutasDoProduto` (match pelo PRIMEIRO NOME dentro do nome do produto), **filtra o Pedro** (ele nunca e o principal), e cai no **default Denise** quando o produto nao nomeia ninguem. **Ambiguidade recusa** (o chamador devolve erro): produto que nomeia DOIS nao-Pedro, ou DUAS "Denise" ativas (essa guarda da Denise dupla existia antes e foi preservada).
+
+**Rota de agendar**: resolve `pedroId` (por "pedro", com guarda de ambiguidade propria) + `terapeutaPrincipalId` (via helper, a partir de `sale.produto`). Passa ao `montarPacote` no param historico `deniseId` (nao renomeado de proposito - o param do lib e seus testes ficaram intactos, zero risco no modulo testado; so o nome interno da rota virou `terapeutaPrincipalId`). A segunda guarda de consentimento (`podeAgirNaSessao` pros DOIS ids) segue valida porque o principal **nunca** e o Pedro. Campo `comissao_por_sessao_denise` (coluna do banco, nome mantido) passa a ser populado pela sessao do principal.
+
+**Repasse do fechamento**: `terapeuta_nome` resolvido pelo mesmo helper (usando `row.id` = nome do produto), default Denise. O VALOR (sessoes x R$ 95) ja saia certo porque o `byProduct` agrupa por nome de produto, e o produto do Leomir e uma linha separada.
+
+## 101.5. Testes e review (provado rodando)
+
+- **6 testes** no helper: produto do Leomir -> Leomir; produto sem nome -> Denise; nome do Pedro no produto ignorado (cai no default Denise); dois nomeados -> ambiguo; sem Denise na lista -> null; **duas Denise -> ambiguo**.
+- **818 testes** na suite completa (`npm test`), **zero regressao**.
+- **Prova e2e com a venda REAL da Lidia**: `terapeutaPrincipalDoDiagnostico` resolve **Leomir**; `montarPacote` do F2 produz sessao 1 = Pedro (R$ 0) e sessoes 2-4 = Leomir (R$ 95 cada).
+- **Self-review** pegou e corrigiu, antes do deploy, uma regressao: no caminho default o helper pegava a 1a Denise em vez de recusar quando houvesse duas - restaurada a guarda de ambiguidade.
+
+## 101.6. Deploy
+
+Branch `feat/diagnostico-multi-terapeuta`, commit `6fa3351`, merge fast-forward na `main`, push. **Deploy Vercel: `success`** (confirmado via status do commit no GitHub). Ja esta em producao.
+
+## 101.7. PENDENTE (config, fora do codigo) e proximo passo
+
+- ~~**Leomir precisa de `grupo_whatsapp_id`**~~ **RESOLVIDO em 05/10/2026.** O dono criou o grupo WhatsApp "INFO - AGENDAMENTOS - LEOMIR" e adicionou o numero da automacao (Z-API, `5518997189804`). Peguei o JID via Z-API (`GET /groups`) e cadastrei: `grupo_whatsapp_id = 120363411636076621-group` no terapeuta Leomir (id `f6518ab1-920e-4f37-a093-7b915af74c1b`). Agora `buscarPendentes` inclui o Leomir -> agendamentos saem no grupo dele e lembretes vao pros pacientes dele, igual Pedro/Denise. (Detalhe: o grupo so passou a ser visivel pela Z-API DEPOIS que o numero da automacao entrou no grupo.)
+- O `percentual_comissao` **10%** do Leomir **nao afeta** o diagnostico (R$ 95/sessao fixo); so valeria se ele vendesse mentoria.
+- **Proximo passo operacional:** o comercial **agenda a venda da Lidia** (`f0bd7dfd`) pela tela -> as sessoes caem no Leomir (1 do Pedro + 3 do Leomir, R$ 95 cada).
+- **Limite conhecido:** a coluna `comissao_por_sessao_denise` mantem o nome "denise" (so rotulo; o valor gravado e do principal correto). Renomear seria migracao de banco, fora deste escopo.
+
+## 101.8. Adendo (05/10/2026): PREVIEW do modal de agendar tambem estava hardcoded na Denise
+
+**Falha minha no item 101:** corrigi a ROTA que cria as sessoes e o repasse do fechamento, mas **nao revisei o PREVIEW** do modal de agendar. Com 2 vendas do Leomir (Maysa Vera Matos F1, Lidia Hirt Stumm F2), o dono viu o modal "Agendar sessoes" mostrando **Denise** nas sessoes nao-Pedro, em vez de Leomir.
+
+**Diagnostico:** era SO display. A rota (ja no ar desde `6fa3351`) cria certo no Leomir - o produto tem "Leomir", mesma logica provada. O modal (`app/terapeutas/vendas/page.tsx`) tinha "Denise" fixo em 2 lugares: o texto "Pacote conjunto: ... e a Denise as demais" e o rotulo por sessao (`i < sessoesPedro ? Pedro : 'Denise'`).
+
+**Correcao:** os 2 pontos passam a resolver o terapeuta principal pelo NOME DO PRODUTO com o MESMO helper `terapeutaPrincipalDoDiagnostico` (produto "...- Leomir" -> Leomir; sem nome -> Denise). So display; a criacao ja estava certa. Provado rodando (com os 3 terapeutas ativos reais: produto do Leomir -> Leomir; produto da Denise -> Denise). **Commit `33e50c4`**, merge na main, 818 testes verdes, deploy Vercel **`success`** (em producao).
+
+**Sobrou (cosmetico, nao corrigido):** o subtitulo generico "Gestao de mentorias — Pedro | Denise" (vendas/page.tsx) nao cita o Leomir - rotulo fixo da tela, nao afeta roteamento.
+
+# 102. Repasse de Mentoria "Pedro | X" ia pro Pedro (0%) + readequacao da venda do Diego (05/10/2026)
+
+**Toca dinheiro.** Commit `689ade8`, 823 testes verdes, deploy Vercel **`success`** (em producao). Arquivos: novo `lib/terapeuta-da-comissao.ts` (+ `.test.ts`); modificados `app/fechamentos/page.tsx`, `lib/readequacoes-produto.ts` (+ seu teste).
+
+## 102.1. O gatilho e o bug (provado antes de aplicar)
+
+O dono vai criar um 2o produto do Leomir: **"Mentoria Particular - Pedro | Leomir"** (alem do Diagnostico). Ao preparar a transferencia da venda do Diego pra esse produto, **provei** um bug de dinheiro no fechamento: `matchTerapeutaComissao` pegava o **PRIMEIRO** terapeuta nomeado no produto, na ORDEM da lista de terapeutas (Denise, Pedro, Leomir). Nos produtos de dois nomes "Pedro | X" (Pedro e socio, comissao 0%, e sempre comeca o nome):
+- "Mentoria Particular - Pedro | Denise" -> **Denise (30%)**, so porque a Denise vem ANTES do Pedro na lista;
+- "Mentoria Particular - Pedro | Leomir" -> **Pedro (0%)**, porque o Leomir vem DEPOIS do Pedro -> o Leomir ficaria **sem repasse nenhum**.
+
+## 102.2. A correcao
+
+Novo `lib/terapeuta-da-comissao.ts` -> `terapeutaDaComissao(produto, terapeutas)`: entre os terapeutas NOMEADOS no produto, **prefere quem tem comissao > 0** (quem de fato recebe); so terapeutas 0% nomeados -> devolve o 1o (o chamador ja nao gera repasse). **Independe da ordem da lista.** `matchTerapeutaComissao` no fechamento passa a usar o helper. 5 testes (inclusive "Pedro | Leomir" com o Pedro ANTES na lista -> Leomir). Provado rodando com os terapeutas reais: repasse do Diego -> **Leomir (10%)**.
+
+## 102.3. A transferencia + readequacao do Diego
+
+Venda `95be7a74-9f57-49bd-912f-36e73309b145` (Diego Rizzo Bruno, diegoipiranga@gmail.com, aprovada, R$ 550, 28/09/2026, **nao agendada**). Foi feita pela oferta/link da Denise ("Mentoria Particular - Pedro | Denise", oferta "Formato 1 - Sessao Unica") mas era do Leomir.
+- **Produto corrigido no banco** -> "Mentoria Particular - Pedro | Leomir" (so a venda; HTTP 204).
+- **Readequacao** adicionada em `READEQUACOES_PRODUTO` (produtoNaPlataforma "...- Denise", produtoNoSistema "...- Leomir", data 28/09, R$ 550) -> o aviso azul de conferencia com a Hubla aparece no fechamento quando um dos dois produtos estiver em apuracao (mesmo mecanismo da Paula, itens 40/93/98).
+- **Teste ajustado:** o teste "fechamento posterior nao mostra" usava a lista real e assumia setembro vazio; agora usa fixture propria (nao quebra com readequacoes novas).
+
+# 103. Pedro era expulso da lista de terapeutas cadastrados (bug de acesso, 05/10/2026)
+
+**Arquivos:** novo `lib/acesso-lista-terapeutas.ts` (+ `.test.ts`); modificado `app/terapeutas/lista/page.tsx`. 829 testes verdes.
+
+## 103.1. O gatilho
+
+Dono: *"o acesso do pedro quando ele clica para ver o terapeutas cadastrados nao mostra.. carrega carrega e volta pra tela onde mostra o overview de todos os terapeutas"*.
+
+## 103.2. Root cause (provado rodando, systematic-debugging)
+
+O Pedro tem **duas contas com o MESMO email** `pedroroncadapr@outlook.com`:
+- `usuarios_sistema` (login de terapeuta): `tipo='terapeuta'`, `terapeuta_id='f5b18738-fe04-43e0-a6ac-d15768cf196c'` -> conta **restrita** (terapeuta so ve o proprio painel);
+- `usuarios_dashboard` (login do dashboard): `role='admin'` -> acesso **total**.
+
+Com os dois logins no navegador (`spr_session` de admin + `terapeutas_session` de terapeuta), o controle de acesso diverge:
+- `app/terapeutas/layout.tsx:27` -> `if (getSession()) libera` (bypass de admin ANTES de aplicar a trava de terapeuta). Por isso o Pedro **ve** o `/terapeutas` (overview);
+- `app/terapeutas/lista/page.tsx` (linhas 50-60) **reimplementava a trava lendo so o `terapeutas_session`, sem o `getSession()`** -> redirecionava pro `/terapeutas/{terapeuta_id}` mesmo sendo admin. Esse era o "carrega e volta".
+
+So a lista tinha esse problema: `layout.tsx`, `fechamentos`, `aprovacoes` e `vendas` ja importam `getSession()` e tratam o admin. A lista era a unica sem. Reproduzido rodando lado a lado: para `{admin + terapeuta}`, layout = LIBERA, lista = REDIRECT.
+
+## 103.3. A correcao (fix mínimo, mesma precedencia do layout)
+
+Novo `lib/acesso-lista-terapeutas.ts` -> `destinoDaListaDeTerapeutas(temAdmin, sessao)`: se `temAdmin`, retorna `null` (ve a lista inteira); so o terapeuta puro (sem admin) e mandado pro proprio painel - e o layout ja faria isso de qualquer jeito, o guard da pagina so evita flash. 6 testes (o caso do Pedro: admin + sessao de terapeuta -> `null`). A lista passa a chamar `destinoDaListaDeTerapeutas(!!getSession(), session)`.
