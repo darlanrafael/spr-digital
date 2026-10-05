@@ -22,7 +22,6 @@ const NAV_LINKS: NavLink[] = [
 // Telas de Funis: as APIs exigem admin, então o link só aparece para admin.
 const FUNIS_NAV: NavLink[] = [
   { href: '/performance-funis/funis', label: 'Funis' },
-  { href: '/performance-funis/produtos', label: 'Produtos de Funis' },
 ]
 
 const TERAPEUTAS_NAV: NavLink[] = [

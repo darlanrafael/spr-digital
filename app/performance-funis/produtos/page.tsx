@@ -5,6 +5,7 @@ import { Space_Grotesk, Inter } from 'next/font/google'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import PerfFunisTabs from '@/components/PerfFunisTabs'
 
 export const dynamic = 'force-dynamic'
 
@@ -73,6 +74,7 @@ export default function ProdutosFunisPage() {
       <div className={`min-h-screen bg-[#0E0F13] text-[#F4F5F7] ${ui.className}`}>
         <Header />
         <main className="max-w-screen-xl mx-auto px-4 pt-6 pb-24 md:pb-10">
+          <PerfFunisTabs />
           <h1 className={`${display.className} text-2xl font-bold tracking-tight`}>Produtos</h1>
           <p className="mt-1 text-sm text-[#9CA3AF]">Catálogo de produtos dos funis. Edite o nome de exibição e confira os nomes já vistos.</p>
 

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, Calendar, Users, Heart, Layers, Package } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, BarChart2, FileText, Wallet, Calendar, Users, Heart, Layers } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
 
 const NAV = [
@@ -16,7 +16,6 @@ const NAV = [
 // Telas de Funis: as APIs exigem admin, então o link só aparece para admin.
 const FUNIS_NAV = [
   { href: '/performance-funis/funis', label: 'Funis', icon: Layers },
-  { href: '/performance-funis/produtos', label: 'Produtos', icon: Package },
 ]
 
 const TERAPEUTAS_NAV = [

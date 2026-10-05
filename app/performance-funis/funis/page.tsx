@@ -5,6 +5,7 @@ import { Space_Grotesk, Inter } from 'next/font/google'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import PerfFunisTabs from '@/components/PerfFunisTabs'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +45,7 @@ export default function FunisPage() {
   const [erro, setErro] = useState<string | null>(null)
   const [form, setForm] = useState<Rascunho | null>(null)
   const [novoTermo, setNovoTermo] = useState('')
+  const [buscaProduto, setBuscaProduto] = useState('')
   const [salvando, setSalvando] = useState(false)
   const [excluindo, setExcluindo] = useState<string | null>(null)
 
@@ -70,6 +72,7 @@ export default function FunisPage() {
   function abrirNovo() {
     setForm({ ...VAZIO })
     setNovoTermo('')
+    setBuscaProduto('')
     setErro(null)
   }
 
@@ -81,6 +84,7 @@ export default function FunisPage() {
       produtos: [...f.produtos],
     })
     setNovoTermo('')
+    setBuscaProduto('')
     setErro(null)
   }
 
@@ -150,12 +154,20 @@ export default function FunisPage() {
   }
 
   const selecionados = new Set((form?.produtos ?? []).map(chave))
+  const busca = buscaProduto.trim().toLowerCase()
+  const catalogoFiltrado = busca
+    ? catalogo.filter(p =>
+        (p.nome_exibicao ?? '').toLowerCase().includes(busca) ||
+        p.produto_id.toLowerCase().includes(busca) ||
+        p.plataforma.toLowerCase().includes(busca))
+    : catalogo
 
   return (
     <ProtectedRoute>
       <div className={`min-h-screen bg-[#0E0F13] text-[#F4F5F7] ${ui.className}`}>
         <Header />
         <main className="max-w-screen-xl mx-auto px-4 pt-6 pb-24 md:pb-10">
+          <PerfFunisTabs />
           <div className="flex items-start justify-between gap-3">
             <div>
               <h1 className={`${display.className} text-2xl font-bold tracking-tight`}>Funis</h1>
@@ -187,24 +199,38 @@ export default function FunisPage() {
                 className="mt-1 w-full rounded-lg border border-white/10 bg-[#181A20] px-3 py-1.5 text-sm text-white focus:outline-none focus:border-white/30"
               />
 
-              <p className="mt-5 text-xs uppercase tracking-wide text-[#9CA3AF]">Produtos</p>
+              <div className="mt-5 flex items-baseline justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-[#9CA3AF]">Produtos</p>
+                <p className="text-xs text-[#9CA3AF]">{selecionados.size} selecionado(s)</p>
+              </div>
               {catalogo.length === 0 ? (
                 <p className="mt-1 text-sm text-[#9CA3AF]">Nenhum produto no catálogo.</p>
               ) : (
-                <ul className="mt-1 max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-[#181A20] divide-y divide-white/5">
-                  {catalogo.map(p => {
-                    const marcado = selecionados.has(chave(p))
-                    return (
-                      <li key={p.id}>
-                        <label className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-white/5">
-                          <input type="checkbox" checked={marcado} onChange={() => alternarProduto(p)} />
-                          <span className="flex-1 min-w-0 truncate">{p.nome_exibicao || p.produto_id}</span>
-                          <span className="text-xs uppercase text-[#9CA3AF]">{p.plataforma}</span>
-                        </label>
-                      </li>
-                    )
-                  })}
-                </ul>
+                <>
+                  <input
+                    value={buscaProduto}
+                    onChange={e => setBuscaProduto(e.target.value)}
+                    placeholder="Digite para buscar um produto..."
+                    aria-label="Buscar produto pelo nome"
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-[#181A20] px-3 py-1.5 text-sm text-white focus:outline-none focus:border-white/30"
+                  />
+                  <ul className="mt-1 max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-[#181A20] divide-y divide-white/5">
+                    {catalogoFiltrado.length === 0 ? (
+                      <li className="px-3 py-2 text-sm text-[#9CA3AF]">Nenhum produto encontrado para &quot;{buscaProduto.trim()}&quot;.</li>
+                    ) : catalogoFiltrado.map(p => {
+                      const marcado = selecionados.has(chave(p))
+                      return (
+                        <li key={p.id}>
+                          <label className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-white/5">
+                            <input type="checkbox" checked={marcado} onChange={() => alternarProduto(p)} />
+                            <span className="flex-1 min-w-0 truncate">{p.nome_exibicao || p.produto_id}</span>
+                            <span className="text-xs uppercase text-[#9CA3AF]">{p.plataforma}</span>
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </>
               )}
 
               <p className="mt-5 text-xs uppercase tracking-wide text-[#9CA3AF]">Termos de campanha</p>
