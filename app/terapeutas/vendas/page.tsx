@@ -8,6 +8,7 @@ import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import { getSession } from '@/lib/auth'
 import { terapeutaSugerido, avisoTerapeutaDivergente } from '@/lib/terapeuta-da-venda'
+import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { brutoDoPacote } from '@/lib/dinheiro-do-pacote'
 import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda, avisosDasDatas } from '@/lib/diagnostico-guiado'
@@ -612,6 +613,12 @@ export default function TerapeutasVendas() {
   // O Pedro sempre começa o pacote; a Denise pega o restante. Quem monta a
   // divisão é a rota, mas ela ainda exige um terapeuta_id no corpo.
   const pedroTerapeuta = pageData.terapeutas.find(t => t.nome.trim().toLowerCase().startsWith('pedro')) ?? null
+  // O terapeuta PRINCIPAL (as sessoes nao-Pedro) vem do NOME DO PRODUTO: "...- Leomir"
+  // -> Leomir; produto sem nome -> Denise (default). Mesmo helper da rota de agendar
+  // (so pra o PREVIEW bater com o que a rota realmente cria).
+  const principalTerapeuta = agendarVenda
+    ? terapeutaPrincipalDoDiagnostico(agendarVenda.produto ?? '', pageData.terapeutas).terapeuta
+    : null
   const agendarTerapeutaEfetivo = agendarDiagnostico ? (pedroTerapeuta?.id ?? '') : agendarTerapeutaId
   //
   // Vale para TODOS os produtos, não só o Diagnóstico: o bloco de datas dos
@@ -1498,7 +1505,7 @@ export default function TerapeutasVendas() {
                     Diagnóstico Guiado · Formato {agendarDiagnostico.formato} · {agendarDiagnostico.totalSessoes} sessões
                   </p>
                   <p className="text-[11px] text-gray-400 mt-1">
-                    Pacote conjunto: {pedroTerapeuta?.nome ?? 'Pedro'} faz {agendarDiagnostico.sessoesPedro === 1 ? 'a 1ª sessão' : `as ${agendarDiagnostico.sessoesPedro} primeiras sessões`} e a Denise as demais,
+                    Pacote conjunto: {pedroTerapeuta?.nome ?? 'Pedro'} faz {agendarDiagnostico.sessoesPedro === 1 ? 'a 1ª sessão' : `as ${agendarDiagnostico.sessoesPedro} primeiras sessões`} e a {principalTerapeuta?.nome ?? 'Denise'} as demais,
                     com 7 dias entre todas. A quantidade de sessões e quem atende cada uma vêm do formato. As datas nascem com 7 dias entre elas e você pode ajustar cada uma.
                   </p>
                   {!pedroTerapeuta && (
@@ -1620,7 +1627,7 @@ export default function TerapeutasVendas() {
                               className="flex-1 bg-gray-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500/50" />
                           )}
                           <span className="text-[10px] text-gray-500 w-24 shrink-0">
-                            {i < agendarDiagnostico.sessoesPedro ? (pedroTerapeuta?.nome ?? 'Pedro') : 'Denise'}
+                            {i < agendarDiagnostico.sessoesPedro ? (pedroTerapeuta?.nome ?? 'Pedro') : (principalTerapeuta?.nome ?? 'Denise')}
                           </span>
                         </div>
                       ))}
