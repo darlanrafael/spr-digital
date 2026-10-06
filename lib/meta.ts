@@ -143,3 +143,118 @@ export async function getAllAccountsInvestment(
   )
   return totals.reduce((sum, t) => sum + t, 0)
 }
+
+// ---------------------------------------------------------------------------
+// Fase 2B: anúncios (ads) com insights - funil + criativos + cadência diária
+// ---------------------------------------------------------------------------
+
+function buildDateParam(dateStart: string, dateEnd: string, datePreset?: string): string {
+  return datePreset
+    ? `date_preset=${datePreset}`
+    : `time_range=${encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))}`
+}
+
+// Converte "date_preset=x" / "time_range=<json>" no modificador inline do campo insights.
+function insightsModifier(dateParam: string): string {
+  if (dateParam.startsWith('date_preset=')) {
+    return `date_preset(${dateParam.slice('date_preset='.length)})`
+  }
+  return `time_range(${decodeURIComponent(dateParam.slice('time_range='.length))})`
+}
+
+// Pagina act_<id>/ads por paging.next; erro numa conta nunca propaga (devolve o que tem).
+async function fetchAdsPages(
+  accountId: string,
+  fields: string,
+  token: string,
+): Promise<Record<string, unknown>[]> {
+  let nextUrl: string | null =
+    `${BASE_URL}/act_${accountId}/ads` +
+    `?fields=${fields}` +
+    `&limit=500` +
+    `&access_token=${token}`
+
+  const all: Record<string, unknown>[] = []
+
+  while (nextUrl) {
+    let res: Response
+    try {
+      res = await fetch(nextUrl)
+    } catch (err) {
+      console.error('[Meta API] Erro de rede na conta (ads):', accountId, err)
+      break
+    }
+
+    if (!res.ok) {
+      const body = await res.text()
+      console.error('[Meta API] Erro HTTP na conta (ads):', accountId, res.status, body.slice(0, 300))
+      break
+    }
+
+    const json = await res.json() as {
+      data?: Record<string, unknown>[]
+      paging?: { next?: string }
+      error?: { message: string }
+    }
+
+    if (json.error) {
+      console.error('[Meta API] Erro na conta (ads):', accountId, json.error.message)
+      break
+    }
+
+    const page = json.data ?? []
+    all.push(...page)
+    console.log(`[Meta API] conta ${accountId}: página com ${page.length} ads (total acumulado: ${all.length})`)
+
+    nextUrl = json.paging?.next ?? null
+  }
+
+  return all
+}
+
+export async function getAdsComInsights(
+  accountId: string,
+  dateStart: string,
+  dateEnd: string,
+  datePreset?: string,
+): Promise<Record<string, unknown>[]> {
+  const token = getToken()
+  if (!token) return []
+
+  const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
+  const fields =
+    `name,campaign{name},creative{name,thumbnail_url},` +
+    `insights.${mod}{spend,impressions,reach,inline_link_clicks,unique_clicks,actions,video_play_actions}`
+
+  return fetchAdsPages(accountId, fields, token)
+}
+
+export async function getAdsDiariosComInsights(
+  accountId: string,
+  dateStart: string,
+  dateEnd: string,
+  datePreset?: string,
+): Promise<{ campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[]> {
+  const token = getToken()
+  if (!token) return []
+
+  const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
+  const fields = `campaign{name},insights.${mod}.time_increment(1){spend,inline_link_clicks}`
+
+  const ads = await fetchAdsPages(accountId, fields, token)
+
+  const linhas: { campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[] = []
+  for (const ad of ads) {
+    const campaignName = ((ad.campaign as { name?: string } | undefined)?.name) ?? ''
+    const dias = ((ad.insights as { data?: Array<Record<string, string>> } | undefined)?.data) ?? []
+    for (const d of dias) {
+      linhas.push({
+        campaign_name: campaignName,
+        date_start: d.date_start,
+        spend: d.spend ?? '0',
+        inline_link_clicks: d.inline_link_clicks ?? '0',
+      })
+    }
+  }
+  return linhas
+}
