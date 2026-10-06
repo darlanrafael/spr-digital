@@ -5713,3 +5713,42 @@ So a lista tinha esse problema: `layout.tsx`, `fechamentos`, `aprovacoes` e `ven
 ## 103.3. A correcao (fix mínimo, mesma precedencia do layout)
 
 Novo `lib/acesso-lista-terapeutas.ts` -> `destinoDaListaDeTerapeutas(temAdmin, sessao)`: se `temAdmin`, retorna `null` (ve a lista inteira); so o terapeuta puro (sem admin) e mandado pro proprio painel - e o layout ja faria isso de qualquer jeito, o guard da pagina so evita flash. 6 testes (o caso do Pedro: admin + sessao de terapeuta -> `null`). A lista passa a chamar `destinoDaListaDeTerapeutas(!!getSession(), session)`.
+
+# 104. Performance de Funis - Fase 2A: identidade de produto + cadastro de funil (05/10/2026)
+
+**Spec:** `docs/superpowers/specs/2026-10-05-performance-funis-2A-design.md`. **Plano:** `docs/superpowers/plans/2026-10-05-performance-funis-2A.md`. Construido com subagent-driven-development (12 tarefas, revisao por tarefa + revisao geral). Suite 862 testes verdes. **NAO tem numero de performance ainda** - isso e 2B+. O prototipo visual de dados ficticios (item 100) segue FORA de producao (link removido do menu).
+
+## 104.1. O que entrega
+
+- **Identidade de produto:** coluna nova `sales.produto_id` (codigo do produto na plataforma), capturada na ingestao (parsers Hubla/Kiwify ja calculavam o `product.id`-base, so nao gravavam). Catalogo `produtos_catalogo` (plataforma, produto_id, nome_exibicao, nomes[]) semeado dos payloads logados. Resolucao por NOME pro historico sem codigo (`lib/funis/resolver-produto.ts`).
+- **Cadastro de funil:** tabelas `funis` (nome, termos_campanha[]) e `funil_produtos` (funil_id, plataforma, produto_id). API CRUD `app/api/funis/*` (admin-only). Telas em `app/performance-funis/funis` (CRUD + busca de produtos) e `.../produtos` (catalogo), unidas por abas (`components/PerfFunisTabs.tsx`); menu tem so "Funis" (so admin).
+- **Migracao:** `supabase/migrations/20261005000000_performance_funis_2a.sql` (sem RLS, como o resto do projeto; aplicada a mao no Supabase em 05/10).
+
+## 104.2. Chave do produto (decisao do dono)
+
+Produto identificado por **codigo (ID da plataforma)** com **nome de reserva**. Hubla `event.product.id` e Kiwify `Product.product_id` existem no payload, MAS a `sales` nunca guardou - so o nome. Os payloads crus (`webhook_events`) so existem desde **04/08/2026**; vendas vao ate **02/05/2026**. Entao: codigo capturado nas vendas novas + backfill de ago/2026 pra ca; antes disso, so o nome, resolvido pelo catalogo.
+
+## 104.3. BUG achado na revisao extra (provado rodando) e corrigido
+
+Numa revisao extra contra os dados reais (so leitura), achei que o **seeding passava o payload CRU** pro `montarCatalogo`, mas o payload Hubla aninha tudo em `payload.event` (topo `{type, event, version}`); Kiwify e o order direto. Efeito medido: catalogo com **0 produtos Hubla**. Os revisores de diff nao pegaram (o teste usava a forma ja desembrulhada). Corrigido com helper testado `lib/evento-do-webhook.ts` (desembrulha hubla->payload.event, kiwify->payload.order??payload), usado por seeding E backfill. Provado: seeding corrigido -> **33 produtos** (16 kiwify + 17 hubla).
+
+## 104.4. Numeros reais da execucao (05/10/2026)
+
+- Catalogo semeado: **33 produtos**, 0 falhas.
+- Backfill: **4329 vendas** preenchidas com `produto_id`, 0 falhas.
+- Validado rodando contra producao (leitura): backfill order_id bate **100%** (2083 hubla + 2252 kiwify, 0 miss; faturas-pai puladas); resolucao por NOME **1000/1000** na amostra.
+- Dono cadastrou **4 funis** na tela real: COMO SER PERDOADO (CSP, 5 prod), DIAGNOSTICO GUIADO (organico, 3), IMERSAO A REAPROXIMACAO (IAR/IRM, 7), MENTORIA PARTICULAR - PEDRO RONCADA (organico, 2).
+
+## 104.5. Decisoes registradas (rulings)
+
+- Tabelas novas sem RLS (convencao do projeto; acesso via service role nas rotas).
+- Backfill REUSA os parsers de venda pro order_id exato (a 1a versao usava `like` por prefixo e atribuia produto errado em order bump - corrigido na revisao).
+- PATCH de funil nao-transacional (delete+insert), mas o dedupe de produtos matou a causa deterministica; resido de falha de infra aceito pra 2A (RPC transacional = hardening futuro).
+- Prototipo de dados ficticios (item 100) fica fora de producao ate a 2B; link removido do menu.
+- Feature "Analises" (calculadora manual de metricas Meta, `app/analises`) removida a pedido do dono, junto nesta leva.
+
+## 104.6. PENDENTE (2B em diante)
+
+- **2B:** puxar dados reais da Meta pros funis (os graficos de performance). Token `META_ACCESS_TOKEN` ja validado rodando; mapa de campos no item 100.6 (Hook Rate = `actions.video_view` / impressions; CTR = unique_clicks/reach). **AVISO: o token da Meta apareceu no chat em 05/10 - rotacionar.**
+- **2C:** vendas/faturamento + cascata financeira no funil.
+- **2D:** atribuicao por UTM/ad_id (rastreadas x nao rastreadas). UTMs ja carregam campanha/adset/ad_id (provado).
