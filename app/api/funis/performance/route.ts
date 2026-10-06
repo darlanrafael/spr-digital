@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 import {
-  getAccountIds, getCampanhasComInsights, getAdsComInsights, getAdsDiariosComInsights,
+  getAccountIds, getCampanhasPorTermos, getAdsComInsights, getAdsDiariosComInsights,
 } from '@/lib/meta'
 import {
   normalizarAd, adsDoFunil, agregarFunil, metricasDoCriativo, serieDiaria,
@@ -35,8 +35,9 @@ export async function GET(req: NextRequest) {
     const metaDisponivel = !!process.env.META_ACCESS_TOKEN
     const aviso = metaDisponivel ? null : 'Os dados da Meta estão indisponíveis no momento. Verifique a conexão/token.'
     const contas = getAccountIds()
-    const campanhasCruas = (await Promise.all(
-      contas.map(a => getCampanhasComInsights(a, dateStart, dateEnd, preset)),
+    const todosTermos = [...new Set(funis.flatMap(f => (f.termos_campanha ?? [])))]
+    const campanhasCruas = todosTermos.length === 0 ? [] : (await Promise.all(
+      contas.map(a => getCampanhasPorTermos(a, dateStart, dateEnd, todosTermos, preset)),
     )).flat()
     const campanhas = campanhasCruas.map(normalizarAd)
     const agregadoDe = (f: FunilRow) => agregarFunil(adsDoFunil(campanhas, f.termos_campanha ?? []))

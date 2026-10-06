@@ -263,6 +263,41 @@ export async function getCampanhasComInsights(
   return fetchPaginas(accountId, 'campaigns', `name,insights.${mod}{${INSIGHT_FIELDS}}`, token, 500)
 }
 
+// Visão geral/detalhe: só as campanhas cujo nome contém algum termo (filtro no servidor da Meta).
+export async function getCampanhasPorTermos(
+  accountId: string,
+  dateStart: string,
+  dateEnd: string,
+  termos: string[],
+  datePreset?: string,
+): Promise<Record<string, unknown>[]> {
+  const token = getToken()
+  if (!token) return []
+  const ts = (termos ?? []).map(t => t.trim()).filter(Boolean)
+  if (ts.length === 0) return []
+  const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
+  const fields = `id,name,insights.${mod}{${INSIGHT_FIELDS}}`
+
+  const porTermo = await Promise.all(ts.map(termo =>
+    fetchPaginas(
+      accountId, 'campaigns', fields, token, 500,
+      JSON.stringify([{ field: 'name', operator: 'CONTAIN', value: termo }]),
+    )
+  ))
+
+  const vistos = new Set<string>()
+  const out: AdsRow[] = []
+  for (const row of porTermo.flat()) {
+    const id = row.id as string | undefined
+    if (id) {
+      if (vistos.has(id)) continue
+      vistos.add(id)
+    }
+    out.push(row)
+  }
+  return out
+}
+
 // Criativos do detalhe de um funil: ads filtrados por campanha no servidor da Meta.
 export async function getAdsComInsights(
   accountId: string,
