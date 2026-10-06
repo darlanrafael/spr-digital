@@ -35,6 +35,27 @@ export function normalizarAd(raw: Record<string, unknown>): AdInsight {
   }
 }
 
+// Normaliza a linha "chata" do endpoint /insights (campaign_name/ad_name +
+// metricas no topo, sem creative/thumbnail). Usado nos TOTAIS (rapido).
+export function normalizarInsight(row: Record<string, unknown>): AdInsight {
+  const videoView = acao(row.actions, 'video_view')
+  return {
+    campanha: (row.campaign_name as string) ?? '',
+    criativo: (row.ad_name as string) ?? (row.campaign_name as string) ?? '',
+    anuncio: (row.ad_name as string) ?? '',
+    thumbnail: null,
+    spend: num(row.spend),
+    impressions: num(row.impressions),
+    reach: num(row.reach),
+    inlineLinkClicks: num(row.inline_link_clicks),
+    uniqueClicks: num(row.unique_clicks),
+    landingPageView: acao(row.actions, 'landing_page_view'),
+    initiateCheckout: acao(row.actions, 'initiate_checkout'),
+    videoView,
+    isVideo: videoView > 0,
+  }
+}
+
 export function adsDoFunil(ads: AdInsight[], termos: string[]): AdInsight[] {
   const ts = (termos ?? []).map(t => t.trim().toLowerCase()).filter(Boolean)
   if (ts.length === 0) return []

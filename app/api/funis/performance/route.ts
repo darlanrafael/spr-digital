@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 import {
-  getAccountIds, getCampanhasComInsights, getAdsComInsights, getAdsDiariosComInsights,
+  getAccountIds, getCampanhaInsights, getAdsComInsights, getAdsDiariosComInsights,
 } from '@/lib/meta'
 import {
-  normalizarAd, adsDoFunil, agregarFunil, metricasDoCriativo, serieDiaria, type AdInsight,
+  normalizarAd, normalizarInsight, adsDoFunil, agregarFunil, metricasDoCriativo, serieDiaria, type AdInsight,
 } from '@/lib/funis/meta-funil'
 
 export const dynamic = 'force-dynamic'
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
 
     // Totais (visão geral e cabeçalho do detalhe) vêm das campanhas, cacheadas por período.
     const campanhas: AdInsight[] = !temTermos ? [] : await cached(`camps|${periodo}`, async () =>
-      (await Promise.all(contas.map(a => getCampanhasComInsights(a, dateStart, dateEnd, preset)))).flat().map(normalizarAd),
+      (await Promise.all(contas.map(a => getCampanhaInsights(a, dateStart, dateEnd, preset)))).flat().map(normalizarInsight),
     )
     const agregadoDe = (f: FunilRow) => agregarFunil(adsDoFunil(campanhas, f.termos_campanha ?? []))
 

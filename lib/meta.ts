@@ -250,6 +250,47 @@ async function fetchAdsPorTermos(
 
 const INSIGHT_FIELDS = 'spend,impressions,reach,inline_link_clicks,unique_clicks,actions,video_play_actions'
 
+// Endpoint /insights (nivel campanha/ad): devolve SO o que teve entrega no
+// periodo, agregado pela Meta - muito mais rapido que listar todas as campanhas.
+// Linhas "chatas": campaign_name/ad_name + metricas no topo (sem creative/thumb).
+async function fetchInsights(
+  accountId: string,
+  level: 'campaign' | 'ad',
+  fields: string,
+  dateParam: string,
+  token: string,
+): Promise<AdsRow[]> {
+  let nextUrl: string | null =
+    `${BASE_URL}/act_${accountId}/insights?level=${level}&fields=${fields}&${dateParam}&limit=500&access_token=${token}`
+  const all: AdsRow[] = []
+  while (nextUrl) {
+    let res: Response
+    try { res = await fetch(nextUrl) } catch (err) {
+      console.error('[Meta API] Erro de rede (insights):', accountId, err); break
+    }
+    if (!res.ok) { console.error('[Meta API] Erro HTTP (insights):', accountId, res.status, (await res.text()).slice(0, 300)); break }
+    const json = await res.json() as { data?: AdsRow[]; paging?: { next?: string }; error?: { message: string } }
+    if (json.error) { console.error('[Meta API] Erro (insights):', accountId, json.error.message); break }
+    all.push(...(json.data ?? []))
+    nextUrl = json.paging?.next ?? null
+  }
+  return all
+}
+
+// Totais do funil / visão geral, RÁPIDO: insights nivel campanha (so campanhas
+// com entrega no periodo). Devolve a linha "chata" pro normalizarInsight.
+export async function getCampanhaInsights(
+  accountId: string,
+  dateStart: string,
+  dateEnd: string,
+  datePreset?: string,
+): Promise<Record<string, unknown>[]> {
+  const token = getToken()
+  if (!token) return []
+  const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
+  return fetchInsights(accountId, 'campaign', `campaign_name,${INSIGHT_FIELDS}`, dateParam, token)
+}
+
 // Totais do funil / visão geral: campanhas (poucas) em vez de todos os ads.
 export async function getCampanhasComInsights(
   accountId: string,
