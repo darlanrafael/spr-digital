@@ -8,6 +8,7 @@ import MobileNav from '@/components/MobileNav'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import PerfFunisTabs from '@/components/PerfFunisTabs'
 import { formatCurrency } from '@/lib/formatters'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,7 +40,7 @@ const fmtNum = (n: number) => new Intl.NumberFormat('pt-BR').format(n)
 const fmtPct = (n: number | null) => (n == null ? '-' : `${n.toFixed(2).replace('.', ',')}%`)
 const fmtMoeda = (n: number | null) => (n == null ? '-' : formatCurrency(n))
 
-function DashboardConteudo() {
+function VisaoGeral() {
   const router = useRouter()
   const sp = useSearchParams()
   const dateStart = sp.get('dateStart') || ''
@@ -159,6 +160,189 @@ function DashboardConteudo() {
       )}
     </>
   )
+}
+
+type Criativo = {
+  campanha: string
+  criativo: string
+  thumbnail: string | null
+  spend: number
+  inlineLinkClicks: number
+  isVideo: boolean
+  ctr: number | null
+  hookRate: number | null
+}
+type Cadencia = { data: string; investido: number; cliques: number }
+
+const fmtDia = (d: string) => {
+  const [, m, dia] = d.slice(0, 10).split('-')
+  return `${dia}/${m}`
+}
+const passagem = (num: number, den: number) =>
+  den > 0 ? `${((num / den) * 100).toFixed(2).replace('.', ',')}%` : '-'
+
+function DetalheFunil({ funilId }: { funilId: string }) {
+  const router = useRouter()
+  const sp = useSearchParams()
+  const dateStart = sp.get('dateStart') || ''
+  const dateEnd = sp.get('dateEnd') || ''
+  const custom = !!(dateStart && dateEnd)
+  const query = custom ? `dateStart=${dateStart}&dateEnd=${dateEnd}` : `datePreset=${sp.get('datePreset') || 'last_7d'}`
+
+  const [funil, setFunil] = useState<FunilPerf | null>(null)
+  const [criativos, setCriativos] = useState<Criativo[]>([])
+  const [cadencia, setCadencia] = useState<Cadencia[]>([])
+  const [carregando, setCarregando] = useState(true)
+  const [erro, setErro] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelado = false
+    setCarregando(true)
+    setErro(null)
+    fetch(`/api/funis/performance?funilId=${encodeURIComponent(funilId)}&${query}`)
+      .then(async r => {
+        const j = await r.json()
+        if (!r.ok) throw new Error(j?.error || 'Falha ao carregar o funil')
+        return j
+      })
+      .then(j => {
+        if (cancelado) return
+        setFunil((j.funil || null) as FunilPerf | null)
+        setCriativos((j.criativos || []) as Criativo[])
+        setCadencia((j.cadencia || []) as Cadencia[])
+      })
+      .catch(e => { if (!cancelado) setErro(e instanceof Error ? e.message : 'Falha ao carregar') })
+      .finally(() => { if (!cancelado) setCarregando(false) })
+    return () => { cancelado = true }
+  }, [funilId, query])
+
+  const voltar = () => router.push(`/performance-funis/dashboard?${query}`)
+  const card = 'rounded-xl border border-white/10 bg-[#16181D] p-4'
+
+  const etapas = funil
+    ? [
+        { nome: 'Impressões', valor: funil.impressoes, pass: null as string | null },
+        { nome: 'Cliques', valor: funil.cliques, pass: passagem(funil.cliques, funil.impressoes) },
+        { nome: 'Visitas', valor: funil.visitas, pass: passagem(funil.visitas, funil.cliques) },
+        { nome: 'Checkouts', valor: funil.checkouts, pass: passagem(funil.checkouts, funil.visitas) },
+      ]
+    : []
+
+  return (
+    <>
+      <button onClick={voltar} className="mb-4 px-3 py-1.5 rounded-lg text-sm font-medium border border-white/10 text-[#9CA3AF] hover:text-white">
+        ← Voltar para a visão geral
+      </button>
+      {erro && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{erro}</div>}
+      {carregando ? (
+        <p className="text-sm text-[#9CA3AF]">Carregando...</p>
+      ) : !funil ? (
+        !erro && <p className="text-sm text-[#9CA3AF]">Funil não encontrado.</p>
+      ) : (
+        <div className="space-y-5">
+          <h2 className={`text-lg font-semibold ${display.className}`}>{funil.nome}</h2>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { l: 'Investido', v: fmtMoeda(funil.investido) },
+              { l: 'CTR', v: fmtPct(funil.ctr) },
+              { l: 'Hook Rate', v: fmtPct(funil.hookRate) },
+              { l: 'Custo/checkout', v: fmtMoeda(funil.custoPorCheckout) },
+            ].map(c => (
+              <div key={c.l} className={card}>
+                <div className="text-xs text-[#9CA3AF] mb-1">{c.l}</div>
+                <div className={`text-xl font-semibold ${display.className}`}>{c.v}</div>
+              </div>
+            ))}
+          </div>
+
+          <section className={card}>
+            <h3 className="text-sm font-medium text-[#9CA3AF] mb-3">Etapas do funil</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {etapas.map(e => (
+                <div key={e.nome} className="rounded-lg bg-white/5 p-3">
+                  <div className="text-xs text-[#9CA3AF]">{e.nome}</div>
+                  <div className={`text-lg font-semibold ${display.className}`}>{fmtNum(e.valor)}</div>
+                  <div className="text-xs text-[#9CA3AF] mt-1">
+                    {e.pass == null ? `Alcance aprox.: ${fmtNum(funil.alcanceAprox)}` : `${e.pass} da etapa anterior`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className={card}>
+            <h3 className="text-sm font-medium text-[#9CA3AF] mb-3">Investido por dia</h3>
+            {cadencia.length === 0 ? (
+              <p className="text-sm text-[#9CA3AF]">Sem dados no período.</p>
+            ) : (
+              <div style={{ width: '100%', height: 260 }}>
+                <ResponsiveContainer>
+                  <LineChart data={cadencia} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                    <XAxis dataKey="data" tickFormatter={fmtDia} tick={{ fill: '#9CA3AF', fontSize: 12 }} stroke="rgba(255,255,255,0.1)" />
+                    <YAxis domain={[0, 'auto']} tickFormatter={(v: number) => formatCurrency(v)} tick={{ fill: '#9CA3AF', fontSize: 12 }} stroke="rgba(255,255,255,0.1)" width={80} />
+                    <Tooltip
+                      formatter={(v: unknown) => [formatCurrency(Number(v)), 'Investido']}
+                      labelFormatter={(l: unknown) => fmtDia(String(l))}
+                      contentStyle={{ background: '#0E0F13', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
+                      labelStyle={{ color: '#9CA3AF' }}
+                    />
+                    <Line type="monotone" dataKey="investido" stroke="#34D399" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </section>
+
+          <section className="overflow-x-auto rounded-xl border border-white/10 bg-[#16181D]">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[#9CA3AF] border-b border-white/10">
+                  <th className="px-3 py-2 font-medium">Criativo</th>
+                  <th className="px-3 py-2 font-medium">Campanha</th>
+                  <th className="px-3 py-2 font-medium text-right">Investido</th>
+                  <th className="px-3 py-2 font-medium text-right">CTR</th>
+                  <th className="px-3 py-2 font-medium text-right">Hook Rate</th>
+                  <th className="px-3 py-2 font-medium text-right">Cliques</th>
+                </tr>
+              </thead>
+              <tbody>
+                {criativos.length === 0 && (
+                  <tr><td colSpan={6} className="px-3 py-3 text-[#9CA3AF]">Nenhum criativo no período.</td></tr>
+                )}
+                {criativos.map((c, i) => (
+                  <tr key={`${c.campanha}-${c.criativo}-${i}`} className="border-b border-white/5 last:border-0">
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-3">
+                        {c.thumbnail ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={c.thumbnail} alt="" className="h-10 w-10 rounded object-cover bg-white/5" />
+                        ) : (
+                          <div className="h-10 w-10 rounded bg-white/5 flex items-center justify-center text-[#9CA3AF] text-xs">-</div>
+                        )}
+                        <span className="font-medium">{c.criativo}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-[#9CA3AF]">{c.campanha}</td>
+                    <td className="px-3 py-2 text-right">{fmtMoeda(c.spend)}</td>
+                    <td className="px-3 py-2 text-right">{fmtPct(c.ctr)}</td>
+                    <td className="px-3 py-2 text-right">{c.isVideo ? fmtPct(c.hookRate) : '-'}</td>
+                    <td className="px-3 py-2 text-right">{fmtNum(c.inlineLinkClicks)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        </div>
+      )}
+    </>
+  )
+}
+
+function DashboardConteudo() {
+  const funilId = useSearchParams().get('funilId')
+  return funilId ? <DetalheFunil funilId={funilId} /> : <VisaoGeral />
 }
 
 export default function DashboardFunisPage() {
