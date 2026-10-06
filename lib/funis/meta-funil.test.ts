@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizarAd, adsDoFunil, agregarFunil, metricasDoCriativo } from './meta-funil'
+import { normalizarAd, adsDoFunil, agregarFunil, metricasDoCriativo, serieDiaria } from './meta-funil'
 
 const RAW = {
   name: 'VID_Ago_03',
@@ -88,4 +88,17 @@ test('criativo de video tem hookRate; imagem tem null', () => {
   assert.equal(metricasDoCriativo(ad({ impressions: 1000, isVideo: false })).hookRate, null)
   assert.equal(metricasDoCriativo(ad({ reach: 500, uniqueClicks: 25 })).ctr, 5)
   assert.equal(metricasDoCriativo(ad({ reach: 0, uniqueClicks: 0 })).ctr, null)
+})
+
+test('soma por dia e ordena por data', () => {
+  const linhas = [
+    { date_start: '2026-10-02', spend: '100', inline_link_clicks: '10' },
+    { date_start: '2026-10-01', spend: '50', inline_link_clicks: '5' },
+    { date_start: '2026-10-02', spend: '25', inline_link_clicks: '3' },
+  ]
+  const s = serieDiaria(linhas)
+  assert.deepEqual(s, [
+    { data: '2026-10-01', investido: 50, cliques: 5 },
+    { data: '2026-10-02', investido: 125, cliques: 13 },
+  ])
 })

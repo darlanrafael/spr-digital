@@ -81,3 +81,16 @@ export type CriativoMetricas = AdInsight & { ctr: number | null; hookRate: numbe
 export function metricasDoCriativo(ad: AdInsight): CriativoMetricas {
   return { ...ad, ctr: pct(ad.uniqueClicks, ad.reach), hookRate: ad.isVideo ? pct(ad.videoView, ad.impressions) : null }
 }
+
+export type PontoDia = { data: string; investido: number; cliques: number }
+
+export function serieDiaria(linhas: { date_start: string; spend: unknown; inline_link_clicks: unknown }[]): PontoDia[] {
+  const porDia = new Map<string, PontoDia>()
+  for (const l of linhas ?? []) {
+    const p = porDia.get(l.date_start) ?? { data: l.date_start, investido: 0, cliques: 0 }
+    p.investido += num(l.spend)
+    p.cliques += num(l.inline_link_clicks)
+    porDia.set(l.date_start, p)
+  }
+  return [...porDia.values()].sort((a, b) => a.data.localeCompare(b.data))
+}
