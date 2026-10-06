@@ -5752,3 +5752,45 @@ Numa revisao extra contra os dados reais (so leitura), achei que o **seeding pas
 - **2B:** puxar dados reais da Meta pros funis (os graficos de performance). Token `META_ACCESS_TOKEN` ja validado rodando; mapa de campos no item 100.6 (Hook Rate = `actions.video_view` / impressions; CTR = unique_clicks/reach). **AVISO: o token da Meta apareceu no chat em 05/10 - rotacionar.**
 - **2C:** vendas/faturamento + cascata financeira no funil.
 - **2D:** atribuicao por UTM/ad_id (rastreadas x nao rastreadas). UTMs ja carregam campanha/adset/ad_id (provado).
+
+# 105. Performance de Funis - Fase 2B: dados reais da Meta por funil (05/10/2026)
+
+**Spec:** `docs/superpowers/specs/2026-10-05-performance-funis-2B-design.md`. **Plano:** `docs/superpowers/plans/2026-10-05-performance-funis-2B.md`. Subagent-driven (9 tasks). Suite verde. Mutacao 100% no modulo de calculo. **Nada em producao** - fica na branch ate o dono aprovar o conjunto (2A+2B).
+
+## 105.1. O que entrega
+
+Tela "Dashboard" dentro de Performance de Funis (aba): VISAO GERAL (lista dos funis com os numeros do periodo) + DETALHE ao clicar (etapas do funil, criativos, cadencia). Vai ate os CHECKOUTS; compras/faturamento/ROAS ficam pra 2C.
+- `lib/funis/meta-funil.ts` (puro, 100% mutacao): normalizarAd, adsDoFunil (filtro por termo), agregarFunil, metricasDoCriativo, serieDiaria.
+- `lib/meta.ts` estendido: getCampanhasComInsights (totais), getAdsComInsights / getAdsDiariosComInsights (recebem termos[], filtram por `campaign.name CONTAIN` no servidor).
+- `app/api/funis/performance/route.ts` (admin): visao geral (sem funilId) / detalhe (com funilId).
+- `app/performance-funis/dashboard/page.tsx`: visao geral + detalhe; seletor de periodo (Hoje/7/30/personalizado).
+
+## 105.2. Metricas e formulas
+
+- Investido=spend; Impressoes=impressions; Cliques=inline_link_clicks; Visitas=actions.landing_page_view; Checkouts=actions.initiate_checkout.
+- CTR = unique_clicks / reach x 100. Hook Rate = actions.video_view / impressions x 100 (so video). Custo/checkout = investido / checkouts. Divisao por zero -> "-".
+- Alcance do funil = soma de reach (APROXIMADO, rotulado; reach e de-duplicado, somar superconta; o CTR fica ~certo). Decisao do spec.
+
+## 105.3. BUG achado na prova real (provado rodando) e corrigido
+
+A 1a versao de `getAdsComInsights` puxava TODOS os ~2526 ads de uma conta + creative -> a Meta recusou ("Please reduce the amount of data you're asking for", HTTP 500 code 1). Os revisores de diff nao pegariam - so a prova contra a Meta real. Sonda achou a saida (provada): TOTAIS por CAMPANHA (431, leve), CRIATIVOS por ADS filtrados no servidor por `campaign.name CONTAIN <termo>` (poucos ads). Segundo bug: a cadencia diaria (`time_increment(1)`) truncava em ~25 dias (paginacao aninhada do insights) - corrigido com `.limit(400)`; provado com 120 dias (campanhas com 31 e 41 dias apareceram inteiras).
+
+## 105.4. Numeros reais provados (05/10/2026, 30d, 5 contas)
+
+Visao geral dos 4 funis do dono:
+- COMO SER PERDOADO [CSP]: investido R$ 122.759,88 | cliques 48.729 | CTR 2,47% | visitas 43.458 | checkouts 1.502 | custo/checkout R$ 81,73 | Hook 27,42%.
+- IMERSAO A REAPROXIMACAO [IAR,IRM]: investido R$ 39.331,91 | cliques 21.749 | CTR 4,19% | visitas 17.190 | checkouts 839 | custo/checkout R$ 46,88 | Hook 28,71%.
+- DIAGNOSTICO GUIADO e MENTORIA PARTICULAR [organicos]: zerados (sem ads), corretamente.
+Criativos (CSP): 4 anuncios com miniatura, cada um com CTR e Hook proprios. Cadencia: serie diaria coerente.
+
+## 105.5. Decisoes registradas
+
+- Camada Meta 2B: totais por CAMPANHA, criativos por ADS filtrados por termo (a Meta nao aceita todos os ads de uma conta de uma vez).
+- Alcance do funil aproximado (soma de reach), rotulado na tela.
+- scripts/mutacao.ts alinhado pra varrer lib/**/*.test.ts (antes era cego a lib/funis).
+- UI nova (2B): campo de busca de produtos (funil) e Produtos como aba; "Analises" removido a pedido do dono (ver branch).
+
+## 105.6. PENDENTE
+- Polimento visual: titulo "Visao geral" no detalhe; ticks do Y; acessibilidade do grafico.
+- 2C: vendas/faturamento reais do banco + cascata financeira + ROAS/CPA/margem.
+- 2D: atribuicao por UTM/ad_id (rastreadas x nao). **Rotacionar o token da Meta (apareceu no chat 05/10).**
