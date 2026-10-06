@@ -15,7 +15,7 @@ const NAV = [
 
 // Telas de Funis: as APIs exigem admin, então o link só aparece para admin.
 const FUNIS_NAV = [
-  { href: '/performance-funis/funis', label: 'Funis', icon: Layers },
+  { href: '/performance-funis/dashboard', label: 'Funis', icon: Layers },
 ]
 
 const TERAPEUTAS_NAV = [
