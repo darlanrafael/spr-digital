@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     const funis = (data ?? []) as FunilRow[]
 
+    const metaDisponivel = !!process.env.META_ACCESS_TOKEN
+    const aviso = metaDisponivel ? null : 'Os dados da Meta estão indisponíveis no momento. Verifique a conexão/token.'
     const contas = getAccountIds()
     const campanhasCruas = (await Promise.all(
       contas.map(a => getCampanhasComInsights(a, dateStart, dateEnd, preset)),
@@ -44,6 +46,7 @@ export async function GET(req: NextRequest) {
         funis: funis.map(f => ({
           id: f.id, nome: f.nome, organico: (f.termos_campanha ?? []).length === 0, ...agregadoDe(f),
         })),
+        aviso,
       })
     }
 
@@ -65,6 +68,7 @@ export async function GET(req: NextRequest) {
       funil: { id: funil.id, nome: funil.nome, organico: termos.length === 0, ...agregadoDe(funil) },
       criativos,
       cadencia,
+      aviso,
     })
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Erro inesperado' }, { status: 500 })

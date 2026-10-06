@@ -53,6 +53,7 @@ function VisaoGeral() {
   const [funis, setFunis] = useState<FunilPerf[]>([])
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
 
   const query = custom
     ? `dateStart=${dateStart}&dateEnd=${dateEnd}`
@@ -62,13 +63,14 @@ function VisaoGeral() {
     let cancelado = false
     setCarregando(true)
     setErro(null)
+    setAviso(null)
     fetch(`/api/funis/performance?${query}`)
       .then(async r => {
         const j = await r.json()
         if (!r.ok) throw new Error(j?.error || 'Falha ao carregar performance')
         return j
       })
-      .then(j => { if (!cancelado) setFunis((j.funis || []) as FunilPerf[]) })
+      .then(j => { if (cancelado) return; setFunis((j.funis || []) as FunilPerf[]); setAviso(j.aviso ?? null) })
       .catch(e => { if (!cancelado) setErro(e instanceof Error ? e.message : 'Falha ao carregar') })
       .finally(() => { if (!cancelado) setCarregando(false) })
     return () => { cancelado = true }
@@ -113,6 +115,7 @@ function VisaoGeral() {
         </div>
       </div>
 
+      {aviso && <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">{aviso}</div>}
       {erro && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{erro}</div>}
 
       {carregando ? (
@@ -194,11 +197,13 @@ function DetalheFunil({ funilId }: { funilId: string }) {
   const [cadencia, setCadencia] = useState<Cadencia[]>([])
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelado = false
     setCarregando(true)
     setErro(null)
+    setAviso(null)
     fetch(`/api/funis/performance?funilId=${encodeURIComponent(funilId)}&${query}`)
       .then(async r => {
         const j = await r.json()
@@ -210,6 +215,7 @@ function DetalheFunil({ funilId }: { funilId: string }) {
         setFunil((j.funil || null) as FunilPerf | null)
         setCriativos((j.criativos || []) as Criativo[])
         setCadencia((j.cadencia || []) as Cadencia[])
+        setAviso(j.aviso ?? null)
       })
       .catch(e => { if (!cancelado) setErro(e instanceof Error ? e.message : 'Falha ao carregar') })
       .finally(() => { if (!cancelado) setCarregando(false) })
@@ -233,6 +239,7 @@ function DetalheFunil({ funilId }: { funilId: string }) {
       <button onClick={voltar} className="mb-4 px-3 py-1.5 rounded-lg text-sm font-medium border border-white/10 text-[#9CA3AF] hover:text-white">
         ← Voltar para a visão geral
       </button>
+      {aviso && <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">{aviso}</div>}
       {erro && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{erro}</div>}
       {carregando ? (
         <p className="text-sm text-[#9CA3AF]">Carregando...</p>
