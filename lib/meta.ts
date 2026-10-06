@@ -292,7 +292,7 @@ export async function getAdsDiariosComInsights(
   const token = getToken()
   if (!token) return []
   const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
-  const fields = `id,campaign{name},insights.${mod}.time_increment(1){spend,inline_link_clicks}`
+  const fields = `id,campaign{name},insights.${mod}.time_increment(1).limit(400){spend,inline_link_clicks}`
   const ads = await fetchAdsPorTermos(accountId, fields, termos, token)
 
   const linhas: LinhaDiaria[] = []
