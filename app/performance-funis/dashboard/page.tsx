@@ -184,12 +184,30 @@ function CardMetrica({ label, valor, destaque }: { label: string; valor: string;
   )
 }
 
-function Etapa({ nome, valor, sub }: { nome: string; valor: string; sub?: string }) {
+const pctFrac = (num: number, den: number) => (den > 0 ? `${(num / den * 100).toFixed(2).replace('.', ',')}%` : '—')
+
+function FunnelStage({ label, value, width }: { label: string; value: string; width: number }) {
   return (
-    <div className="flex-1 min-w-[120px] rounded-xl border border-white/10 bg-[#181A20] p-4">
-      <div className="text-xs text-[#9CA3AF]">{nome}</div>
-      <div className={`${display.className} mt-1 text-xl font-bold text-white`}>{valor}</div>
-      {sub && <div className="mt-0.5 text-[11px] text-orange-300/70">{sub}</div>}
+    <div className="rounded-xl px-5 py-3 text-center backdrop-blur-sm"
+      style={{ width: `${width}%`, minWidth: 200, background: 'rgba(20,22,28,0.72)', border: '1px solid rgba(255,255,255,0.07)' }}>
+      <div className="text-[11px] text-[#9CA3AF]">{label}</div>
+      <div className={`${display.className} text-xl font-bold text-white`}>{value}</div>
+    </div>
+  )
+}
+
+function ConvPill({ rate, name, width, tone }: { rate: string; name: string; width: number; tone: number }) {
+  const grads = [
+    'linear-gradient(135deg,#FBBF24,#F59E0B)',
+    'linear-gradient(135deg,#F59E0B,#F97316)',
+    'linear-gradient(135deg,#F97316,#EA580C)',
+  ]
+  return (
+    <div className="relative z-10" style={{ width: `${width}%`, minWidth: 168 }}>
+      <div className="rounded-full px-4 py-1.5 text-center shadow-md" style={{ background: grads[tone] }}>
+        <div className={`${display.className} text-sm font-bold text-[#2a1600] leading-tight`}>{rate}</div>
+        <div className="text-[10px] font-medium text-[#3a2200] leading-tight">{name}</div>
+      </div>
     </div>
   )
 }
@@ -226,7 +244,6 @@ function DetalheFunil({ funilId }: { funilId: string }) {
 
   const voltar = `/performance-funis/dashboard?${query}`
   const criativosVisiveis = verTudo ? criativos : criativos.slice(0, TOP_CRIATIVOS)
-  const passagem = (num: number, den: number) => (den > 0 ? `${(num / den * 100).toFixed(1).replace('.', ',')}% da etapa anterior` : undefined)
 
   return (
     <>
@@ -257,18 +274,31 @@ function DetalheFunil({ funilId }: { funilId: string }) {
             <CardMetrica label="Custo / checkout" valor={fmtMoeda(funil.custoPorCheckout)} />
           </div>
 
-          {/* Etapas do funil */}
-          <section className={`${CARD} mt-5 p-5 sm:p-6`}>
-            <div className={`${display.className} text-lg font-semibold`}>Etapas do funil</div>
-            <div className="mt-4 flex flex-wrap items-stretch gap-2">
-              <Etapa nome="Impressões" valor={fmtNum(funil.impressoes)} sub={`Alcance aprox.: ${fmtNum(funil.alcanceAprox)}`} />
-              <div className="flex items-center text-[#4B5563]"><ChevronRight className="w-5 h-5" /></div>
-              <Etapa nome="Cliques" valor={fmtNum(funil.cliques)} sub={passagem(funil.cliques, funil.impressoes)} />
-              <div className="flex items-center text-[#4B5563]"><ChevronRight className="w-5 h-5" /></div>
-              <Etapa nome="Visitas" valor={fmtNum(funil.visitas)} sub={passagem(funil.visitas, funil.cliques)} />
-              <div className="flex items-center text-[#4B5563]"><ChevronRight className="w-5 h-5" /></div>
-              <Etapa nome="Checkouts" valor={fmtNum(funil.checkouts)} sub={passagem(funil.checkouts, funil.visitas)} />
+          {/* Funil visual */}
+          <section className={`${CARD} mt-5 p-5 sm:p-7`}>
+            <div className={`${display.className} text-lg font-semibold`}>Funil de anúncios</div>
+            <div className="text-xs text-[#9CA3AF]">Do anúncio ao checkout.</div>
+            <div className="relative mt-6">
+              <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <defs>
+                  <linearGradient id="funnelFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#F59E0B" stopOpacity="0.10" />
+                    <stop offset="100%" stopColor="#EA580C" stopOpacity="0.20" />
+                  </linearGradient>
+                </defs>
+                <polygon points="3,0 97,0 63,100 37,100" fill="url(#funnelFill)" stroke="rgba(249,115,22,0.22)" strokeWidth="0.4" />
+              </svg>
+              <div className="relative z-10 flex flex-col items-center gap-2">
+                <FunnelStage label="Impressões" value={fmtNum(funil.impressoes)} width={100} />
+                <ConvPill rate={pctFrac(funil.cliques, funil.impressoes)} name="Taxa de clique" width={90} tone={0} />
+                <FunnelStage label="Cliques" value={fmtNum(funil.cliques)} width={78} />
+                <ConvPill rate={pctFrac(funil.visitas, funil.cliques)} name="Carregamento da página" width={64} tone={1} />
+                <FunnelStage label="Visitas" value={fmtNum(funil.visitas)} width={58} />
+                <ConvPill rate={pctFrac(funil.checkouts, funil.visitas)} name="Ida ao checkout" width={48} tone={2} />
+                <FunnelStage label="Checkouts" value={fmtNum(funil.checkouts)} width={46} />
+              </div>
             </div>
+            <div className="mt-4 text-[11px] text-[#8A90A0]">Alcance aprox.: {fmtNum(funil.alcanceAprox)} pessoas (soma por campanha).</div>
           </section>
 
           {/* Criativos */}
