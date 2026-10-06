@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizarAd } from './meta-funil'
+import { normalizarAd, adsDoFunil } from './meta-funil'
 
 const RAW = {
   name: 'VID_Ago_03',
@@ -43,4 +43,16 @@ test('ad sem insights / sem actions -> zeros, isVideo false, sem quebrar', () =>
   assert.equal(a.videoView, 0)
   assert.equal(a.isVideo, false)
   assert.equal(a.thumbnail, null)
+})
+
+const mk = (campanha: string): any => ({ campanha, criativo: 'x', thumbnail: null, spend: 1, impressions: 1, reach: 1, inlineLinkClicks: 0, uniqueClicks: 0, landingPageView: 0, initiateCheckout: 0, videoView: 0, isVideo: false })
+
+test('pega anuncios cuja campanha CONTEM o termo (case-insensitive)', () => {
+  const ads = [mk('CSP_Vendas_Frio'), mk('IAR_Topo'), mk('Outra')]
+  assert.equal(adsDoFunil(ads, ['csp']).length, 1)
+  assert.equal(adsDoFunil(ads, ['CSP', 'IAR']).length, 2)
+})
+
+test('funil organico (sem termos) -> nenhum anuncio', () => {
+  assert.equal(adsDoFunil([mk('CSP')], []).length, 0)
 })

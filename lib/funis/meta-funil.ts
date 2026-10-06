@@ -33,3 +33,9 @@ export function normalizarAd(raw: Record<string, unknown>): AdInsight {
     isVideo: videoView > 0,
   }
 }
+
+export function adsDoFunil(ads: AdInsight[], termos: string[]): AdInsight[] {
+  const ts = (termos ?? []).map(t => t.trim().toLowerCase()).filter(Boolean)
+  if (ts.length === 0) return []
+  return ads.filter(a => { const c = a.campanha.toLowerCase(); return ts.some(t => c.includes(t)) })
+}
