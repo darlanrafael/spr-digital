@@ -19,7 +19,7 @@ export function normalizarAd(raw: Record<string, unknown>): AdInsight {
   const creative = raw.creative as { name?: string; thumbnail_url?: string } | undefined
   const videoView = acao(ins.actions, 'video_view')
   return {
-    campanha: campaign?.name ?? '',
+    campanha: (campaign?.name as string) ?? (raw.name as string) ?? '',
     criativo: creative?.name ?? (raw.name as string) ?? '',
     thumbnail: creative?.thumbnail_url ?? null,
     spend: num(ins.spend),

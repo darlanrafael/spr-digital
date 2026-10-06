@@ -162,49 +162,55 @@ function insightsModifier(dateParam: string): string {
   return `time_range(${decodeURIComponent(dateParam.slice('time_range='.length))})`
 }
 
-// Pagina act_<id>/ads por paging.next; erro numa conta nunca propaga (devolve o que tem).
-async function fetchAdsPages(
+type AdsRow = Record<string, unknown>
+
+// Pagina um endpoint de conta (ads ou campaigns) por paging.next; erro numa conta nunca propaga.
+async function fetchPaginas(
   accountId: string,
+  edge: 'ads' | 'campaigns',
   fields: string,
   token: string,
-): Promise<Record<string, unknown>[]> {
+  limit: number,
+  filtering?: string,
+): Promise<AdsRow[]> {
   let nextUrl: string | null =
-    `${BASE_URL}/act_${accountId}/ads` +
+    `${BASE_URL}/act_${accountId}/${edge}` +
     `?fields=${fields}` +
-    `&limit=500` +
+    `&limit=${limit}` +
+    (filtering ? `&filtering=${encodeURIComponent(filtering)}` : '') +
     `&access_token=${token}`
 
-  const all: Record<string, unknown>[] = []
+  const all: AdsRow[] = []
 
   while (nextUrl) {
     let res: Response
     try {
       res = await fetch(nextUrl)
     } catch (err) {
-      console.error('[Meta API] Erro de rede na conta (ads):', accountId, err)
+      console.error(`[Meta API] Erro de rede na conta (${edge}):`, accountId, err)
       break
     }
 
     if (!res.ok) {
       const body = await res.text()
-      console.error('[Meta API] Erro HTTP na conta (ads):', accountId, res.status, body.slice(0, 300))
+      console.error(`[Meta API] Erro HTTP na conta (${edge}):`, accountId, res.status, body.slice(0, 300))
       break
     }
 
     const json = await res.json() as {
-      data?: Record<string, unknown>[]
+      data?: AdsRow[]
       paging?: { next?: string }
       error?: { message: string }
     }
 
     if (json.error) {
-      console.error('[Meta API] Erro na conta (ads):', accountId, json.error.message)
+      console.error(`[Meta API] Erro na conta (${edge}):`, accountId, json.error.message)
       break
     }
 
     const page = json.data ?? []
     all.push(...page)
-    console.log(`[Meta API] conta ${accountId}: página com ${page.length} ads (total acumulado: ${all.length})`)
+    console.log(`[Meta API] conta ${accountId}: página com ${page.length} ${edge} (total acumulado: ${all.length})`)
 
     nextUrl = json.paging?.next ?? null
   }
@@ -212,7 +218,40 @@ async function fetchAdsPages(
   return all
 }
 
-export async function getAdsComInsights(
+// Um fetch por termo (filtering campaign.name CONTAIN), junta e deduplica por id.
+async function fetchAdsPorTermos(
+  accountId: string,
+  fields: string,
+  termos: string[],
+  token: string,
+): Promise<AdsRow[]> {
+  const ts = (termos ?? []).map(t => t.trim()).filter(Boolean)
+  if (ts.length === 0) return []
+
+  const porTermo = await Promise.all(ts.map(termo =>
+    fetchPaginas(
+      accountId, 'ads', fields, token, 200,
+      JSON.stringify([{ field: 'campaign.name', operator: 'CONTAIN', value: termo }]),
+    )
+  ))
+
+  const vistos = new Set<string>()
+  const out: AdsRow[] = []
+  for (const row of porTermo.flat()) {
+    const id = row.id as string | undefined
+    if (id) {
+      if (vistos.has(id)) continue
+      vistos.add(id)
+    }
+    out.push(row)
+  }
+  return out
+}
+
+const INSIGHT_FIELDS = 'spend,impressions,reach,inline_link_clicks,unique_clicks,actions,video_play_actions'
+
+// Totais do funil / visão geral: campanhas (poucas) em vez de todos os ads.
+export async function getCampanhasComInsights(
   accountId: string,
   dateStart: string,
   dateEnd: string,
@@ -220,30 +259,43 @@ export async function getAdsComInsights(
 ): Promise<Record<string, unknown>[]> {
   const token = getToken()
   if (!token) return []
-
   const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
-  const fields =
-    `name,campaign{name},creative{name,thumbnail_url},` +
-    `insights.${mod}{spend,impressions,reach,inline_link_clicks,unique_clicks,actions,video_play_actions}`
-
-  return fetchAdsPages(accountId, fields, token)
+  return fetchPaginas(accountId, 'campaigns', `name,insights.${mod}{${INSIGHT_FIELDS}}`, token, 500)
 }
 
+// Criativos do detalhe de um funil: ads filtrados por campanha no servidor da Meta.
+export async function getAdsComInsights(
+  accountId: string,
+  dateStart: string,
+  dateEnd: string,
+  termos: string[],
+  datePreset?: string,
+): Promise<Record<string, unknown>[]> {
+  const token = getToken()
+  if (!token) return []
+  const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
+  const fields =
+    `id,name,campaign{name},creative{name,thumbnail_url},insights.${mod}{${INSIGHT_FIELDS}}`
+  return fetchAdsPorTermos(accountId, fields, termos, token)
+}
+
+type LinhaDiaria = { campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }
+
+// Cadência do detalhe (escopo de 1 funil): um registro por dia por ad.
 export async function getAdsDiariosComInsights(
   accountId: string,
   dateStart: string,
   dateEnd: string,
+  termos: string[],
   datePreset?: string,
-): Promise<{ campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[]> {
+): Promise<LinhaDiaria[]> {
   const token = getToken()
   if (!token) return []
-
   const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
-  const fields = `campaign{name},insights.${mod}.time_increment(1){spend,inline_link_clicks}`
+  const fields = `id,campaign{name},insights.${mod}.time_increment(1){spend,inline_link_clicks}`
+  const ads = await fetchAdsPorTermos(accountId, fields, termos, token)
 
-  const ads = await fetchAdsPages(accountId, fields, token)
-
-  const linhas: { campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[] = []
+  const linhas: LinhaDiaria[] = []
   for (const ad of ads) {
     const campaignName = ((ad.campaign as { name?: string } | undefined)?.name) ?? ''
     const dias = ((ad.insights as { data?: Array<Record<string, string>> } | undefined)?.data) ?? []

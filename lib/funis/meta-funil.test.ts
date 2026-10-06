@@ -102,3 +102,13 @@ test('soma por dia e ordena por data', () => {
     { data: '2026-10-02', investido: 125, cliques: 13 },
   ])
 })
+
+test('linha de CAMPANHA (nome no topo, sem campaign aninhado) casa e agrega o funil', () => {
+  const a = normalizarAd({ name: 'CSP_X', insights: { data: [{ spend: '10', impressions: '100' }] } })
+  assert.equal(a.campanha, 'CSP_X')
+  const f = adsDoFunil([a], ['csp_x'])
+  assert.equal(f.length, 1)
+  const ag = agregarFunil(f)
+  assert.equal(ag.investido, 10)
+  assert.equal(ag.impressoes, 100)
+})
