@@ -75,7 +75,7 @@ function linhasDeCodigo(texto: string): Set<number> {
 
 function suiteVerde(): boolean {
   try {
-    execSync('npx tsx --test lib/*.test.ts', { stdio: 'pipe', timeout: 120_000 })
+    execSync('npx tsx --test lib/*.test.ts lib/**/*.test.ts', { stdio: 'pipe', timeout: 120_000 })
     return true
   } catch { return false }
 }
