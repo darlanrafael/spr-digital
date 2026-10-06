@@ -1,5 +1,5 @@
 export type AdInsight = {
-  campanha: string; criativo: string; thumbnail: string | null
+  campanha: string; criativo: string; anuncio: string; thumbnail: string | null
   spend: number; impressions: number; reach: number
   inlineLinkClicks: number; uniqueClicks: number
   landingPageView: number; initiateCheckout: number
@@ -21,6 +21,7 @@ export function normalizarAd(raw: Record<string, unknown>): AdInsight {
   return {
     campanha: (campaign?.name as string) ?? (raw.name as string) ?? '',
     criativo: creative?.name ?? (raw.name as string) ?? '',
+    anuncio: (raw.name as string) ?? '',
     thumbnail: creative?.thumbnail_url ?? null,
     spend: num(ins.spend),
     impressions: num(ins.impressions),

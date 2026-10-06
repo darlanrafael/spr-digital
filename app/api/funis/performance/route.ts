@@ -2,15 +2,27 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { lerIdentidade, podeAdministrar } from '@/lib/identidade-da-chamada'
 import {
-  getAccountIds, getCampanhasPorTermos, getAdsComInsights, getAdsDiariosComInsights,
+  getAccountIds, getCampanhasComInsights, getAdsComInsights, getAdsDiariosComInsights,
 } from '@/lib/meta'
 import {
-  normalizarAd, adsDoFunil, agregarFunil, metricasDoCriativo, serieDiaria,
+  normalizarAd, adsDoFunil, agregarFunil, metricasDoCriativo, serieDiaria, type AdInsight,
 } from '@/lib/funis/meta-funil'
 
 export const dynamic = 'force-dynamic'
 
 type FunilRow = { id: string; nome: string; termos_campanha: string[] | null }
+
+// Cache curto em memória: a Meta é lenta (5 contas), então guardamos o resultado
+// por período por 2 min. Navegar entre funis/períodos repetidos fica instantâneo.
+const TTL = 120_000
+const cache = new Map<string, { t: number; v: unknown }>()
+async function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.t < TTL) return hit.v as T
+  const v = await fn()
+  cache.set(key, { t: Date.now(), v })
+  return v
+}
 
 export async function GET(req: NextRequest) {
   const quem = lerIdentidade(req)
@@ -27,6 +39,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'datePreset ou dateStart+dateEnd são obrigatórios' }, { status: 400 })
     }
     const preset = datePreset || undefined
+    const periodo = `${datePreset}|${dateStart}|${dateEnd}`
 
     const { data, error } = await getSupabaseAdmin().from('funis').select('id,nome,termos_campanha')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -35,11 +48,12 @@ export async function GET(req: NextRequest) {
     const metaDisponivel = !!process.env.META_ACCESS_TOKEN
     const aviso = metaDisponivel ? null : 'Os dados da Meta estão indisponíveis no momento. Verifique a conexão/token.'
     const contas = getAccountIds()
-    const todosTermos = [...new Set(funis.flatMap(f => (f.termos_campanha ?? [])))]
-    const campanhasCruas = todosTermos.length === 0 ? [] : (await Promise.all(
-      contas.map(a => getCampanhasPorTermos(a, dateStart, dateEnd, todosTermos, preset)),
-    )).flat()
-    const campanhas = campanhasCruas.map(normalizarAd)
+    const temTermos = funis.some(f => (f.termos_campanha ?? []).length > 0)
+
+    // Totais (visão geral e cabeçalho do detalhe) vêm das campanhas, cacheadas por período.
+    const campanhas: AdInsight[] = !temTermos ? [] : await cached(`camps|${periodo}`, async () =>
+      (await Promise.all(contas.map(a => getCampanhasComInsights(a, dateStart, dateEnd, preset)))).flat().map(normalizarAd),
+    )
     const agregadoDe = (f: FunilRow) => agregarFunil(adsDoFunil(campanhas, f.termos_campanha ?? []))
 
     if (!funilId) {
@@ -58,12 +72,18 @@ export async function GET(req: NextRequest) {
     let criativos: ReturnType<typeof metricasDoCriativo>[] = []
     let cadencia: ReturnType<typeof serieDiaria> = []
     if (termos.length > 0) {
-      const [ads, diarios] = await Promise.all([
-        Promise.all(contas.map(a => getAdsComInsights(a, dateStart, dateEnd, termos, preset))),
-        Promise.all(contas.map(a => getAdsDiariosComInsights(a, dateStart, dateEnd, termos, preset))),
-      ])
-      criativos = ads.flat().map(normalizarAd).map(metricasDoCriativo).sort((a, b) => b.spend - a.spend)
-      cadencia = serieDiaria(diarios.flat())
+      const det = await cached(`det|${funilId}|${periodo}`, async () => {
+        const [ads, diarios] = await Promise.all([
+          Promise.all(contas.map(a => getAdsComInsights(a, dateStart, dateEnd, termos, preset))),
+          Promise.all(contas.map(a => getAdsDiariosComInsights(a, dateStart, dateEnd, termos, preset))),
+        ])
+        return {
+          criativos: ads.flat().map(normalizarAd).map(metricasDoCriativo).sort((a, b) => b.spend - a.spend),
+          cadencia: serieDiaria(diarios.flat()),
+        }
+      })
+      criativos = det.criativos
+      cadencia = det.cadencia
     }
     return NextResponse.json({
       funil: { id: funil.id, nome: funil.nome, organico: termos.length === 0, ...agregadoDe(funil) },
