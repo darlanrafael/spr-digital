@@ -39,3 +39,45 @@ export function adsDoFunil(ads: AdInsight[], termos: string[]): AdInsight[] {
   if (ts.length === 0) return []
   return ads.filter(a => { const c = a.campanha.toLowerCase(); return ts.some(t => c.includes(t)) })
 }
+
+function pct(num: number, den: number): number | null {
+  if (!den) return null
+  return Math.round((num / den * 100) * 100) / 100
+}
+
+function razao(num: number, den: number): number | null {
+  if (!den) return null
+  return Math.round((num / den) * 100) / 100
+}
+
+export type FunilAgregado = {
+  investido: number; impressoes: number; cliques: number; visitas: number; checkouts: number
+  ctr: number | null; hookRate: number | null; custoPorCheckout: number | null; alcanceAprox: number
+}
+
+export function agregarFunil(ads: AdInsight[]): FunilAgregado {
+  const soma = (f: (a: AdInsight) => number) => ads.reduce((s, a) => s + f(a), 0)
+  const investido = soma(a => a.spend)
+  const impressoes = soma(a => a.impressions)
+  const alcanceAprox = soma(a => a.reach)
+  const uniq = soma(a => a.uniqueClicks)
+  const checkouts = soma(a => a.initiateCheckout)
+  const video = ads.filter(a => a.isVideo)
+  const videoViews = video.reduce((s, a) => s + a.videoView, 0)
+  const impressoesVideo = video.reduce((s, a) => s + a.impressions, 0)
+  return {
+    investido, impressoes, alcanceAprox,
+    cliques: soma(a => a.inlineLinkClicks),
+    visitas: soma(a => a.landingPageView),
+    checkouts,
+    ctr: pct(uniq, alcanceAprox),
+    hookRate: pct(videoViews, impressoesVideo),
+    custoPorCheckout: razao(investido, checkouts),
+  }
+}
+
+export type CriativoMetricas = AdInsight & { ctr: number | null; hookRate: number | null }
+
+export function metricasDoCriativo(ad: AdInsight): CriativoMetricas {
+  return { ...ad, ctr: pct(ad.uniqueClicks, ad.reach), hookRate: ad.isVideo ? pct(ad.videoView, ad.impressions) : null }
+}
