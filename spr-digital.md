@@ -5794,3 +5794,54 @@ Criativos (CSP): 4 anuncios com miniatura, cada um com CTR e Hook proprios. Cade
 - Polimento visual: titulo "Visao geral" no detalhe; ticks do Y; acessibilidade do grafico.
 - 2C: vendas/faturamento reais do banco + cascata financeira + ROAS/CPA/margem.
 - 2D: atribuicao por UTM/ad_id (rastreadas x nao). **Rotacionar o token da Meta (apareceu no chat 05/10).**
+
+# 106. BUG: remarcar sessao nao zerava os carimbos de lembrete -> paciente sem aviso (09/10/2026)
+
+## 106.1. Sintoma
+Aline Damam tinha sessao com o Pedro hoje (09/10 11:20 BRT) mas NAO entrou no disparo
+de lembrete da vespera (nem no de 30min). Pedro tinha 4 sessoes no dia; as outras 3
+foram avisadas, so a da Aline nao.
+
+## 106.2. Causa raiz (provado rodando + leitura)
+A sessao (id 92922f74...) foi ANULADA e REMARCADA em 06/10: concluida em 30/09 (flags de
+lembrete carimbados legitimamente p/ o slot de 30/09), depois anulada (entregue->agendada)
+e remarcada de 30/09 p/ 09/10 - mas os 4 carimbos `lembrete_*_enviado_em` seguiam com data
+de 30/09. O disparo (lib/whatsapp-pendentes.ts:88-96) so seleciona `status='agendada'` com
+`.or(colGrupo.is.null, colPaciente.is.null)` - com os 4 carimbos cheios a sessao e tratada
+como "ja avisada" e pulada. TRES rotas reescrevem `data_agendada` de uma sessao existente e
+gravavam a data nova SEM zerar os carimbos:
+- app/api/terapeutas/sessoes/remarcar/route.ts (update)
+- app/api/terapeutas/sessoes/empurrar-seguintes/route.ts (upsert; colunas fora do payload ficam intactas)
+- app/api/terapeutas/vendas/route.ts (tipo:'remarcacao' - MESMO caminho de escrita, achado so na 2a varredura)
+(`agendar` faz insert de sessao nova, nasce com flags nulos - fora de escopo, confirmado.
+ `anular` em sessoes/route.ts PATCH volta status p/ 'agendada' MAS nao muda a data, entao
+ sozinho nao gera carimbo velho; o estrago vem no passo da remarcacao.)
+
+## 106.3. Correcao
+Novo lib/lembretes-da-sessao.ts (fonte unica das 4 colunas de controle + LEMBRETES_ZERADOS +
+comLembretesZerados, com teste lib/lembretes-da-sessao.test.ts). As TRES rotas passam a
+espalhar `...LEMBRETES_ZERADOS` ao mudar a data. Seguro ate remarcando pra hoje: o
+notificarEncaixe manda o aviso imediato e o n8n re-marca o 30min (lib/notificar-encaixe.ts:4-5),
+sem duplicar. Suite 875/875 verde, tsc limpo. Fix unitario-testado + typecheck + wiring por
+leitura (rota nao roda no test runner; nao disparei uma remarcacao real).
+LICAO: na 1a varredura achei so 2 rotas; a 3a (vendas/route.ts) so apareceu quando varri
+TODOS os `.update/.upsert` de sessoes. Sempre varrer todos os caminhos de escrita, nao so o obvio.
+
+## 106.4. Patch imediato de dados (fora do deploy)
+Sessao da Aline teve os carimbos de 30min zerados via SQL no Supabase (rodado pelo dono; a
+escrita direta foi bloqueada pro Claude pelo controle de permissao) pra salvar o aviso de hoje:
+`update sessoes set lembrete_grupo_30min_enviado_em=null, lembrete_paciente_30min_enviado_em=null
+where id='92922f74-8931-4632-979c-4a7bae510206';`
+
+## 106.5. PENDENTE
+- Deploy: fix esta na copia local, nao foi para main/Vercel ainda (dono publica).
+- Limpeza retroativa: varredura (09/10) achou 7 sessoes agendadas futuras com carimbo >2 dias
+  antes da propria data_agendada (vitimas ja remarcadas antes do fix) - SQL de reset pronto no
+  chat (zera os 4 flags dos 7 ids). Rodar no Supabase.
+
+## 106.6. IDEIA EM ABERTO (estruturar depois) - pedido do dono 09/10/2026
+Ter uma NOTIFICACAO/alerta quando uma situacao dessas acontecer, nos moldes dos avisos de
+reembolso e de fechamento. Gatilhos candidatos: (a) sessao agendada futura cujo lembrete nao
+vai disparar (carimbo mais velho que a data); (b) sessao paga que foi anulada depois
+(comissao paga sem entrega valida). Canal: ja existe `N8N_ALERTA_WEBHOOK_URL` no projeto -
+provavel reaproveitar. NAO construir ainda; so a ideia registrada.
