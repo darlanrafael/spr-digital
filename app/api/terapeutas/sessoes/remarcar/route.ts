@@ -8,6 +8,7 @@ import { notificarEncaixe } from '@/lib/notificar-encaixe'
 import { quebraIntervalo, formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { lerIdentidade } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
+import { LEMBRETES_ZERADOS } from '@/lib/lembretes-da-sessao'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -118,6 +119,12 @@ export async function POST(req: NextRequest) {
     data_agendada: novaDataISO,
     status: 'agendada',
     updated_at: new Date().toISOString(),
+    // A sessao mudou de horario: zera os carimbos de lembrete pra ela voltar a
+    // entrar no disparo (vespera/30min) na data nova. Sem isso, o disparo via
+    // os carimbos antigos cheios e pulava a sessao como "ja avisada" (bug da
+    // Aline Damam, 09/10/2026). Seguro ate remarcando pra hoje: o
+    // notificarEncaixe abaixo manda o aviso imediato e o n8n re-marca o 30min.
+    ...LEMBRETES_ZERADOS,
   }).eq('id', sessao_id)
 
   if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })

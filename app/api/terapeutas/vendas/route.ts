@@ -4,6 +4,7 @@ import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeuta
 import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { classificarVendas, COLUNAS_DA_TELA_DE_VENDAS, termosDeProduto } from '@/lib/vendas-por-situacao'
+import { LEMBRETES_ZERADOS } from '@/lib/lembretes-da-sessao'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SaleRow = {
@@ -384,6 +385,11 @@ export async function POST(req: NextRequest) {
       const { error: errRemarcar } = await supabase.from('sessoes').update({
         data_agendada: nova_data,
         status: 'agendada',
+        // Mudou o horario: zera os carimbos de lembrete pra sessao reentrar no
+        // disparo na data nova. Este e o MESMO caminho de escrita que
+        // /api/terapeutas/sessoes/remarcar - precisa do mesmo reset, senao a
+        // remarcacao feita por aqui cai no bug da Aline. Ver lib/lembretes-da-sessao.
+        ...LEMBRETES_ZERADOS,
       }).eq('id', sessao_id)
       if (errRemarcar) return NextResponse.json({ error: errRemarcar.message }, { status: 500 })
 

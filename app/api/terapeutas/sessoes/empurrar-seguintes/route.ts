@@ -6,6 +6,7 @@ import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { buscarConflitosMultiTerapeuta, mensagemConflito } from '@/lib/agenda-conflitos'
 import { novasDatasSeguintes, formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
+import { LEMBRETES_ZERADOS } from '@/lib/lembretes-da-sessao'
 
 // Sem `maxDuration` declarado, a Vercel corta a função em 10 s. Esta rota fala
 // com o Google Calendar duas vezes por sessão movida (cancelar o evento antigo
@@ -163,6 +164,11 @@ export async function POST(req: NextRequest) {
       paciente_email: s.paciente_email as string,
       data_agendada: novasDatas[i],
       updated_at: agora,
+      // Cada seguinte muda de dia: zera os carimbos de lembrete pra entrar no
+      // disparo (vespera/30min) na data nova. Sem isto, o upsert mantinha os
+      // carimbos antigos (as colunas fora do payload ficam intactas) e o
+      // paciente nao era avisado no horario novo. Ver lib/lembretes-da-sessao.
+      ...LEMBRETES_ZERADOS,
     })),
     { onConflict: 'id' }
   )
