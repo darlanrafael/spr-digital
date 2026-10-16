@@ -5833,11 +5833,17 @@ escrita direta foi bloqueada pro Claude pelo controle de permissao) pra salvar o
 `update sessoes set lembrete_grupo_30min_enviado_em=null, lembrete_paciente_30min_enviado_em=null
 where id='92922f74-8931-4632-979c-4a7bae510206';`
 
-## 106.5. PENDENTE
-- Deploy: fix esta na copia local, nao foi para main/Vercel ainda (dono publica).
-- Limpeza retroativa: varredura (09/10) achou 7 sessoes agendadas futuras com carimbo >2 dias
-  antes da propria data_agendada (vitimas ja remarcadas antes do fix) - SQL de reset pronto no
-  chat (zera os 4 flags dos 7 ids). Rodar no Supabase.
+## 106.5. STATUS / PENDENTE
+- Deploy: FEITO em 09/10/2026. Deploy ISOLADO - branch fix/lembrete-remarcacao a partir da
+  origin/main, so os 5 arquivos de codigo (sem a feature de funis), fast-forward main
+  111b211 -> 1de39db. A doc (este item 106) e o commit 3f6fbe3 ficam na feature
+  performance-funis-2a (sobem quando o funil for publicado).
+- PENDENTE Limpeza retroativa: varredura (09/10) achou 7 sessoes agendadas futuras com carimbo
+  >2 dias antes da propria data_agendada (vitimas ja remarcadas ANTES do fix - o codigo so
+  conserta daqui pra frente, nao limpa o que ja estava velho). SQL de reset (zera os 4 flags
+  dos 7 ids) no chat / abaixo. RODAR no Supabase. Ids:
+  92922f74 (Aline 09/10), d311794f (Mario 15/10), 817ccdcb (Jose Carlos 15/10),
+  5b004bf8 (Edison 30/10), 22145c21 (Elson 11/11), 7ebe5109 (Elson 18/11), e14855bb (Valdineia 28/12).
 
 ## 106.6. IDEIA EM ABERTO (estruturar depois) - pedido do dono 09/10/2026
 Ter uma NOTIFICACAO/alerta quando uma situacao dessas acontecer, nos moldes dos avisos de
@@ -5845,3 +5851,118 @@ reembolso e de fechamento. Gatilhos candidatos: (a) sessao agendada futura cujo 
 vai disparar (carimbo mais velho que a data); (b) sessao paga que foi anulada depois
 (comissao paga sem entrega valida). Canal: ja existe `N8N_ALERTA_WEBHOOK_URL` no projeto -
 provavel reaproveitar. NAO construir ainda; so a ideia registrada.
+
+# 107. Performance de Funis - acabamento + simplificacao (config no lugar de cadastro) (12/10/2026)
+
+Retomada do dashboard de Performance de Funis (2A/2B seguem NA BRANCH feature/performance-funis-2a,
+nada em producao). Antes de codar, varri este chat porque nem tudo foi pro MD - e de fato faltava
+muita coisa (abaixo). Base da conversa: o dono quer o dashboard IGUAL ao prototipo
+(app/performance-funis/page.tsx, untracked): chips dos funis lado a lado em cima, clicou muda tudo
+(funil visual + Resultado + criativos + cadencia).
+
+## 107.1. MUDANCA DE ARQUITETURA (decidida 12/10, dono)
+ELIMINAR a maquina de cadastro de funil (tela de cadastrar + tabela `funis`/`funil_produtos` +
+PATCH + dedupe de produtos) - foi onde a 2A mais deu dor. Em vez disso, os funis ficam num
+ARQUIVO DE CONFIG no codigo, definido dono+Claude juntos. Adicionar/editar funil = pedir aqui +
+1 deploy (sem self-service na hora). Dono topou o trade-off explicitamente.
+-> A rota de performance deixa de ler do banco `funis` e passa a ler do config.
+-> Cai a aba "Cadastrar funis". (Aba "Produtos" a definir se fica.)
+
+## 107.2. Os 4 funis atuais (fonte da verdade pro config - puxado do banco 12/10)
+- COMO SER PERDOADO: termos_campanha ["CSP"]; 5 produtos (hubla):
+  HYscfyfSoG2CrsS6JpSe, eNsZ824PsAgz2DrvKYxw, OOKdn0lKVKGBBLhY78BY, 1s8rVxvbITB2ejQHEHKx, FL2Rs2rICpeVMCW77j6n
+- DIAGNOSTICO GUIADO: termos [] (organico); 3 produtos:
+  kiwify 69927290-ac5c-11f1-ab27-272671e00356, hubla wd6AwMQlJGAekPCGCRsb, hubla EQLzxtfxZAyBfVLogYcM
+- IMERSAO A REAPROXIMACAO: termos ["IAR","IRM"]; 7 produtos:
+  hubla d7tvBd7toCPnVZnOWUaZ, kiwify f34a2630-d9e0-11f0-ac73-b5cf3aba727f, hubla 0uQLyW37o3FYhr7tLPhd,
+  kiwify 32e2ad30-ee86-11f0-8fbb-ab178724d381, kiwify e6bd44b0-ee85-11f0-a468-3f63a07cd627,
+  kiwify 4eefa810-ee87-11f0-b4f2-9f6e27362ab7, kiwify 703507b0-ee85-11f0-8e0e-212248210abf
+- MENTORIA PARTICULAR - PEDRO RONCADA: termos [] (organico); 2 produtos:
+  hubla hS1GaZMDexAZJ8yq8snC, kiwify b59c2d60-dfa3-11f0-b343-c70d3941c8b2
+(produto_id = id externo da plataforma, igual ao sales.produto_id; products.id e UUID interno, nao bate.)
+
+## 107.3. PENDENCIAS que estavam SO no chat (nao tinham ido pro MD)
+1. Bloco Resultado financeiro (cascata desenhada pelo dono): Faturamento bruto -> Taxas da plataforma
+   -> Investimento em trafego -> Impostos da operacao -> TOTAL LIQUIDO; + Resultado liquido,
+   ROAS (bruto / trafego), Margem liquida (liquido / bruto), Investido (trafego Meta).
+   Dono mandou TIRAR os "%" dos rotulos mas MANTER o calculo.
+   ** EM ABERTO: aliquota dos impostos da operacao - dono falou "13,5%" numa msg e "18,85" noutra. CONFIRMAR. **
+2. Conjunto completo de metricas: Investido, VENDAS, FATURAMENTO, ROAS, CPA, CTR, Hook Rate
+   (o 2B parou nos checkouts; vendas/faturamento/ROAS/CPA ficaram fora). Vem das vendas reais do banco.
+3. Cadencia = RESULTADO LIQUIDO DIARIO em grafico de linha por dia da semana, abaixo dos criativos.
+4. Comparativo na cadencia: "x a mais/menos que o dia anterior"; sub-bloco com MELHOR DIA DA SEMANA e
+   MELHORES HORARIOS numa amostra retroativa de 30 dias.
+5. EM ABERTO (duvida do dono, nunca resolvida): a linha do resultado diario mostra so o dia da semana,
+   sem a data escrita - isso e problema? decidir.
+6. Abas dentro de Performance de Funis: Dashboard + Produtos (a definir) + [Cadastrar funis CAI, ver 107.1].
+7. NOVO (pedido 12/10): bloco SEPARADO de REEMBOLSO do PRODUTO DE ENTRADA, grafico de linha diario no
+   mesmo estilo do "Resultado liquido diario", pra analisar reembolso a parte. Produto de entrada a
+   DEFINIR no futuro. No prototipo entra com dado ficticio. EM ABERTO: a linha mede valor R$/dia,
+   quantidade/dia, ou taxa de reembolso %/dia? (e se muda por funil ou e fixo no produto de entrada).
+Formulas JA no MD (105.2): CTR = cliques unicos / alcance x100; Hook = video 3s / impressoes x100. Formato
+video/imagem: trocar isVideo=videoView>0 por creative.object_type (bug: video com 0 entrega vira Imagem).
+
+## 107.4. PLANO
+Construir em cima do prototipo com a skill frontend-design, UMA FASE POR VEZ (dono cansou de mudanca
+grande de uma vez). Ordem sugerida: (1) dashboard igual ao prototipo + config dos funis; depois as
+correcoes 107.3. Nada em producao ate aprovado; publicar 2A+2B (sem a maquina de cadastro) no fim.
+
+# 108. BUG: venda internacional da Kiwify rotulada na moeda ERRADA (cobranca x repasse) (15/10/2026)
+
+## 108.1. Sintoma
+Venda da Natalia Rezende (Kiwify, "Mentoria - Individual Pedro Roncada", 09/10) aparecia na Conferencia
+do fechamento como "MXN 487,77" pedindo conversao. O dono perguntou "que moeda e MXN?". Na verdade: a
+cliente PAGOU em peso mexicano (10.354,00 MXN = 542,79 USD), mas a Kiwify liquida o REPASSE da empresa
+em DOLAR: SPR recebe 487,77 USD = R$ 2.447,58 (a propria Kiwify mostra em reais).
+
+## 108.2. Causa raiz (3 agentes, convergente)
+`lib/kiwify-sale.ts` lia a moeda de `Commissions.currency` (a moeda da COBRANCA = MXN) via
+`moedaDaKiwify` (lib/moeda-da-venda.ts), e punha `valor_liquido = my_commission` (que vem no SETTLEMENT
+= USD) na MESMA linha. Resultado: linha MISTA (bruto em peso, liquido em dolar) toda rotulada MXN -
+exatamente o defeito que o modulo existe pra evitar (item 57, caso Hubla/Rosana). 2o buraco: o parser
+da Kiwify NAO gravava o flag `normalizado` (o da Hubla grava), entao a trava da rota de conversao
+(converter-moeda, normalizado===false) nao disparava e um cambio unico saia errado em silencio.
+
+## 108.3. Impacto (varredura de dados)
+Restrito: EXATAMENTE 2 vendas, as duas Kiwify, as duas pendentes (nao convertidas), as duas de out/2026,
+as duas DEPOIS do ultimo fechamento (17/09). ZERO fechamento confirmado afetado. (Natalia MXN->USD;
+Rosana Maria da conceicao EUR->USD, 7,02 USD.) Ressalva: vendas internacionais Kiwify anteriores a
+~11/09 (antes da migracao de moeda) nao tem valores_originais e nao sao detectaveis.
+
+## 108.4. Correcao (TDD, deploy isolado)
+`moedaDaKiwify` passa a ler `settlement_amount_currency` (repasse), com fallback pra `currency`. Nova
+`valoresInternacionaisDaKiwify`: monta a linha homogenea na moeda do repasse - usa o cobrado quando
+cobranca==repasse; quando diferem, reconstroi o bruto = liquido + taxa (so se a taxa estiver na moeda do
+repasse); senao devolve null (linha fica normalizado:false -> conversao RECUSADA). `kiwify-sale.ts`
+grava `normalizado: !!valoresEmMoeda`. Testes: fixture real da Natalia em lib/moeda-da-venda.test.ts e
+lib/kiwify-sale.test.ts. Suite 883/883, tsc 0. PROVADO rodando: parse da Natalia -> moeda USD,
+liquido 487,77 USD (R$ 2.447,58 a 5,0179 = bate com a Kiwify), bruto 542,79, normalizado true.
+
+## 108.5. REVISAO FINAL (3 revisores adversariais, 15/10) - achou e CORRIGIU 3 furos
+Antes do deploy, 3 revisores por angulos diferentes. Acharam 3 defeitos reais (todos dormentes com os
+dados de hoje, mas corrigidos antes de subir):
+- BREAK A (grave): settlement em BRL (cobra em dolar, liquida em real - config comum) caia no fallback
+  da cobranca e rotulava USD; um cambio multiplicaria valor JA em real (~5x). Fix: quando o settlement
+  VEM, ele manda (estrangeiro->aquela moeda; BRL->null); so cai no fallback quando o settlement AUSENTE.
+- Finding 1: settlement ausente numa venda cruzada montava linha mista marcada normalizado:true. Fix:
+  valoresInternacionaisDaKiwify EXIGE settlement estrangeiro conhecido; sem ele -> null -> normalizado:false.
+- BREAK D (baixo): usava settlement_amount (total) no liquido; em co-producao superestimaria. Fix: usa
+  my_commission (repasse da SPR).
+3 testes de regressao pinam cada um. Suite 886/886, tsc 0, demo Natalia segue USD 487,77/542,79 normalizado.
+Revisor financeiro (R2): logica de liquido/repasse CORRETA, sem bloqueio. Ressalvas de modelagem (108.6).
+
+## 108.6. DECISOES DE MODELAGEM (conscientes, do revisor financeiro)
+- Faturamento BRUTO internacional fica na base da LIQUIDACAO (USD: liquido+taxa), nao no preco cheio em
+  peso. Coincide com o domestico sem desconto; diverge com cupom. E o numero economicamente correto (o
+  que entrou) e segue o precedente da Hubla. Nao afeta liquido nem repasse.
+- Spread de cambio da Kiwify (MXN->USD) e imposto estrangeiro (IVA) nao entram em coluna de dinheiro;
+  ficam so em valores_originais. Julgamento fiscal: a empresa so recebe USD.
+- Reconstrucao bruto = liquido + taxa assume PRODUTOR UNICO (sem afiliado/coprodutor). O sistema nao
+  modela afiliado Kiwify hoje; se passar a existir venda internacional com afiliado, revisar.
+
+## 108.7. STATUS / PENDENTE
+- Deploy: ISOLADO (so lib/moeda-da-venda.ts + lib/kiwify-sale.ts + os 2 testes).
+- As 2 vendas pendentes (Natalia id 260fc482..., Rosana Maria id 40ccbe62...): SQL de reclassificacao
+  pra USD ja rodado pelo dono (colunas top-level ja estao USD; o fix do codigo so vale pra vendas NOVAS).
+  OBS (R3): o SQL nao atualizou `valores_originais` (ainda diz MXN/EUR e sem normalizado) - inofensivo
+  pro conversor (normalizado ausente = permitido, e a linha ja esta USD homogenea), so JSON desatualizado.

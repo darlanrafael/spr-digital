@@ -62,6 +62,23 @@ export function moedaDaHubla(invoice: Record<string, unknown> | null | undefined
  */
 export function moedaDaKiwify(commissions: Record<string, unknown> | null | undefined): string | null {
   if (!commissions) return null
+  // A moeda que IMPORTA e a do REPASSE (settlement): `valor_liquido` vem de
+  // `my_commission`, que esta NELA. `commissions.currency` e a moeda da
+  // COBRANCA (o que o cliente pagou) e pode ser OUTRA - foi o bug da Natalia
+  // (pagou em peso, a empresa recebe em dolar). Ver item 108 do spr-digital.md.
+  //
+  // Quando o settlement VEM, ele MANDA: estrangeiro -> aquela moeda; BRL ->
+  // real (null). Nao cai no fallback da cobranca nesse caso - senao uma venda
+  // LIQUIDADA EM REAL mas cobrada em dolar seria marcada estrangeira por engano
+  // e um cambio multiplicaria um valor que ja esta em real (achado da revisao).
+  const settlement = commissions.settlement_amount_currency
+  if (typeof settlement === 'string' && settlement.trim().length > 0) {
+    return naoEhDaCasa(settlement) ? settlement.trim().toUpperCase() : null
+  }
+  // Settlement AUSENTE: cai pra moeda da cobranca so pra nao deixar passar como
+  // real uma venda que ja chega estrangeira. Sem o settlement,
+  // `valoresInternacionaisDaKiwify` devolve null -> normalizado:false -> a
+  // conversao e recusada (nunca assume que cobranca == repasse).
   if (naoEhDaCasa(commissions.currency)) return String(commissions.currency).trim().toUpperCase()
   return null
 }
@@ -118,5 +135,57 @@ export function valoresInternacionaisDaHubla(invoice: Record<string, unknown>): 
     valor_pago_cliente: sub / 100,
     valor_com_juros:    tot / 100,
     valor_liquido:      Math.round(rep) / 100,
+  }
+}
+
+/**
+ * Os valores da venda da Kiwify quando ela e internacional, HOMOGENEOS na moeda
+ * do REPASSE (settlement).
+ *
+ * `my_commission`/`settlement_amount` ja vem na moeda do repasse (ex.: USD). O
+ * bruto tem que sair NA MESMA moeda:
+ * - quando a cobranca e o repasse estao na MESMA moeda, usa o `charge_amount`
+ *   cobrado;
+ * - quando a cobranca esta em OUTRA moeda (a Natalia pagou em peso e a empresa
+ *   recebe em dolar), reconstroi o bruto pelo lado do repasse: liquido + taxa da
+ *   Kiwify - e so quando a taxa tambem esta na moeda do repasse.
+ * Se nao da pra fechar numa moeda so, devolve null: a linha fica
+ * `normalizado:false` e a conversao e RECUSADA, em vez de sair errada em
+ * silencio (mesma defesa do `valoresInternacionaisDaHubla`).
+ */
+export function valoresInternacionaisDaKiwify(commissions: Record<string, unknown>): ValoresDaVenda | null {
+  // O liquido do PRODUTOR e `my_commission` (o que a SPR recebe). Em venda
+  // co-produzida `settlement_amount` e o TOTAL liquidado e superestimaria o
+  // repasse; por isso `my_commission` vem primeiro (achado da revisao).
+  const liq = (commissions.my_commission ?? commissions.settlement_amount) as number | undefined
+  if (typeof liq !== 'number') return null
+
+  // A moeda do REPASSE tem que ser CONHECIDA e estrangeira pra montar a linha.
+  // Sem ela (ou BRL), NAO monta -> null -> normalizado:false -> conversao
+  // recusada. Nao assume cobranca == repasse: se o settlement nao veio, uma
+  // linha cruzada (cobra peso, recebe dolar) viraria mista marcada normalizada.
+  const repasse = commissions.settlement_amount_currency
+  if (!naoEhDaCasa(repasse)) return null
+  const rep = String(repasse).trim().toUpperCase()
+  const cobranca = typeof commissions.currency === 'string' ? commissions.currency.trim().toUpperCase() : ''
+
+  let bruto: number
+  if (cobranca !== '' && cobranca === rep) {
+    // Cobranca e repasse na MESMA moeda (confirmado): o bruto cobrado ja esta nela.
+    bruto = typeof commissions.charge_amount === 'number' ? commissions.charge_amount : liq
+  } else {
+    // Cobranca em outra moeda: reconstroi o bruto no repasse (liquido + taxa).
+    // So vale se a taxa tambem estiver na moeda do repasse; senao, linha mista.
+    const fee = commissions.kiwify_fee
+    const feeCur = typeof commissions.kiwify_fee_currency === 'string' ? commissions.kiwify_fee_currency.trim().toUpperCase() : ''
+    if (typeof fee !== 'number' || feeCur !== rep) return null
+    bruto = liq + fee
+  }
+
+  return {
+    preco_base:         bruto / 100,
+    valor_pago_cliente: bruto / 100,
+    valor_com_juros:    bruto / 100,
+    valor_liquido:      Math.round(liq) / 100,
   }
 }

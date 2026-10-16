@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   moedaDaHubla, moedaDaKiwify, precisaConverter, converterParaReais,
-  valoresInternacionaisDaHubla, MOEDA_DA_CASA,
+  valoresInternacionaisDaHubla, valoresInternacionaisDaKiwify, MOEDA_DA_CASA,
 } from './moeda-da-venda'
 
 // O payload exato da venda da Rosana, como a Hubla mandou em 05/09/2026.
@@ -212,4 +212,114 @@ test('a conversao e compare-and-swap, nao le-depois-grava', () => {
   // nao ha como saber que nao casou.
   assert.ok(/\.select\('id'\)/.test(rota), 'o update nao verifica se afetou linha')
   assert.ok(rota.includes('já foi convertida por outra ação'), 'a rota nao avisa quem perdeu a corrida')
+})
+
+// ── Kiwify internacional: o repasse e numa moeda, a cobranca pode ser noutra ──
+// Payload real da venda da Natalia Rezende (09/10/2026), copiado do banco.
+// A cliente pagou em PESO MEXICANO (MXN), mas a Kiwify liquida o repasse em
+// DOLAR (USD). O sistema gravava moeda=MXN (a da COBRANCA) e o liquido em USD na
+// mesma linha, e convertia tudo com cambio de peso -> faturamento colapsava.
+// Ver item 108 do spr-digital.md. Se um teste aqui quebrar, o defeito voltou.
+const COMMISSIONS_NATALIA = {
+  currency: 'MXN',
+  charge_amount: 1035400,
+  my_commission: 48777,
+  settlement_amount: 48777,
+  settlement_amount_currency: 'USD',
+  kiwify_fee: 5502,
+  kiwify_fee_currency: 'USD',
+  product_base_price: 286000,
+  product_base_price_currency: 'BRL',
+}
+
+test('CASO REAL Kiwify: a moeda e a do REPASSE (USD), nao a da cobranca (MXN)', () => {
+  assert.equal(moedaDaKiwify(COMMISSIONS_NATALIA as never), 'USD')
+})
+
+test('Kiwify: sem settlement, cai pra moeda da cobranca (nao deixa passar como real)', () => {
+  // Fallback: se a Kiwify nao mandar settlement_amount_currency mas a cobranca
+  // ja vier estrangeira, ainda marca - a linha cai em normalizado:false depois.
+  assert.equal(moedaDaKiwify({ currency: 'USD' } as never), 'USD')
+  assert.equal(moedaDaKiwify({ currency: 'BRL', kiwify_fee: 448 } as never), null)
+  assert.equal(moedaDaKiwify({} as never), null)
+})
+
+test('CASO REAL Kiwify: os valores saem homogeneos em DOLAR (bruto = liquido + taxa)', () => {
+  const v = valoresInternacionaisDaKiwify(COMMISSIONS_NATALIA as never)
+  assert.deepEqual(v, {
+    preco_base: 542.79, valor_pago_cliente: 542.79, valor_com_juros: 542.79, valor_liquido: 487.77,
+  })
+  // Nada pode ser o cobrado em peso (10 354,00) nem o catalogo em real (2 860,00).
+  for (const n of Object.values(v!)) {
+    assert.notEqual(n, 10354, 'pegou a cobranca em peso')
+    assert.notEqual(n, 2860, 'pegou o catalogo em real')
+  }
+})
+
+test('Kiwify cobranca e repasse na MESMA moeda usa o valor cobrado', () => {
+  const tudoUSD = {
+    currency: 'USD', charge_amount: 50000, my_commission: 45000,
+    settlement_amount: 45000, settlement_amount_currency: 'USD',
+    kiwify_fee: 5000, kiwify_fee_currency: 'USD',
+  }
+  assert.equal(moedaDaKiwify(tudoUSD as never), 'USD')
+  assert.deepEqual(valoresInternacionaisDaKiwify(tudoUSD as never), {
+    preco_base: 500, valor_pago_cliente: 500, valor_com_juros: 500, valor_liquido: 450,
+  })
+})
+
+test('Kiwify RECUSA (null) quando a taxa nao esta na moeda do repasse', () => {
+  // Cobranca em peso, repasse em dolar, mas taxa em peso: nao da pra montar o
+  // bruto em dolar com um numero so -> null -> a venda cai em normalizado:false.
+  const mista = {
+    currency: 'MXN', charge_amount: 1035400, my_commission: 48777,
+    settlement_amount: 48777, settlement_amount_currency: 'USD',
+    kiwify_fee: 5502, kiwify_fee_currency: 'MXN',
+  }
+  assert.equal(valoresInternacionaisDaKiwify(mista as never), null)
+})
+
+test('Kiwify sem o valor do repasse nao inventa', () => {
+  assert.equal(valoresInternacionaisDaKiwify({ settlement_amount_currency: 'USD' } as never), null)
+})
+
+test('o webhook da Kiwify registra se a linha foi normalizada', () => {
+  // Mesma trava do Hubla: sem o flag `normalizado`, a rota de conversao nao
+  // bloqueia uma linha mista e um cambio unico sai errado em silencio.
+  const rota = readFileSync(new URL('../lib/kiwify-sale.ts', import.meta.url), 'utf8')
+  assert.ok(rota.includes('normalizado'), 'o webhook da Kiwify nao registra normalizado')
+})
+
+// ── Achados da revisao adversarial (3 revisores, 15/10/2026) ──
+test('REVISAO: settlement em BRL MANDA (nao vira estrangeira por causa da cobranca)', () => {
+  // Cobranca em dolar mas LIQUIDACAO em real (config comum da Kiwify). O
+  // settlement BRL decide -> moeda null (real). Sem isso, seria rotulada USD e
+  // um cambio multiplicaria um valor que JA esta em real (inflava ~5x).
+  const settleBRL = {
+    currency: 'USD', charge_amount: 50000, my_commission: 250000,
+    settlement_amount: 250000, settlement_amount_currency: 'BRL',
+    kiwify_fee: 5000, kiwify_fee_currency: 'BRL',
+  }
+  assert.equal(moedaDaKiwify(settleBRL as never), null)
+  assert.equal(valoresInternacionaisDaKiwify(settleBRL as never), null)
+})
+
+test('REVISAO: sem settlement numa venda cruzada NAO normaliza (nao assume cobranca==repasse)', () => {
+  // Cobranca em peso, my_commission em dolar, mas sem settlement_amount_currency:
+  // nao da pra provar que cobranca == repasse -> null -> normalizado:false ->
+  // conversao recusada, em vez de montar linha mista marcada como normalizada.
+  const semSettlement = { currency: 'MXN', charge_amount: 1035400, my_commission: 48777 }
+  assert.equal(valoresInternacionaisDaKiwify(semSettlement as never), null)
+})
+
+test('REVISAO: liquido e my_commission, nao o settlement total (co-producao)', () => {
+  // Em venda co-produzida settlement_amount e o TOTAL; o repasse da SPR e
+  // my_commission. Usar o total superestimaria o liquido.
+  const coProduzida = {
+    currency: 'USD', charge_amount: 100000, my_commission: 30000,
+    settlement_amount: 80000, settlement_amount_currency: 'USD',
+    kiwify_fee: 5000, kiwify_fee_currency: 'USD',
+  }
+  const v = valoresInternacionaisDaKiwify(coProduzida as never)
+  assert.equal(v!.valor_liquido, 300, 'liquido tem que ser my_commission (300), nao o settlement total (800)')
 })

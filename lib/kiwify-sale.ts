@@ -1,4 +1,4 @@
-import { moedaDaKiwify } from '@/lib/moeda-da-venda'
+import { moedaDaKiwify, valoresInternacionaisDaKiwify } from '@/lib/moeda-da-venda'
 import { ofertaDoProdutoKiwify } from '@/lib/oferta-do-webhook'
 import { produtoDoEventoKiwify } from '@/lib/produto-do-evento'
 import type { SaleInsert } from '@/lib/hubla-sale'
@@ -15,10 +15,14 @@ export function parseKiwifySale(order: Record<string, unknown>): SaleInsert {
   const customer    = order.Customer as Record<string, unknown>
   const commissions = order.Commissions as Record<string, unknown>
 
-  // Venda internacional. `Commissions.currency` sempre chegou e nunca foi
-  // lido: o detector era a RAZAO valor_pago/preco_base < 0.4, que e chute e
-  // erra em cupom e promocao. Ver item 57 do spr-digital.md.
+  // Venda internacional. A moeda vem do REPASSE (settlement), nao da cobranca:
+  // o cliente pode pagar numa moeda (peso) e a empresa receber noutra (dolar).
+  // Ver item 108 do spr-digital.md.
   const moeda = moedaDaKiwify(commissions)
+  // Quando internacional, a linha tem que sair HOMOGENEA na moeda do repasse
+  // (igual a Hubla). Quando nao da pra fechar numa moeda so, volta null e a
+  // venda fica `normalizado:false` -> a conversao e RECUSADA, nao sai errada.
+  const valoresEmMoeda = moeda ? valoresInternacionaisDaKiwify(commissions) : null
   const tracking    = (order.TrackingParameters as Record<string, unknown>) ?? {}
 
   const orderId = (order.order_id as string) ?? null
@@ -40,17 +44,18 @@ export function parseKiwifySale(order: Record<string, unknown>): SaleInsert {
     // Mesma razao do Hubla: a quantidade de sessoes vem do nome da oferta,
     // nao do preco. Na Kiwify o campo e `Product.product_offer_name`.
     oferta_nome:        ofertaDoProdutoKiwify(product),
-    // Em venda internacional `product_base_price` fica em real (o catalogo)
-    // enquanto `charge_amount` e `my_commission` vem na moeda estrangeira.
-    // A linha tem que sair homogenea, entao o preco base passa a ser o
-    // cobrado; o catalogo em real fica guardado em `valores_originais`.
-    preco_base:         ((moeda ? commissions?.charge_amount : commissions?.product_base_price) as number ?? 0) / 100,
-    valor_pago_cliente: ((commissions?.charge_amount as number) ?? 0) / 100,
-    valor_com_juros:    ((commissions?.charge_amount as number) ?? 0) / 100,
-    valor_liquido:      ((commissions?.my_commission as number) ?? 0) / 100,
+    // Internacional: os quatro valores saem homogeneos na moeda do repasse
+    // (`valoresEmMoeda`). Domestica (ou quando nao da pra normalizar): catalogo
+    // em real no preco_base, cobrado no pago, comissao no liquido.
+    preco_base:         valoresEmMoeda?.preco_base         ?? (((commissions?.product_base_price as number) ?? 0) / 100),
+    valor_pago_cliente: valoresEmMoeda?.valor_pago_cliente ?? (((commissions?.charge_amount as number) ?? 0) / 100),
+    valor_com_juros:    valoresEmMoeda?.valor_com_juros    ?? (((commissions?.charge_amount as number) ?? 0) / 100),
+    valor_liquido:      valoresEmMoeda?.valor_liquido      ?? (((commissions?.my_commission as number) ?? 0) / 100),
     // NULL = real. Enquanto preenchida, a venda nao entra em fechamento.
     moeda:              moeda,
-    valores_originais:  moeda ? { moeda, commissions } : null,
+    // `normalizado` diz se a linha saiu homogenea: sem ele, a rota de conversao
+    // nao bloqueia uma linha mista e um cambio unico sai errado em silencio.
+    valores_originais:  moeda ? { moeda, normalizado: !!valoresEmMoeda, commissions } : null,
     utm_source:         (tracking?.utm_source as string) ?? '',
     utm_medium:         (tracking?.utm_medium as string) ?? '',
     utm_campaign:       (tracking?.utm_campaign as string) ?? '',
