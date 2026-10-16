@@ -2420,11 +2420,44 @@ function FechamentosContent() {
   )
 }
 
+const MESES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+
+// Mês (em BRT) de um fechamento, pra agrupar o histórico em pastas. Converte
+// UTC->BRT ANTES de extrair o mês: um fechamento feito de madrugada (ex.:
+// 01/10 00:30 UTC = 30/09 21:30 BRT) não pode cair no mês errado. Convenção do
+// projeto: BRT = UTC-3, sem horário de verão.
+function mesDoFechamento(iso: string): { chave: string; rotulo: string } {
+  const b = new Date(new Date(iso).getTime() - 3 * 60 * 60 * 1000)
+  const ano = b.getUTCFullYear()
+  const mes = b.getUTCMonth()
+  return { chave: `${ano}-${String(mes + 1).padStart(2, '0')}`, rotulo: `${MESES_PT[mes]} ${ano}` }
+}
+
 function HistoricoTab({ closings }: { closings: Closing[] }) {
   const sorted = [...closings].sort((a, b) => {
     const da = a.data_confirmacao ?? a.data
     const db = b.data_confirmacao ?? b.data
     return db.localeCompare(da)
+  })
+
+  // Agrupa os fechamentos em pastas por mês (mais recente primeiro), somando o
+  // faturamento bruto do mês no título. A ordem dos grupos segue a ordem já
+  // ordenada acima, então a primeira pasta é sempre o mês mais recente.
+  const grupos: { chave: string; rotulo: string; itens: Closing[]; total: number }[] = []
+  for (const c of sorted) {
+    const { chave, rotulo } = mesDoFechamento(c.data_confirmacao ?? c.data)
+    let g = grupos.find(x => x.chave === chave)
+    if (!g) { g = { chave, rotulo, itens: [], total: 0 }; grupos.push(g) }
+    g.itens.push(c)
+    g.total += c.faturamentoBruto ?? 0
+  }
+
+  // Mês mais recente já aberto; os demais recolhidos (clica pra abrir).
+  const [abertos, setAbertos] = useState<Set<string>>(() => new Set(grupos.length ? [grupos[0].chave] : []))
+  const toggle = (chave: string) => setAbertos(prev => {
+    const n = new Set(prev)
+    if (n.has(chave)) n.delete(chave); else n.add(chave)
+    return n
   })
 
   return (
@@ -2433,6 +2466,7 @@ function HistoricoTab({ closings }: { closings: Closing[] }) {
         <p className="text-sm text-gray-500">Todos os fechamentos confirmados com detalhamento completo</p>
         <p className="text-xs text-gray-600 mt-1">
           {sorted.length} fechamento{sorted.length !== 1 ? 's' : ''} realizado{sorted.length !== 1 ? 's' : ''}
+          {grupos.length > 0 && <> · {grupos.length} {grupos.length !== 1 ? 'meses' : 'mês'}</>}
         </p>
       </div>
 
@@ -2443,10 +2477,33 @@ function HistoricoTab({ closings }: { closings: Closing[] }) {
           <p className="text-xs text-gray-600 mt-1">Use a aba "Novo Fechamento" para realizar o primeiro.</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {sorted.map(closing => (
-            <ClosingCard key={closing.id} closing={closing} />
-          ))}
+        <div className="space-y-3">
+          {grupos.map(g => {
+            const aberto = abertos.has(g.chave)
+            return (
+              <div key={g.chave} className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => toggle(g.chave)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.04] transition-colors"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {aberto ? <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-500 shrink-0" />}
+                    <span className="text-sm font-semibold text-white truncate">{g.rotulo}</span>
+                    <span className="text-xs text-gray-500 shrink-0">{g.itens.length} fechamento{g.itens.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  <span className="text-xs text-gray-400 shrink-0">Fat. bruto {formatCurrency(g.total)}</span>
+                </button>
+                {aberto && (
+                  <div className="space-y-4 px-3 pb-3 pt-1">
+                    {g.itens.map(closing => (
+                      <ClosingCard key={closing.id} closing={closing} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
