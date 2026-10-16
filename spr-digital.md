@@ -5966,3 +5966,20 @@ Revisor financeiro (R2): logica de liquido/repasse CORRETA, sem bloqueio. Ressal
   pra USD ja rodado pelo dono (colunas top-level ja estao USD; o fix do codigo so vale pra vendas NOVAS).
   OBS (R3): o SQL nao atualizou `valores_originais` (ainda diz MXN/EUR e sem normalizado) - inofensivo
   pro conversor (normalizado ausente = permitido, e a linha ja esta USD homogenea), so JSON desatualizado.
+
+# 109. Fechamentos (DRE): organizacao do historico + performance (16/10/2026)
+
+## 109.1. Historico em pastas por mes - FEITO, aprovado, deploy isolado
+`HistoricoTab` (app/fechamentos/page.tsx) agrupa os fechamentos em PASTAS por mes (data_confirmacao
+convertida UTC->BRT antes de extrair o mes), mais recente primeiro, mes atual aberto e os outros
+recolhidos; titulo de cada pasta com a contagem + faturamento bruto do mes. So a tela do DRE
+(/fechamentos); a de comissao do terapeuta nao muda. Aprovado no localhost pelo dono.
+
+## 109.2. PERFORMANCE - diagnosticado (systematic-debugging), PENDENTE implementar
+Sintoma: refresh em /fechamentos "trava" mostrando "0 fechamentos", e o sistema todo meio lento.
+Causa raiz (medido): `getClosings` (lib/services.ts) faz `select('*')` e traz os COMPRADORES embutidos -
+14 fechamentos, mas 9.825 compradores = 3,29 MB de JSON, carregado em TODA pagina via AppContext (os 3
+"FECHAMENTO IAR" tem 3.452/3.127/1.614 compradores). E a tela mostra o vazio "0 fechamentos" enquanto
+isso carrega (nao espera o isLoading). Plano: (1) loading state na tela; (2) nao trazer `compradores` na
+lista - carregar os compradores de um fechamento so quando abre (cai de 3,29 MB -> KB, acelera o sistema
+TODO). Com preview antes de subir.
