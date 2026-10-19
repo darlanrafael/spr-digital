@@ -64,10 +64,16 @@ test('venda antiga SEM valor_com_juros cai no valor pago', () => {
   assert.equal(getImpostoBase({ valor_com_juros: undefined, valor_pago_cliente: 100 } as never), 100)
 })
 
-test('valor_com_juros ZERO nao cai no fallback', () => {
-  // `?? ` so cai em null/undefined. Zero e um valor legitimo - venda de
-  // cortesia - e virar `valor_pago_cliente` inventaria imposto do nada.
-  assert.equal(getImpostoBase({ valor_com_juros: 0, valor_pago_cliente: 500 } as never), 0)
+test('cortesia (tudo zero) nao gera imposto', () => {
+  // Venda de cortesia: cj e pago sao zero -> base zero. O `max` preserva isso.
+  assert.equal(getImpostoBase({ valor_com_juros: 0, valor_pago_cliente: 0 } as never), 0)
+})
+
+test('BLINDAGEM: valor_com_juros ruim (menor que o pago) nao subtaxa', () => {
+  // Caso real (Kiwify antiga, 19/10/2026): Camila cj=561 mas pagou 2850,34. Com
+  // `??` o imposto sairia sobre 561; o `max` usa o pago. Nunca menos que o pago.
+  assert.equal(getImpostoBase({ valor_com_juros: 561, valor_pago_cliente: 2850.34 } as never), 2850.34)
+  assert.equal(getImpostoBase({ valor_com_juros: 0, valor_pago_cliente: 500 } as never), 500)
 })
 
 // ── formatCurrency ──────────────────────────────────────────────────────────

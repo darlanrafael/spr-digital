@@ -8,7 +8,7 @@ import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { buscarConflitosAgenda, buscarConflitosMultiTerapeuta, mensagemConflito, soCompromissos } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
-import { formatoDaVenda, montarPacote } from '@/lib/diagnostico-guiado'
+import { formatoDaVenda, montarPacote, valorSessaoDoDiagnostico } from '@/lib/diagnostico-guiado'
 import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { validarDatasDoPacote, mensagemDoProblema } from '@/lib/datas-do-pacote'
 import { planejarReagendamentoTotal, type SessaoExistente } from '@/lib/reagendamento-total'
@@ -109,6 +109,9 @@ export async function POST(req: NextRequest) {
 
   let pedroId: string | null = null
   let terapeutaPrincipalId: string | null = null
+  // Nome do terapeuta principal, para resolver a TAXA por sessao (Denise 95,
+  // Leomir 90) na hora de montar o pacote. Ver valorSessaoDoDiagnostico.
+  let terapeutaPrincipalNome: string | null = null
   if (diagnostico) {
     // .order('nome'): sem ordem explícita o PostgREST devolve as linhas na
     // ordem que quiser, e o match por nome abaixo precisa ser estável - com
@@ -141,6 +144,7 @@ export async function POST(req: NextRequest) {
       )
     }
     terapeutaPrincipalId = principal.terapeuta?.id ?? null
+    terapeutaPrincipalNome = principal.terapeuta?.nome ?? null
 
     if (!pedroId || !terapeutaPrincipalId) {
       return NextResponse.json(
@@ -254,6 +258,8 @@ export async function POST(req: NextRequest) {
         // `deniseId` e o param historico do montarPacote: na verdade e o
         // terapeuta PRINCIPAL (nao-Pedro), que agora pode ser o Leomir.
         deniseId: terapeutaPrincipalId!,
+        // Taxa por sessao do principal: Denise 95, Leomir 90.
+        valorPorSessao: valorSessaoDoDiagnostico(terapeutaPrincipalNome),
         datasISO: datasExplicitas,
       })
     : null

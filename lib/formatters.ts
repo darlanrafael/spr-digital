@@ -65,9 +65,18 @@ export function getSaleBruto(sale: Sale): number {
   return sale.plataforma === 'hubla' ? sale.valor_pago_cliente : sale.preco_base
 }
 
-/** Base de cálculo do imposto = valor COM juros (fallback: valor_pago_cliente para histórico sem valor_com_juros) */
+/**
+ * Base de cálculo do imposto: o MAIOR entre o valor com juros e o valor pago.
+ *
+ * O valor com juros é a base certa (o cliente parcelou e pagou mais), mas é o
+ * `max` e não o `??` por BLINDAGEM (19/10/2026): 4 vendas antigas da Kiwify
+ * ficaram com `valor_com_juros` MENOR que o valor pago (lixo de um import
+ * antigo). Com `??` elas subtaxariam; com `max`, um valor com juros ruim nunca
+ * faz o imposto sair menor que o que o cliente pagou. Venda sem o campo
+ * (histórico) e cortesia (tudo zero) continuam caindo no valor pago / em zero.
+ */
 export function getImpostoBase(sale: Sale): number {
-  return sale.valor_com_juros ?? sale.valor_pago_cliente
+  return Math.max(sale.valor_com_juros ?? 0, sale.valor_pago_cliente)
 }
 
 /** Dias corridos entre duas datas "YYYY-MM-DD" */

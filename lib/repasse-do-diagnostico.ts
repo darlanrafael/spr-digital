@@ -78,7 +78,13 @@ type VendaMinima = Pick<Sale, 'id' | 'nome'> & {
  * produto. A conta e: para cada venda, quantas sessoes sao dela pelo formato,
  * vezes o valor fixo.
  */
-export function repasseDoDiagnostico(vendas: VendaMinima[]): RepasseDoDiagnostico {
+export function repasseDoDiagnostico(
+  vendas: VendaMinima[],
+  // Valor por sessao do terapeuta principal deste produto. Default 95 (Denise),
+  // mantendo o comportamento antigo de quem chama sem passar. O Leomir e R$ 90 -
+  // quem chama resolve o terapeuta e passa a taxa (ver valorSessaoDoDiagnostico).
+  valorPorSessao: number = PAGAMENTO_DENISE_POR_SESSAO,
+): RepasseDoDiagnostico {
   const porVenda: RepasseDeUmaVenda[] = []
   const semFormato: { saleId: string; nome: string }[] = []
 
@@ -91,7 +97,7 @@ export function repasseDoDiagnostico(vendas: VendaMinima[]): RepasseDoDiagnostic
       nome: v.nome,
       formato: f.formato,
       sessoesDenise,
-      valor: sessoesDenise * PAGAMENTO_DENISE_POR_SESSAO,
+      valor: sessoesDenise * valorPorSessao,
     })
   }
 

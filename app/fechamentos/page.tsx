@@ -26,7 +26,7 @@ import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { terapeutaDaComissao } from '@/lib/terapeuta-da-comissao'
 import { divisaoDoLucro } from '@/lib/base-da-reserva-de-caixa'
 import { invariantesDoFechamento } from '@/lib/invariantes-do-fechamento'
-import { PAGAMENTO_DENISE_POR_SESSAO } from '@/lib/diagnostico-guiado'
+import { valorSessaoDoDiagnostico } from '@/lib/diagnostico-guiado'
 import { ehDiagnosticoGuiado } from '@/lib/vendas-por-situacao'
 
 type Step = 1 | 2 | 3 | 4
@@ -514,19 +514,22 @@ function FechamentosContent() {
       // Ver lib/repasse-do-diagnostico.ts para o porque de contar as sessoes
       // VENDIDAS e nao as entregues.
       if (ehDiagnosticoGuiado(row.id)) {
-        const r = repasseDoDiagnostico(vendasDaLinha[row.id] ?? [])
         // O terapeuta do Diagnostico vem do NOME DO PRODUTO (row.id): o produto
         // "...- Leomir" e do Leomir, o produto sem nome e da Denise (default).
         // Mesmo helper da rota de agendar. So o nome importa aqui, por isso o id
-        // do mapa e o proprio nome.
+        // do mapa e o proprio nome. Resolvido ANTES do repasse: a taxa por sessao
+        // e POR TERAPEUTA (Denise 95, Leomir 90).
         const principal = terapeutaPrincipalDoDiagnostico(
           row.id,
           terapeutasComissao.map(t => ({ id: t.nome, nome: t.nome })),
         )
+        const nomeTerapeuta = principal.terapeuta?.nome ?? 'Denise Nascimento'
+        const valorPorSessao = valorSessaoDoDiagnostico(nomeTerapeuta)
+        const r = repasseDoDiagnostico(vendasDaLinha[row.id] ?? [], valorPorSessao)
         const sessoes = r.porVenda.reduce((acc, v) => acc + v.sessoesDenise, 0)
-        row.terapeuta_nome = principal.terapeuta?.nome ?? 'Denise Nascimento'
+        row.terapeuta_nome = nomeTerapeuta
         row.repasse_terapeuta = r.total
-        row.repasse_detalhe = `${sessoes} sessões × ${formatCurrency(PAGAMENTO_DENISE_POR_SESSAO)}`
+        row.repasse_detalhe = `${sessoes} sessões × ${formatCurrency(valorPorSessao)}`
         continue
       }
       const terapeuta = matchTerapeutaComissao(row.nome)

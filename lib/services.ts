@@ -137,7 +137,7 @@ export async function getSales(
   return filtered.map(mapSaleRow)
 }
 
-function mapSaleRow(r: Record<string, unknown>): Sale {
+export function mapSaleRow(r: Record<string, unknown>): Sale {
   return {
     id: String(r.id),
     nome: String(r.nome ?? ''),
@@ -152,13 +152,27 @@ function mapSaleRow(r: Record<string, unknown>): Sale {
     // fatura compartilham o prefixo. Sem isso não dá pra explicar por que a
     // plataforma mostra 85 faturas e nós mostramos 90 itens.
     order_id: r.order_id ? String(r.order_id) : undefined,
+    // A oferta diz o FORMATO do Diagnostico (quantas sessoes, logo o repasse da
+    // Denise). Dropar este campo fazia o fechamento nao reconhecer o formato e
+    // nao deduzir o repasse (rombo de 19/10/2026). Ver lib/diagnostico-guiado.ts.
+    oferta_nome: r.oferta_nome == null ? null : String(r.oferta_nome),
+    pacote_pai_id: r.pacote_pai_id == null ? null : String(r.pacote_pai_id),
     preco_base: Number(r.preco_base),
     valor_pago_cliente: Number(r.valor_pago_cliente),
+    // Base do IMPOSTO no fechamento (`getImpostoBase` = valor_com_juros ??
+    // valor_pago_cliente). Dropar este campo fazia o imposto cair pro valor sem
+    // juros e sair subestimado em toda venda parcelada (mesmo rombo). `undefined`
+    // quando o banco nao tem (historico antigo) preserva o fallback de proposito.
+    valor_com_juros: r.valor_com_juros == null ? undefined : Number(r.valor_com_juros),
     valor_liquido: Number(r.valor_liquido),
     // Precisa chegar na tela de Fechamentos: enquanto preenchida, os valores
     // acima NAO sao reais e a venda nao pode entrar num fechamento. Ver
     // lib/moeda-da-venda.ts e o item 57 do spr-digital.md.
     moeda: r.moeda ? String(r.moeda) : null,
+    // Moeda internacional: o cambio aplicado e os valores originais na moeda de
+    // origem. Dropados antes - a conversao/exibicao internacional ficava cega.
+    cambio_aplicado: r.cambio_aplicado == null ? null : Number(r.cambio_aplicado),
+    valores_originais: (r.valores_originais as Record<string, unknown> | null) ?? null,
     data_hora: normTs(String(r.data_hora ?? ''), String(r.plataforma ?? '').toLowerCase() === 'kiwify'),
     utm_source: String(r.utm_source ?? ''),
     utm_medium: String(r.utm_medium ?? ''),
