@@ -45,6 +45,27 @@ export const EXCECOES_DIAGNOSTICO: Record<string, 1 | 2 | 3> = {
 /** Regra do PRODUTO, nao da terapeuta: nos demais produtos a Denise segue com os 30%. */
 export const PAGAMENTO_DENISE_POR_SESSAO = 95
 
+// O valor FIXO por sessao do Diagnostico e POR TERAPEUTA (decisao do dono em
+// 19/10/2026): Denise R$ 95, Leomir R$ 90. Ate aqui era R$ 95 hardcoded pra
+// todos, o que faria o fechamento do Leomir sair R$ 5 a mais por sessao.
+//
+// Match pelo PRIMEIRO NOME (como o resto do sistema casa terapeuta), minusculo,
+// porque o cadastro vem com sobrenome e as vezes espaco ("Leomir Santos "). Um
+// terapeuta sem taxa propria cai no default (95) de proposito: e o historico da
+// Denise, e nenhuma venda de outro terapeuta fecha sem alguem definir a taxa
+// dele aqui primeiro.
+const VALOR_SESSAO_POR_TERAPEUTA: { contem: string; valor: number }[] = [
+  { contem: 'leomir', valor: 90 },
+  { contem: 'denise', valor: 95 },
+]
+
+/** O valor por sessao do Diagnostico para o terapeuta principal; default 95. */
+export function valorSessaoDoDiagnostico(terapeutaNome?: string | null): number {
+  const nome = (terapeutaNome ?? '').toLowerCase()
+  return VALOR_SESSAO_POR_TERAPEUTA.find(t => nome.includes(t.contem))?.valor
+    ?? PAGAMENTO_DENISE_POR_SESSAO
+}
+
 /**
  * Quantas sessoes cada formato tem, e quantas sao do Pedro.
  *
@@ -179,8 +200,15 @@ export function montarPacote(params: {
    * Denise, etiqueta de progresso, empurrar as seguintes) nao sabe interpretar.
    */
   datasISO?: string[] | null
+  /**
+   * Valor por sessao do terapeuta principal (nao-Pedro). Default 95 (Denise).
+   * Leomir e 90 - quem chama resolve o terapeuta e passa a taxa, pra a comissao
+   * gravada na sessao (que o fechamento da terapeuta le depois) sair certa.
+   */
+  valorPorSessao?: number
 }): SessaoDoPacote[] {
   const { formato, primeiraDataISO, pedroId, deniseId, datasISO } = params
+  const valorPorSessao = params.valorPorSessao ?? PAGAMENTO_DENISE_POR_SESSAO
   const inicio = new Date(primeiraDataISO).getTime()
   // So aceita a lista se ela cobrir o pacote inteiro. Lista parcial cairia em
   // `undefined` numa das sessoes e gravaria data invalida.
@@ -192,7 +220,7 @@ export function montarPacote(params: {
       numero_sessao: i + 1,
       terapeuta_id: doPedro ? pedroId : deniseId,
       data_agendada: explicitas ? explicitas[i] : new Date(inicio + i * SETE_DIAS_MS).toISOString(),
-      comissao_valor: doPedro ? 0 : PAGAMENTO_DENISE_POR_SESSAO,
+      comissao_valor: doPedro ? 0 : valorPorSessao,
     }
   })
 }
