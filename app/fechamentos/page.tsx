@@ -22,6 +22,7 @@ import { precisaConverter } from '@/lib/moeda-da-venda'
 import { divisaoOriginalDoAlerta, deducoesPorSocio, divisaoQueVale, divisaoDeMentoriaPedro, descricaoDoPrejuizoNoCaixa, totalAbsorvidoPelaEmpresa } from '@/lib/rateio-das-deducoes'
 import { filtrarProdutos, comOsVisiveisMarcados, semOsVisiveis } from '@/lib/busca-de-produto'
 import { repasseDoDiagnostico } from '@/lib/repasse-do-diagnostico'
+import { repasseMentoriaPorSessao } from '@/lib/repasse-mentoria-por-sessao'
 import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { terapeutaDaComissao } from '@/lib/terapeuta-da-comissao'
 import { divisaoDoLucro } from '@/lib/base-da-reserva-de-caixa'
@@ -580,6 +581,16 @@ function FechamentosContent() {
         row.terapeuta_nome = nomeTerapeuta
         row.repasse_terapeuta = r.total
         row.repasse_detalhe = `${sessoes} sessões × ${formatCurrency(valorPorSessao)}`
+        continue
+      }
+      // Mentoria Particular do Leomir: R$ 90 por SESSAO entregue, no lugar do %
+      // (decisao do dono 21/10/2026). Antes do caminho do %, senao cairia nos
+      // 10% dele. Ver lib/repasse-mentoria-por-sessao.ts.
+      const mentoriaSessao = repasseMentoriaPorSessao(row.id, vendasDaLinha[row.id] ?? [])
+      if (mentoriaSessao) {
+        row.terapeuta_nome = mentoriaSessao.terapeuta
+        row.repasse_terapeuta = mentoriaSessao.valor
+        row.repasse_detalhe = `${mentoriaSessao.sessoes} sessões × ${formatCurrency(mentoriaSessao.valorPorSessao)}`
         continue
       }
       const terapeuta = matchTerapeutaComissao(row.nome)
