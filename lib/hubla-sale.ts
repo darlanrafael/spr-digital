@@ -1,5 +1,6 @@
 import { moedaDaHubla, valoresInternacionaisDaHubla } from '@/lib/moeda-da-venda'
 import { ofertaDoEventoHubla } from '@/lib/oferta-do-webhook'
+import { produtoDoEventoHubla } from '@/lib/produto-do-evento'
 
 const PROJECT_ID = 'proj_1'
 
@@ -26,6 +27,7 @@ export type SaleInsert = {
   utm_campaign: string
   utm_content: string
   utm_term: string
+  produto_id: string | null
 }
 
 /**
@@ -103,6 +105,7 @@ export function parseHublaSale(event: Record<string, unknown>): { sale: SaleInse
     email:              (payer?.email as string) ?? '',
     telefone:           (payer?.phone as string) ?? '',
     produto:            ((product?.name as string) ?? '').trim(),
+    produto_id:         produtoDoEventoHubla(event)?.produto_id ?? null,
     oferta_nome:        ofertaNome,
     // Em venda internacional os quatro valores vem do bloco `settlement`,
     // que esta na MESMA moeda do repasse. O bloco `amount` esta na moeda do

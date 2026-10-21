@@ -1,5 +1,6 @@
 import { moedaDaKiwify, valoresInternacionaisDaKiwify } from '@/lib/moeda-da-venda'
 import { ofertaDoProdutoKiwify } from '@/lib/oferta-do-webhook'
+import { produtoDoEventoKiwify } from '@/lib/produto-do-evento'
 import type { SaleInsert } from '@/lib/hubla-sale'
 
 const PROJECT_ID = 'proj_1'
@@ -39,6 +40,7 @@ export function parseKiwifySale(order: Record<string, unknown>): SaleInsert {
     email:              (customer?.email as string) ?? '',
     telefone:           (customer?.mobile as string) ?? '',
     produto:            (product?.product_name as string) ?? '',
+    produto_id:         produtoDoEventoKiwify(order)?.produto_id ?? null,
     // Mesma razao do Hubla: a quantidade de sessoes vem do nome da oferta,
     // nao do preco. Na Kiwify o campo e `Product.product_offer_name`.
     oferta_nome:        ofertaDoProdutoKiwify(product),
