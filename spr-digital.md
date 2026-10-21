@@ -5983,3 +5983,104 @@ Causa raiz (medido): `getClosings` (lib/services.ts) faz `select('*')` e traz os
 isso carrega (nao espera o isLoading). Plano: (1) loading state na tela; (2) nao trazer `compradores` na
 lista - carregar os compradores de um fechamento so quando abre (cai de 3,29 MB -> KB, acelera o sistema
 TODO). Com preview antes de subir.
+
+# 110. Reconciliacao fechamentos x Kiwify (16-19/10/2026)
+
+- Diferencas PEQUENAS sistema x Kiwify num fechamento = CAMBIO de venda internacional (USD) convertida
+  num cambio diferente do que a Kiwify creditou. Nao e bug; e a taxa escolhida na conversao manual.
+  - MENTORIAS - PEDRO (close_1792156232296): Natalia Rezende convertida a 4,90 (R$ 2.390,07); Kiwify
+    credita a ~5,0179 (R$ 2.447,58). Diferenca R$ 57,51. CORRIGIR (vale).
+  - IAR Oficial (close_1792154304260): Josilene a 5,32 (R$ 33,57) vs Kiwify ~5,124 (R$ 32,33). Diferenca
+    R$ 1,24. DEIXAR (imaterial; nao vale anular/refazer o IAR de 1.166 compradores). As 745 BRL batem exato.
+- "venda faltando" NAO eram faltando: O Resgate 3x2 = Rogerio ja pago em fechamento anterior (janela de
+  produto 14/08-14/09, dedup correto); Mentoria Particular 23x22 = Joao Marcelo entrou 16/10 15:46, DEPOIS
+  do fechamento confirmado 10:10 -> entra sozinho no refazer.
+- IAR antigo close_1791846839517 (prejuizo -18.812, 1129 compradores) o dono ja ANULOU e REFEZ como
+  close_1792154304260 (lucro +6.286, 1166 compradores; mesmo trafego, o antigo subcontava ~R$33k de faturamento).
+  NAO precisa anular de novo.
+- BUG SUSPEITO: lancamento manual grava valor_liquido = 0 (Cristiane R$ 2.860 bruto, liquido 0) -> fica
+  zerada/fora do fechamento. Ver criar-lancamento-manual.ts. INVESTIGAR (pode ser sistemico).
+- CORRECAO MENTORIAS (dono roda no Supabase; fechamento limpo, 0 custos/0 caixa):
+  1) update sales set valor_liquido=2447.58, preco_base=2723.67, valor_pago_cliente=2723.67,
+     valor_com_juros=2723.67, cambio_aplicado=5.0179 where id='260fc482-aef7-4054-abb9-60d7bf93f5e7';
+  2) delete from closings where id='close_1792156232296';
+  3) refazer o fechamento (17/09-16/10) -> Natalia a 5,0179 + Joao Marcelo entra (22->23).
+- LANCAMENTO MANUAL e EXCLUIDO do DRE POR DESIGN: getSales (lib/services.ts:82-87) tem
+  `.not('id','like','manual_%')` - sao lancamentos de agenda/sessoes de paciente que ja tem venda real
+  na plataforma; conta-los dobraria faturamento. Por isso o "liquido R$0" da Cristiane NAO e bug, e 0 de
+  36 manuais entram em fechamento. (A Cristiane: liquido 0 era so o default; o motivo de ficar fora e o filtro.)
+- EXCECAO Cristiane (pedido do dono): ela pagou PIX DIRETO (sem venda na plataforma) = receita real nao
+  contada. Solucao one-off: INSERT de uma venda REAL (id nao-manual, hubla, R$2.860 bruto=liquido, produto_id
+  hS1GaZMDexAZJ8yq8snC, data 22/09) pro fechamento contar; o lancamento manual segue so pra agenda. SQL no item acima.
+- IDEIA FUTURA: jeito oficial de marcar "lancamento manual que E receita real" (Pix direto), se aparecerem outros.
+
+# 111. ROMBO: mapSaleRow dropava campos -> imposto na base errada + diagnostico sem formato (19-21/10/2026)
+
+CAUSA RAIZ (uma so): `mapSaleRow` (lib/services.ts) fazia `select('*')` (trazia tudo do banco) mas montava o
+objeto `Sale` com LISTA EXPLICITA de campos e DROPAVA varios: `oferta_nome`, `valor_com_juros`,
+`cambio_aplicado`, `valores_originais`, `pacote_pai_id`. Chegavam `undefined` na tela e caiam em fallback
+silencioso. Achado pelo dono fazendo fechamentos (Nuno/Leomir "sem formato"). Armadilha da coluna silenciosa,
+na camada de MAPEAMENTO (nao no select).
+
+DOIS EFEITOS, mesma causa:
+- `oferta_nome` dropado -> `formatoDaVenda` nao reconhecia o formato do Diagnostico (Kiwify + Hubla com oferta
+  nao-mapeada) -> repasse da Denise (R$95/sessao) NAO era deduzido -> lucro inflado. R$950 em 2 fechamentos
+  (close_1789620365683 Ibraim 3 sess R$285 + close_1792434319217 Nuno 7 sess R$665).
+- `valor_com_juros` dropado -> `getImpostoBase` (lib/formatters.ts) = `valor_com_juros ?? valor_pago_cliente`
+  caia no SEM juros -> imposto subestimado em TODA venda parcelada. R$ 10.850,61 em 13 fechamentos (lucro
+  inflado). Validado: o imposto GRAVADO bate EXATO com a base valor_pago (recalculo), provando o bug ao vivo.
+- TOTAL de lucro inflado: R$ 11.800,61. (Kiwify grava valor_com_juros = charge_amount = valor_pago, entao o
+  furo de imposto e quase so HUBLA parcelada.)
+
+DECISAO DO DONO: imposto sobre o VALOR COM JUROS (total da fatura) DAQUI PRA FRENTE; o passado fica como esta
+(nao refaz os 13). Vale a regra "daqui pra frente".
+
+CORRECAO (TDD, deploy isolado commit 361ad9f):
+- `mapSaleRow` passa a copiar os 5 campos. Teste lib/map-sale-row.test.ts (guarda a CLASSE do bug: campo do
+  tipo Sale que a linha traz tem que sobreviver).
+- BLINDAGEM: `getImpostoBase` virou `Math.max(valor_com_juros ?? 0, valor_pago_cliente)` - 4 vendas antigas da
+  Kiwify tinham valor_com_juros MENOR que o pago (lixo de import antigo; o codigo de hoje grava cj=pago, nunca
+  <). Com `??` elas subtaxariam; com `max`, valor_com_juros ruim NUNCA faz imposto sair menor que o pago. Todas
+  as 4 estao em fechamentos ja fechados.
+- Provado rodando: IAR (close_1786715202610) imposto 27.180,56 -> 30.278,56 passando pelo mapSaleRow corrigido.
+
+VARREDURA "sem furo" (pedido do dono, multiplas abordagens):
+- Campo-por-campo em TODAS as tabelas/getters (closings/custos/caixa/meta_ads/products): so `sales` dropava.
+  products dropa `aliquota` mas o DRE usa `getAliquotaByPreco(preco)`, nao a do produto - nao e furo.
+- 4 agentes adversariais: sem regressao do fix; matematica do fechamento CORRETA (liquido, 30/70, repasse 1x,
+  reembolso sem duplicar, vendas-ja-fechadas sem recontar, bruto Hubla ok); fallbacks `?? 0`/`Number(null)->0`
+  sao LATENTES (0 vendas zeradas/nulas nos dados).
+- RECONCILIACAO total dos 17 fechamentos (recalculo bruto/taxas/liquido): 0 divergencia inexplicada. Caixa:
+  0 quebra de saldo. So os 2 bugs conhecidos (imposto + diagnostico).
+- CSP: "sistema 1 a MAIS que a Hubla" = filtro "Nacional" da Hubla escondia a Cristina costa (venda
+  internacional, convertida pra R$ no sistema). Nao e furo. (Hubla "Todos" bate.)
+
+# 112. Leomir: R$90/sessao POR PRODUTO, substitui % (19-21/10/2026)
+
+- Taxa por sessao do Diagnostico e POR TERAPEUTA: Denise R$95, Leomir R$90 (`valorSessaoDoDiagnostico` em
+  lib/diagnostico-guiado.ts; `repasseDoDiagnostico` e `montarPacote` recebem a taxa; agendar/route resolve o
+  terapeuta e passa). Antes R$95 hardcoded pra todos. Deploy 361ad9f.
+- Mentoria Particular do Leomir ("Mentoria Particular - Pedro | Leomir") paga R$90/SESSAO (nao os 10%).
+  lib/repasse-mentoria-por-sessao.ts (lista por produto, so Leomir; a da Denise segue no %). Qtd de sessoes vem
+  do nome da oferta (`sessoesDoNomeDaOferta`); oferta sem sessao -> `semSessao` (aviso, nao subtaxa). Leomir
+  entrega TODAS as sessoes (sem split com Pedro, ao contrario do diagnostico). Dados: Luciano 2 sess=R$180,
+  Diego 1 sess=R$90. Deploy 59ab56e. Regra e POR PRODUTO (nao geral do terapeuta) de proposito.
+
+# 113. Denise R$950 retroativo + aviso de readequacao na etapa certa (19-21/10/2026)
+
+- Os R$950 da Denise (Ibraim 285 + Nuno 665) foram LANCADOS no fechamento ATUAL close_1792434319217 (dono nao
+  quis anular/refazer). Via SQL (Claude nao escreve no banco): repasse_terapeutas_total 3705->4655, lucro_real
+  26399.495->25449.495, socios 35/65 readequados (SPR 8907.32 / Pedro 16542.17), by_product com 2 linhas: a do
+  periodo "46 sessoes x R$95" (Nuno entrou no meio, sem aviso - e deste periodo) + 1 linha RETROATIVA
+  "Repasse retroativo - Diagnostico Guiado (Denise)" R$285 com observacao citando close_1789620365683.
+  Conferido no banco: soma socios = lucro, soma by_product repasse = 4655. Imposto/faturamento intactos.
+- Diego Rizzo Bruno: venda do link da Denise mas e do Leomir; produto corrigido no sistema p/ "Mentoria
+  Particular - Pedro | Leomir" em 05/10 (READEQUACOES_PRODUTO em lib/readequacoes-produto.ts). Por isso a
+  Mentoria Particular Denise mostra 6 e a Hubla 7 - CORRETO, nao e furo.
+- BUG do aviso de readequacao: so aparecia na etapa Confirmar (ultima), e `temConferencia` (page.tsx) nao
+  contava readequacao -> na etapa Faturamento (onde se cruza com a plataforma) nao vinha nada. CORRIGIDO:
+  componente `AvisoReadequacoes` renderizado tambem na etapa Faturamento, antes do Detalhamento. Deploy 81fd873.
+
+## 111-113 STATUS: TUDO NO AR. Deploys isolados a partir de origin/main: 361ad9f (mapSaleRow+Leomir diag+blindagem)
+-> 81fd873 (aviso readequacao) -> 59ab56e (mentoria Leomir). Branch de trabalho feature/performance-funis-2a tem
+tudo + o trabalho de funis (nao deployado). PENDENTE: performance de funis (retomar).
