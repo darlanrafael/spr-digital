@@ -7209,3 +7209,51 @@ test-driven-development. Abaixo os achados e o que foi corrigido.
    ciente antes de subir.
 
 STATUS (121): tsc 0, 994 testes passando, nao deployado.
+
+
+---
+
+# 122. Redesign V2 do dashboard + integracao da branch pro deploy (23/10/2026)
+
+## 122.1. Redesign V2 (escolhido pelo dono)
+
+O dono pediu uma "V2" do dashboard de funis com a cara de uma referencia (reel
+"Dashboard V14 - Modern & Minimal UI" do code.xr), mantendo a PALETA ESCURA atual.
+Foram feitas e comparadas no localhost 3 versoes (rotas de teste, ja removidas):
+- V2 (escolhida): cards "glass" (gradiente sutil, cantos bem arredondados, sombra),
+  nav em PILULAS (aba ativa laranja preenchida), titulo grande, botao Atualizar/period
+  em pilula, e uma FILEIRA DE STAT TILES no topo da Visao geral (Faturamento, Resultado
+  liquido, ROAS, Investido). Mesma logica/dados de antes - so visual.
+- V3 (card-heroi + grafico de area) e "ref" (rail de icones + aneis de progresso,
+  layout fiel ao video) - o dono NAO curtiu, descartadas e apagadas.
+O dono escolheu a V2. Ela foi PROMOVIDA a oficial: o conteudo da V2 virou o
+app/performance-funis/dashboard/page.tsx (o que o menu "Funis" abre); as rotas
+-v2/-v3/-ref foram removidas; o selo "Dashboard V2" foi tirado.
+
+## 122.2. Integracao da branch pro deploy
+
+A branch feature/performance-funis-2a estava baseada numa main ANTIGA (merge-base
+111b211). A producao (origin/main) tinha avancado 7 commits que a branch nao tinha:
+5d67a14 (captura de produto_id no webhook, deploy de 05/10) + correcoes de
+DRE/fechamentos/moeda/lembretes feitas em paralelo (mesmo conteudo, SHA diferente).
+- Feito `git merge origin/main` DENTRO da branch. 3 conflitos, todos em arquivos
+  compartilhados, resolvidos mantendo a producao + as adicoes do funil:
+  - lib/services.ts: manter getSalesParaFunil/getReembolsosParaFunil (com guarda de
+    moeda) e a leitura do produto_id no mapSaleRow (origin/main nao tinha essas adicoes).
+  - lib/map-sale-row.test.ts e lib/kiwify-sale.test.ts: juntar os testes dos dois lados
+    (os de produto_id da branch + os de moeda da producao).
+- Resultado do merge: tsc 0, 994 testes, build de producao OK.
+- A main local foi resetada pra origin/main (descartando 2 commits locais SO DE DOCS,
+  cujo conteudo ja esta na branch) e fast-forward pra feature. Push e limpo (sem force).
+
+## 122.3. STATUS DO DEPLOY
+
+- PRONTO pra subir: main local = origin/main + feature do funil, fast-forward.
+- O `git push origin main` (que dispara o build de producao na Vercel) foi BLOQUEADO
+  pelo classificador de seguranca do Claude Code ("publicacao em producao"). Entao o
+  PUSH fica a cargo do dono: rodar `git push origin main` no repo (ou autorizar).
+- Checklist ja validado: coluna sales.produto_id existe em producao (select deu 4499);
+  imposto do DRE sobe de proposito nos fechamentos em aberto (dono ciente).
+- Pos-deploy, pendencias do dono (nao bloqueiam): aviso da trava na tela, TTL de 5 min
+  do status ativo/pausado (ver item 121.2). E a cobranca/cota do Supabase (banner de
+  "projetos restringidos a partir de 31/out" - resolver pra nao derrubar o banco).
