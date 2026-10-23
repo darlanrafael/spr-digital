@@ -21,6 +21,7 @@ const linhaCompleta = () => ({
   produto: 'Diagnóstico Guiado: Programa de acompanhamento Individual',
   plataforma: 'Kiwify',
   order_id: 'c1a15f89-3fe3-4e7b-8bb0-a638985e6d5c',
+  produto_id: 'HYscfyfSoG2CrsS6JpSe',
   oferta_nome: 'FORMATO 1',
   preco_base: 4997,
   valor_pago_cliente: 4997,
@@ -55,13 +56,26 @@ test('mapSaleRow preserva pacote_pai_id', () => {
   assert.equal(mapSaleRow(linhaCompleta()).pacote_pai_id, 'pai-123')
 })
 
+// Captado no webhook desde 05/10 (itens 104 e 114). Eh a chave que liga a venda
+// ao FUNIL por id (alem do nome). Se mapSaleRow dropar, a atribuicao do funil
+// chega cega e cai no nome sem avisar - mesma classe do bug do oferta_nome.
+test('mapSaleRow preserva produto_id (chave do funil)', () => {
+  assert.equal(mapSaleRow(linhaCompleta()).produto_id, 'HYscfyfSoG2CrsS6JpSe')
+})
+
+test('produto_id ausente no banco vira null (historico antigo, nao quebra)', () => {
+  const row = linhaCompleta() as Record<string, unknown>
+  delete row.produto_id
+  assert.equal(mapSaleRow(row).produto_id, null)
+})
+
 // Guarda da CLASSE do bug: todo campo que o tipo Sale declara e que a linha do
 // banco traz tem que sobreviver ao mapeamento. Sem este teste, o proximo campo
 // novo e dropado em silencio como estes foram.
 test('mapSaleRow nao dropa nenhum campo que a linha trouxe e o Sale declara', () => {
   const s = mapSaleRow(linhaCompleta()) as unknown as Record<string, unknown>
   for (const campo of [
-    'oferta_nome', 'valor_com_juros', 'cambio_aplicado', 'valores_originais', 'pacote_pai_id',
+    'oferta_nome', 'valor_com_juros', 'cambio_aplicado', 'valores_originais', 'pacote_pai_id', 'produto_id',
   ]) {
     assert.ok(s[campo] !== undefined, `mapSaleRow dropou "${campo}" (chegaria undefined na tela)`)
   }

@@ -1,9 +1,22 @@
 export type AdInsight = {
+  /** Ad id da Meta - casa com o ad id que vem no utm_content da venda. */
+  adId: string
   campanha: string; criativo: string; anuncio: string; thumbnail: string | null
   spend: number; impressions: number; reach: number
   inlineLinkClicks: number; uniqueClicks: number
   landingPageView: number; initiateCheckout: number
   videoView: number; isVideo: boolean
+  /**
+   * O CRIATIVO é um vídeo (pelo tipo real na Meta: creative.object_type === VIDEO
+   * ou tem video_id). Diferente de `isVideo` (que é "teve video view no período"):
+   * um vídeo SEM entrega no período continua sendo vídeo. É este que decide o
+   * Formato na tela; `isVideo` serve só pro hook rate (que depende de views).
+   */
+  creativoEhVideo: boolean
+  /** Quantas pessoas assistiram X% do vídeo (video_pXX_watched_actions da Meta). */
+  videoP25: number; videoP50: number; videoP75: number; videoP95: number
+  /** Link pra VER o anúncio: post do Instagram se tiver, senão o preview da Meta. */
+  previewUrl: string
 }
 
 function num(v: unknown): number { const n = parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0 }
@@ -13,12 +26,20 @@ function acao(actions: unknown, tipo: string): number {
   return num(arr.find(a => a.action_type === tipo)?.value)
 }
 
+// Os campos video_pXX_watched_actions vêm como um array com UM item: [{ value }].
+function arrVal(campo: unknown): number {
+  return num((campo as { value?: unknown }[])?.[0]?.value)
+}
+
 export function normalizarAd(raw: Record<string, unknown>): AdInsight {
   const ins = ((raw.insights as { data?: Record<string, unknown>[] })?.data?.[0]) ?? {}
   const campaign = raw.campaign as { name?: string } | undefined
-  const creative = raw.creative as { name?: string; thumbnail_url?: string } | undefined
+  const creative = raw.creative as { name?: string; thumbnail_url?: string; object_type?: string; video_id?: string; instagram_permalink_url?: string } | undefined
   const videoView = acao(ins.actions, 'video_view')
+  const creativoEhVideo = creative?.object_type === 'VIDEO' || !!creative?.video_id
+  const previewUrl = creative?.instagram_permalink_url || (raw.preview_shareable_link as string) || ''
   return {
+    adId: (raw.id as string) ?? '',
     campanha: (campaign?.name as string) ?? (raw.name as string) ?? '',
     criativo: creative?.name ?? (raw.name as string) ?? '',
     anuncio: (raw.name as string) ?? '',
@@ -32,6 +53,12 @@ export function normalizarAd(raw: Record<string, unknown>): AdInsight {
     initiateCheckout: acao(ins.actions, 'initiate_checkout'),
     videoView,
     isVideo: videoView > 0,
+    creativoEhVideo,
+    videoP25: arrVal(ins.video_p25_watched_actions),
+    videoP50: arrVal(ins.video_p50_watched_actions),
+    videoP75: arrVal(ins.video_p75_watched_actions),
+    videoP95: arrVal(ins.video_p95_watched_actions),
+    previewUrl,
   }
 }
 
@@ -40,6 +67,7 @@ export function normalizarAd(raw: Record<string, unknown>): AdInsight {
 export function normalizarInsight(row: Record<string, unknown>): AdInsight {
   const videoView = acao(row.actions, 'video_view')
   return {
+    adId: (row.ad_id as string) ?? '', // nivel campanha nao tem ad id; fica vazio
     campanha: (row.campaign_name as string) ?? '',
     criativo: (row.ad_name as string) ?? (row.campaign_name as string) ?? '',
     anuncio: (row.ad_name as string) ?? '',
@@ -53,6 +81,12 @@ export function normalizarInsight(row: Record<string, unknown>): AdInsight {
     initiateCheckout: acao(row.actions, 'initiate_checkout'),
     videoView,
     isVideo: videoView > 0,
+    creativoEhVideo: false, // nível campanha não tem criativo
+    videoP25: arrVal(row.video_p25_watched_actions),
+    videoP50: arrVal(row.video_p50_watched_actions),
+    videoP75: arrVal(row.video_p75_watched_actions),
+    videoP95: arrVal(row.video_p95_watched_actions),
+    previewUrl: '',
   }
 }
 

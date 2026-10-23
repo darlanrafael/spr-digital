@@ -34,6 +34,40 @@ test('normaliza os campos do ad de video', () => {
   assert.equal(a.isVideo, true)
 })
 
+test('creativoEhVideo vem do TIPO do criativo, nao da entrega (vídeo sem view ainda é vídeo)', () => {
+  // object_type VIDEO sem nenhuma video_view no período -> isVideo false, mas creativoEhVideo true.
+  const semEntrega = normalizarAd({ name: 'VID_parado', campaign: { name: 'CSP' }, creative: { object_type: 'VIDEO' } })
+  assert.equal(semEntrega.isVideo, false)        // não teve view no período
+  assert.equal(semEntrega.creativoEhVideo, true) // mas é um vídeo
+  // por video_id também conta
+  assert.equal(normalizarAd({ name: 'x', creative: { video_id: '123' } }).creativoEhVideo, true)
+  // imagem (sem object_type VIDEO nem video_id) -> false
+  assert.equal(normalizarAd({ name: 'IMG', creative: { object_type: 'SHARE', image_hash: 'abc' } }).creativoEhVideo, false)
+})
+
+test('extrai os marcos de video (video_pXX_watched_actions, array [{value}])', () => {
+  const a = normalizarAd({
+    name: 'VID', campaign: { name: 'CSP' }, creative: {},
+    insights: { data: [{
+      impressions: '265709',
+      video_p25_watched_actions: [{ action_type: 'video_view', value: '14984' }],
+      video_p50_watched_actions: [{ action_type: 'video_view', value: '10268' }],
+      video_p75_watched_actions: [{ action_type: 'video_view', value: '7936' }],
+      video_p95_watched_actions: [{ action_type: 'video_view', value: '1762' }],
+    }] },
+  })
+  assert.equal(a.videoP25, 14984)
+  assert.equal(a.videoP50, 10268)
+  assert.equal(a.videoP75, 7936)
+  assert.equal(a.videoP95, 1762)
+})
+
+test('ad sem os campos de video -> marcos em 0 (nao quebra)', () => {
+  const a = normalizarAd({ name: 'IMG', campaign: { name: 'C' }, creative: {} })
+  assert.equal(a.videoP50, 0)
+  assert.equal(a.videoP95, 0)
+})
+
 test('ad sem insights / sem actions -> zeros, isVideo false, sem quebrar', () => {
   const a = normalizarAd({ name: 'IMG_01', campaign: { name: 'C' }, creative: {} })
   assert.equal(a.spend, 0)

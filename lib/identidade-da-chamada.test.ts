@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  lerIdentidade, terapeutaIdQueValeu, podeAdministrar, deveEsconderDivisaoDeSocios,
+  lerIdentidade, terapeutaIdQueValeu, podeAdministrar, ehAdminDoDre, deveEsconderDivisaoDeSocios,
   semDivisaoDeSocios,
   podeEditarFechamento, podeEditarCaixa, podeEditarCustos,
   podeMexerEmVenda,
@@ -144,6 +144,17 @@ test('so admin administra: comercial e terapeuta NAO', () => {
   assert.equal(podeAdministrar(comercial), false)
   assert.equal(podeAdministrar(terapeuta(ID_DENISE)), false)
   assert.equal(podeAdministrar(socio), false)
+})
+
+// O funil de metricas tem PII do cliente (nome/email/telefone) + faturamento: so
+// admin DO DRE (area dashboard), nunca o admin do modulo de terapeutas. Ver item 121.
+test('ehAdminDoDre: so admin da area dashboard; admin do sistema (terapeutas) NAO', () => {
+  assert.equal(ehAdminDoDre(adminDre), true)
+  assert.equal(ehAdminDoDre(adminSistema), false) // o furo: antes passava por podeAdministrar
+  assert.equal(ehAdminDoDre(socio), false)
+  assert.equal(ehAdminDoDre(financeiro), false)
+  assert.equal(ehAdminDoDre(comercial), false)
+  assert.equal(ehAdminDoDre(terapeuta(ID_DENISE)), false)
 })
 
 test('a divisao entre socios some SO para o socio', () => {

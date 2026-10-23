@@ -1,5 +1,6 @@
 import { getSupabaseClient } from './supabase'
 import { normTs, brtDayRangeToUTC, kiwifyBrtRange } from './datas-da-plataforma'
+import { precisaConverter } from './moeda-da-venda'
 import type {
   Sale, SaleStatus, Product, Project, FixedCost, VariableCost,
   MetaAdsEntry, CostsData, Closing, CashflowEntry,
@@ -54,7 +55,7 @@ export async function getProducts(projectId: string): Promise<Product[]> {
 // ─── Sales ───────────────────────────────────────────────────────────────────
 
 export async function getSales(
-  projectId: string,
+  projectId: string | null,
   dateStart?: string,
   dateEnd?: string,
   statusFilter: string[] = ['aprovada'],
@@ -78,13 +79,16 @@ export async function getSales(
     let q = client
       .from('sales')
       .select('*')
-      .eq('project_id', projectId)
       // Registros "manual_*" são lançamentos administrativos do módulo de
       // terapeutas (agenda/sessões de um paciente que já tem venda real
       // registrada em outro lugar) — não são transações reais de nenhuma
       // plataforma de pagamento. Contá-los aqui duplicava faturamento real
       // (o paciente já aparece via a venda real da Hubla/Kiwify).
       .not('id', 'like', 'manual_%')
+    // projectId null = todos os projetos (usado pela Performance de Funis, que
+    // soma por produto, nao por projeto). Com projectId, comportamento igual ao
+    // de sempre: filtra o projeto.
+    if (projectId) q = q.eq('project_id', projectId)
 
     // Wide early filter: cobre ambas as plataformas com um único range de banco.
     // Hubla (UTC real): dia D começa em D T03:00:00 UTC.
@@ -137,6 +141,51 @@ export async function getSales(
   return filtered.map(mapSaleRow)
 }
 
+/**
+ * Vendas de TODOS os projetos no periodo - a Performance de Funis soma por
+ * produto (produto_id/nome), nao por projeto. Mesmo filtro de fuso/status do
+ * getSales. Ver item 114 do spr-digital.md.
+ */
+export async function getSalesParaFunil(
+  dateStart?: string,
+  dateEnd?: string,
+  statusFilter: string[] = ['aprovada'],
+): Promise<Sale[]> {
+  // Exclui venda em moeda estrangeira nao convertida (valores em dolar contariam
+  // como real, ~5x menor). Mesma protecao do DRE. Ver item 121 do spr-digital.md.
+  return (await getSales(null, dateStart, dateEnd, statusFilter)).filter(v => !precisaConverter(v))
+}
+
+/**
+ * Vendas ESTORNADAS (reembolsada/chargeback) cujo reembolso caiu no periodo.
+ * Diferente do getSales, filtra por `data_reembolso` (que no banco e uma DATA
+ * pura YYYY-MM-DD), nao por data_hora - o reembolso e lancado no dia em que
+ * aconteceu, nao no dia da venda. Todos os projetos (o funil soma por produto).
+ */
+export async function getReembolsosParaFunil(dateStart: string, dateEnd: string): Promise<Sale[]> {
+  const client = getSupabaseClient()
+  if (!client) return []
+  const PAGE_SIZE = 1000
+  const all: Record<string, unknown>[] = []
+  let cursor: string | null = null
+  while (true) {
+    let q = client.from('sales').select('*')
+      .not('id', 'like', 'manual_%')
+      .in('status', ['reembolsada', 'chargeback'])
+      .gte('data_reembolso', dateStart)
+      .lte('data_reembolso', dateEnd)
+    if (cursor) q = q.gt('id', cursor)
+    const { data, error } = await q.order('id', { ascending: true }).limit(PAGE_SIZE)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    all.push(...data)
+    if (data.length < PAGE_SIZE) break
+    cursor = String(data[data.length - 1].id)
+  }
+  // Exclui reembolso em moeda estrangeira nao convertida (mesma protecao do DRE, item 121).
+  return all.map(mapSaleRow).filter(v => !precisaConverter(v))
+}
+
 export function mapSaleRow(r: Record<string, unknown>): Sale {
   return {
     id: String(r.id),
@@ -156,6 +205,11 @@ export function mapSaleRow(r: Record<string, unknown>): Sale {
     // Denise). Dropar este campo fazia o fechamento nao reconhecer o formato e
     // nao deduzir o repasse (rombo de 19/10/2026). Ver lib/diagnostico-guiado.ts.
     oferta_nome: r.oferta_nome == null ? null : String(r.oferta_nome),
+    // Chave do FUNIL (liga a venda ao funil por id, alem do nome). Captado no
+    // webhook desde 05/10. Dropar aqui era arma carregada: a atribuicao do funil
+    // chegaria cega e cairia no nome em silencio. `null` = historico antigo sem
+    // id. Ver lib/produto-do-evento.ts e o item 114 do spr-digital.md.
+    produto_id: r.produto_id == null ? null : String(r.produto_id),
     pacote_pai_id: r.pacote_pai_id == null ? null : String(r.pacote_pai_id),
     preco_base: Number(r.preco_base),
     valor_pago_cliente: Number(r.valor_pago_cliente),
@@ -262,6 +316,9 @@ export async function addSale(sale: Sale): Promise<void> {
     // venda gravada por aqui entraria sem os dois, em silencio.
     order_id: sale.order_id ?? null,
     oferta_nome: sale.oferta_nome ?? null,
+    // Mesma classe: sem isto, uma venda criada por aqui entraria sem a chave do
+    // funil, em silencio. Ver item 114 do spr-digital.md.
+    produto_id: sale.produto_id ?? null,
     pacote_pai_id: sale.pacote_pai_id ?? null,
     valor_com_juros: sale.valor_com_juros ?? null,
     moeda: sale.moeda ?? null,

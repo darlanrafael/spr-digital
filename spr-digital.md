@@ -6084,3 +6084,1128 @@ VARREDURA "sem furo" (pedido do dono, multiplas abordagens):
 ## 111-113 STATUS: TUDO NO AR. Deploys isolados a partir de origin/main: 361ad9f (mapSaleRow+Leomir diag+blindagem)
 -> 81fd873 (aviso readequacao) -> 59ab56e (mentoria Leomir). Branch de trabalho feature/performance-funis-2a tem
 tudo + o trabalho de funis (nao deployado). PENDENTE: performance de funis (retomar).
+
+# 114. REVISAO ADVERSARIAL do deploy produto_id (5d67a14) - 3 agentes + prova rodando (21/10/2026)
+
+Dono pediu: revisar o deploy que captura produto_id (lib/produto-do-evento.ts, hubla-sale.ts, kiwify-sale.ts),
+com multiplos agentes se confrontando, "nao pode ter furo". 3 revisores em frentes distintas (Hubla/order bumps,
+Kiwify, persistencia/regressao/leitura) + prova rodada por mim no webhook_events.
+
+## 114.1. VEREDITO DA CAPTURA: redonda. Nenhum furo no que foi deployado.
+- Hubla grava `event.product.id` (catalogo, nao offers[].id) e o nome de `event.product.name`. Order bump: a Hubla
+  manda UM evento `-offer-N` POR ITEM, cada um com seu proprio bloco product; o webhook processa 1 evento = 1
+  linha. Logo cada linha pega o id do SEU produto. NAO existe o bug "todas pegam o id do principal".
+- Kiwify grava `order.Product.product_id`. Cada order bump e um PEDIDO separado, webhook proprio, Product proprio
+  (ja documentado itens 29-30). 1 evento = 1 venda = id certo.
+- Persiste nas 3 vias de insert (webhook hubla route.ts:118, kiwify route.ts:119, reconciliador). Coluna
+  sales.produto_id e text NULLABLE (migration 20261005000000, sem NOT NULL/FK/default). Nao quebra dedup (dedup e
+  por order_id/email, nao usa produto_id) nem a correcao de oferta (correcaoAutoritativaDoOffer NAO toca produto_id,
+  entao nao sobrescreve).
+
+## 114.2. PROVA RODANDO (webhook_events, payloads crus, nao li - rodei; regra "provar rodando")
+- Hubla: 4763 eventos, 784 formato "-offer-", 265 faturas com order bump de PRODUTOS DISTINTOS. Faturas com o bug
+  (mesmo product_id p/ nomes diferentes): ZERO. Ex. fatura de 4 itens: COMO SER PERDOADO 1s8rVxvbITB2ejQHEHKx /
+  ACESSO VITALICIO-CSP HYscfyfSoG2CrsS6JpSe / COMBO-CSP OOKdn0lKVKGBBLhY78BY / ALIANCA SAGRADA-CSP eNsZ824PsAgz2DrvKYxw.
+- Vendas criadas SEM produto_id capturavel: Hubla 0 de 2418; Kiwify 0 de 3813. Os 1389 eventos Hubla sem bloco
+  product sao TODOS CanceledSale/InProtestSale (ignored_unknown_type) - nunca viram venda. Ou seja: toda venda que
+  entrou, nos dois gateways, veio com id. (webhook_events so existe desde 04/08/2026; historico anterior resolve
+  por nome->catalogo, ja validado no backfill item 104.)
+
+## 114.3. FUROS LATENTES - nao quebram a captura, mas MORDEM no dia que o funil ler vendas (corrigir ao ligar 2C)
+1. mapSaleRow (lib/services.ts) faz select('*') e mapeia pro tipo Sale SEM produto_id -> id eh descartado em TODA
+   leitura via getSales. MESMA classe do bug do oferta_nome (item 111). Inofensivo hoje (funil ainda nao le sales),
+   letal quando ler.
+2. Tipo Sale (types/index.ts) nao tem o campo produto_id.
+3. addSale (lib/services.ts, upsert) nao lista produto_id -> venda criada MANUALMENTE (app/api/sales POST) persiste
+   sem id. Webhook nao usa addSale, entao o deploy nao e afetado. Raro, mas e a mesma classe.
+4. Tabela funil_produtos so tem (funil_id, plataforma, produto_id), SEM coluna de nome. Se o 2C fizer join cru
+   sales.produto_id = funil_produtos.produto_id, venda com id null some. O 2C TEM que passar pelo fallback por nome
+   (resolverProdutoId / catalogo), nao join cru. (Redundancia que o dono pediu: id falhou -> cai no nome; nem id
+   nem nome -> avisa, nao conta no lugar errado.)
+5. Comentario em lib/funis/funis-config.ts (linhas ~22-27) diz que "a captura do produto_id no webhook ainda nao
+   esta no ar" - FALSO desde 05/10. Confunde manutencao futura. Corrigir o comentario.
+
+## 114.5. CORRECAO dos furos 1-3+5 (21/10/2026, aprovada pelo dono, TDD) - na branch feature/performance-funis-2a
+- Tipo Sale (types/index.ts) agora tem `produto_id?: string | null`.
+- mapSaleRow (lib/services.ts) copia produto_id (`r.produto_id == null ? null : String(...)`); addSale grava produto_id.
+- Teste lib/map-sale-row.test.ts: 2 testes novos (preserva id / ausente vira null) + 'produto_id' na guarda que varre
+  a lista de campos (o proximo campo esquecido quebra o teste).
+- Comentario do funis-config.ts corrigido (captura JA esta no ar).
+- Verificado: npx tsc --noEmit exit 0 (apos rm -rf .next); npm test 908/908 pass, 0 fail.
+- NAO deployado isolado: nao muda nada visivel ate o funil ler sales. Vai pro ar JUNTO com o funil (proxima task).
+- Furo 4 (funil_produtos sem coluna de nome -> 2C tem que passar pelo fallback de nome) fica pra hora de construir o 2C.
+
+## 114.4. FUNIL IMERSAO A REAPROXIMACAO - produtos CONFIRMADOS pelo dono (21/10/2026)
+Vende nas DUAS plataformas. Cada produto tem id DIFERENTE por plataforma e nome ligeiramente diferente.
+Nome exato = o campo `produto` da tabela sales (Kiwify leva prefixo "🥝 "; conferido no catalogo real de 14.019 vendas).
+Cada produto aparece 2x no banco: com id (venda >= 05/10) e "(sem id)" (venda antiga, casa por NOME). Config leva id + nome.
+Principal:
+- Hubla  "Imersao - A reaproximacao"                 d7tvBd7toCPnVZnOWUaZ
+- Kiwify "IImersao - A Reaproximacao - Oficial"       f34a2630-d9e0-11f0-ac73-b5cf3aba727f   (nome tem "II" no inicio, nao e typo meu)
+Bump Combo Primeiros Passos:
+- Hubla  "Combo: Primeiros Passos da Restauracao - OB"              hQDdIiz1jjuM9jtWwMjk
+- Kiwify "🥝 Combo: Primeiros Passos da Restauracao - OB - imersao" e6bd44b0-ee85-11f0-a468-3f63a07cd627
+Bump Guia Anti-brigas:
+- Hubla  "Guia pratico - Anti-brigas - OB"           8C4fqbB8IdQXrydNNgmg
+- Kiwify "🥝 Guia pratico - Anti-brigas - OB Imersao" 4eefa810-ee87-11f0-b4f2-9f6e27362ab7
+Bump Gravacao:
+- Hubla  "Gravacao - Imersao A reaproximacao"                      0uQLyW37o3FYhr7tLPhd
+- Kiwify "🥝 Gravacao da Imersao - A Reaproximacao - OB Imersao"   32e2ad30-ee86-11f0-8fbb-ab178724d381
+Bump O Que fazer Apos a traicao:
+- Hubla  "O Que fazer Apos a traicao?  OB"            qSNHES80x9ut1fuo9qOv
+- Kiwify "🥝 O Que fazer Apos a traicao?  OB - Imersao" 703507b0-ee85-11f0-8e0e-212248210abf
+FORA do funil (de proposito, apareceram no match por termo mas sao OUTRO produto): "IMERSAO - PROFISSAO TERAPEUTAS",
+"GRAVACAO - IMERSAO TERAPEUTAS" (produto Terapeutas), e os de sigla "CCC". So o id/sigla separa com seguranca; por nome cairiam errado.
+
+## 114.4b. "O RESGATE" (sem CSP) - FORA de funil, decidido pelo dono (21/10/2026)
+"O RESGATE" sem a sigla CSP (Hubla id t4ytLBgwp69xubk1irZK, 765 vendas; Kiwify "🥝 O Resgate" 72fcdce0-d821-11f0-96bf-731259ca42de)
+NAO entra em funil nenhum. So "O RESGATE - CSP" (4c7FpX4SdlqVQT0WJfOv) entra no Como Ser Perdoado. O dono alertou que ja
+teve problema de confundir os dois. Como o match e por nome EXATO (norm ===) + id, "O RESGATE" != "O RESGATE - CSP" ja
+separa. TRAVADO por teste: lib/funis/funis-config.test.ts prova a exclusao (por nome e por id) + a colisao dos 3
+"Primeiros Passos" (CSP/OB/CCC) + Terapeutas fora + plataforma tem que bater. 28 testes, verde.
+
+## 114.4c. CONFIG dos funis POPULADO (21/10/2026) - lib/funis/funis-config.ts
+Imersao a Reaproximacao: 10 entradas (principal + 4 bumps x 2 plataformas), id + nome exato (Kiwify com prefixo "🥝 ";
+o bump "O Que fazer Apos a traicao?  OB" tem 2 espacos antes do OB, como no banco). Como Ser Perdoado: 5 (Hubla).
+## 114.4d. NOMENCLATURA Meta por funil (dono 21/10/2026) + verificacao rodando
+Dono: Como Ser Perdoado = campanhas com "CSP"; Imersao a Reaproximacao = campanhas com "IRM". No config:
+termosCampanha ['CSP'] e ['IRM']. Match (adsDoFunil / getProjectInvestment) e case-insensitive + includes.
+PROVA rodada na Meta API real (5 contas, 1045 campanhas distintas, periodo 06->22/10):
+- "IRM": 397 campanhas, todas prefixo [F01-IRM]_ (Imersao). "CSP": 64, todas CSP_Vendas_Frio_ (Perdoado).
+- INTERSECAO csp & irm = 0 -> sem risco de contar investimento em dobro. Siglas limpas.
+DECISAO do dono sobre "IAR" (21/10/2026): adicionar "IAR" como termo da Imersao. termosCampanha Imersao = ['IRM','IAR'].
+Provado que "IAR" nao colide com CSP (csp&iar = 0; csp&irm = 0). Com IRM+IAR o funil pega 400 campanhas.
+O que "IAR" acrescenta alem de IRM (3 campanhas, R$2.104 no periodo): as 2 ANTECIPACAO_IAR_LIVE_CCC (R$2.104) + 1
+[IAR_RMKT]AULA-INAUGURAL (R$0). CONTEXTO: o "CCC" no nome dessas era so o nome da LIVE ("Como Convencer seu Conjuge"),
+nao outro funil - a antecipacao era do funil IAR mesmo (dono). Entao o INVESTIMENTO delas conta na Imersao.
+IMPORTANTE - distincao campanha x produto (dono foi explicito): a nivel de PRODUTO, "CCC" E OUTRO FUNIL. Os produtos
+"Como convencer seu conjuge" (700 vendas, Kiwify e31dee20...), "Combo ... - OB - CCC" (f4b38af0...) e "ACESSO VITALICIO
+- CCC" (1ee8ee30...) NAO entram na Imersao nas vendas. Consequencia consciente: o gasto historico das lives CCC conta
+na Imersao mas as vendas do produto CCC nao - o dono aceitou (foi equivoco de nomenclatura de campanha que nao repete).
+Fica de fora tambem a "IMERSAO - PRESENCIAL" (outro produto). Teste funis-config.test.ts ja trava CCC-produto fora.
+
+# 115. Performance de Funis - dashboard ligado aos dados reais (21/10/2026)
+
+Construido em fases (TDD). Camada de dados nova, pura e testada:
+- lib/funis/vendas-do-funil.ts: agregarVendasDoFunil(vendas, funilId) -> {vendas, faturamentoBruto, taxas}. So
+  status 'aprovada'; faturamento=valor_pago_cliente; taxas=pago-liquido; match por funilDaVenda (id/nome). 6 testes.
+- lib/funis/atribuicao-criativo.ts: adIdDaVenda(utm_content) -> ad id da Meta embutido na UTM ("<nome>|<adId>::..").
+  Preenchido em ~96% das vendas. 6 testes.
+- lib/funis/criativos-do-funil.ts: montarCriativos(adsMeta, vendas) -> junta criativo da Meta + vendas atribuidas
+  por ad id; ROAS/CPA reais por criativo; o que nao casa vai pro balde naoAtribuido (nunca some em silencio). 6 testes.
+- lib/funis/meta-funil.ts: AdInsight agora carrega adId (pra casar com a UTM).
+- lib/services.ts: getSales aceita projectId null (todos os projetos); getSalesParaFunil(de, ate) pro funil (soma por
+  produto, nao por projeto). Comportamento de quem passa projeto segue identico.
+API /api/funis/performance reescrita: fonte dos funis = config no codigo (FUNIS), nao a tabela. Resolve UMA janela de
+datas (preset -> de/ate em BRT) e usa a MESMA pro Meta e pras vendas (senao ROAS compara janelas diferentes). Devolve
+topo (Meta) + vendas/faturamento/taxas (banco) + resultado (resultadoDoFunil) + criativos (com vendas/ROAS/CPA reais).
+/api/funis GET = lista do config; POST (cadastro) desativado (405).
+Dashboard app/performance-funis/dashboard/page.tsx refeito igual ao prototipo: funil terminando em Vendas+Faturamento,
+bloco Resultado real, criativos com Vendas/Faturamento/ROAS/CPA/CTR/HookRate, default 30 dias, sem botao "ok".
+PROVA rodando (pipeline real, 30d): CSP 478 vendas R$101.701 bruto, result -R$6.962, ROAS 1,25x; Imersao 1612 vendas
+R$62.602 bruto, result -R$34.597, ROAS 0,82x. Resultado NEGATIVO e real - conta so o produto de entrada do funil
+(sem backend/upsell). tsc 0, 954 testes, build 0.
+Criativos (ajuste do dono 21/10): 10 por pagina + paginacao (anterior/proxima), e marcos de VIDEO por criativo -
+quantas pessoas viram 25%/50%/75%/95% (video_pXX_watched_actions da Meta, confirmado rodando; ex. top CSP
+25%=14984 50%=10268 75%=7936 95%=1762). Threado por meta-funil (AdInsight.videoP25..95) -> criativos-do-funil ->
+API -> tela. 2 testes novos travando a leitura dos marcos. tsc 0, 956 testes.
+FEITO (21/10): (a) graficos "Resultado liquido diario" e "Reembolsos" - lib/funis/cadencia-do-funil.ts
+(resultadoDiario: vendas por dia via data_hora ja-normalizada BRT + trafego Meta por dia, imposto do funil, +13,85%;
+reembolsoDiario: vendas estornadas por data_reembolso, que no banco e DATA pura). 6 testes. getReembolsosParaFunil em
+services (filtra por data_reembolso). API devolve resultadoDiario+reembolsoDiario; tela mostra os 2 graficos (linha +
+oscilacao, zero de referencia). (b) cadastro REMOVIDO: apagados app/performance-funis/{funis,produtos},
+app/api/funis/{[id],produtos}, components/PerfFunisTabs.tsx; /api/funis GET=config, POST=405.
+STATUS: tsc 0, 962 testes, build 0. Funcionalidade completa. NAO deployado (dono: deploy depois, junto com item 114.5).
+
+## 115.1. AJUSTES na tela (comparando com o prototipo ao vivo, 21/10/2026)
+- Criativos: 10 por pagina + paginacao (anterior/proxima); colunas Viu 25/50/75/95% (marcos de video, Meta).
+- Os 2 graficos ganharam os cartoes de resumo embaixo (como no prototipo): Resultado -> "Melhor dia" (dia da semana
+  de maior media) + "Melhores horarios" (janela de 2h com mais vendas, da data_hora); Reembolsos -> "Total reembolsado"
+  + "Pior dia". melhorHorario calculado na API.
+- PERFORMANCE: a tela era lenta porque esperava TUDO numa request, e o gargalo era a busca por-anuncio DIARIA. Troquei
+  por tráfego diário por CAMPANHA (lib/meta.ts getCampanhaInsightsDiario, barato). Separei a API em RESUMO (rapido:
+  funil/resultado/graficos, 4 buscas em PARALELO) e CRIATIVOS (?criativos=1, a parte lenta dos ads) - a tela carrega o
+  resumo e os criativos entram depois com "carregando" so na tabela. Tempos medidos: resumo ~2.5s, ads CSP ~3.2s.
+- Mudar o PERIODO nao recarrega mais a tela (stale-while-revalidate): mantem os numeros/graficos e so atualiza no lugar,
+  esmaecido enquanto chega. "Carregando" cheio so na 1a carga ou ao TROCAR de funil (2 useEffect: um limpa por funilId,
+  outro busca por [funilId,query]).
+- PENDENTE p/ instantaneo (tipo UTMify/VK): sync que puxa a Meta de X em X min e grava num cache no banco; tela le do
+  banco. A DEFINIR com o dono.
+- Preview local (~/Desktop/preview-performance-funis.html) foi descartado como fonte de verdade - comparacao agora e na
+  tela real (dev server). Bug do preview (tela preta) era __name do esbuild vazando no toString; nao afeta o app React.
+
+## 115.2. Ajustes na tabela de criativos (22/10/2026, comparando ao vivo)
+- FORMATO: vinha do video_view do periodo (anuncio sem entrega aparecia "Imagem" por engano). Agora vem do TIPO real do
+  criativo (creative.object_type === 'VIDEO' ou tem video_id) - campo AdInsight.creativoEhVideo. isVideo (video_view>0)
+  fica so pro hook rate. Teste trava "video sem entrega ainda e video".
+- NOME do anuncio: a coluna mostrava o nome do CRIATIVO (que a Meta as vezes enche com o texto/descricao do anuncio).
+  Trocado pra ad.name (a.anuncio).
+- VENDA UNICA x COM AGREGADOS (dono): produto PRINCIPAL marcado no config (ProdutoDoFunil.principal; CSP=COMO SER
+  PERDOADO, Imersao=principal nas 2 plataformas). funis-config.ehProdutoPrincipal(venda, funilId). Criativo agora tem
+  vendasPrincipal (so o principal) e vendas (total c/ bumps); e roasPrincipal (fat principal/investido) e roas (total).
+  Tela: colunas "Vendas" (principal) + "Com agregados" (total); "ROAS" (principal) + "ROAS c/ agreg." (total). CPA e
+  faturamento seguem pelo total. ROAS/CPA/ranking pelo total. Testes novos (split de venda e de roas, ehProdutoPrincipal).
+- VER O ANUNCIO: cada linha e clicavel -> abre o anuncio. previewUrl = creative.instagram_permalink_url (post do IG) se
+  tiver, senao ad.preview_shareable_link (preview da Meta em FB/IG). Campos adicionados no getAdsComInsights. Abre em
+  nova aba, com icone de link.
+STATUS: tsc 0, 965 testes, build compila. Tudo na tela real (dev server), NAO deployado.
+
+## 115.3. MENTORIA EM GRUPO cadastrada no funil CSP (22/10/2026, dono)
+Dono: a "MENTORIA EM GRUPO - PEDRO RONCADA" faz parte do funil Como Ser Perdoado (upsell/backend). Cadastrada como
+AGREGADO (nao principal) nas 2 plataformas: Hubla "MENTORIA EM GRUPO - PEDRO RONCADA" FL2Rs2rICpeVMCW77j6n; Kiwify
+"Mentoria em grupo- Pedro Roncada" b7dee3f0-5b82-11f1-bec6-3d073756b1c6. Entra em "com agregados", nao em "venda unica".
+INVESTIGACAO (provar rodando): das ultimas 104 vendas aprovadas dela, 57 vieram de campanha CSP, 19 de campanha propria
+"[PF01_RC]_vendas_auto_frio..." (nao CSP) e 28 sem UTM. Como o cadastro e por PRODUTO, TODAS caem no CSP - inclusive as
+19 do PF01_RC e as 28 organicas, cujo GASTO nao entra no trafego do CSP (infla um pouco o ROAS do CSP). O dono DECIDIU
+contar todas no CSP mesmo (opcao simples, por produto), ciente disso. Alternativa descartada: so contar as de campanha
+CSP (pela UTM). Com isso o CSP de hoje bate com a UTMify (27 vendas). Diferenca UTMify x nosso = MODELO: UTMify atribui
+por campanha/UTM; nos por produto (decisao do dono desde o inicio).
+STATUS: tsc 0, 966 testes.
+
+## 115.4. Criativos "Somente ativos" + performance (22/10/2026, dono)
+Problema: a Imersao tem 300+ anuncios (a maioria parada/R$0); puxar TODOS da Meta levava ~29s (CSP e rapido, ~3s, tem
+poucos). Dono quer: por padrao mostrar SO os anuncios que gastaram no periodo; um botao "Somente ativos" ligado, que
+desligado mostra todos (inclusive pausados/R$0). Vale pra qualquer periodo.
+Solucao (CORRIGIDA 22/10): os DOIS modos usam a busca LEVE - so os anuncios que RODARAM no periodo (nunca os 300+ que
+nunca rodaram). O botao so muda o filtro em memoria:
+- lib/meta.getAdInsightsPorTermos (insights NIVEL AD, so os que tiveram entrega no periodo, filtrado por termo) +
+  getAdsCreativeDetails (nome/thumb/tipo/preview em lote, so pros entregues). Um fetch cacheado por periodo.
+- DEFINICAO FINAL do botao (dono 22/10): os DOIS modos exigem GASTO>0 no periodo. "Somente ativos" (padrao) = so os
+  que estao ATIVOS agora (getAdsCreativeDetails traz effective_status === 'ACTIVE'). Desmarcado = todos que gastaram
+  (ativos + pausados). Anuncio R$0 nunca aparece. Imersao hoje: 14 gastaram, 14 ativos; ~3s.
+- Investido na tabela agora com CENTAVOS (brl, nao brlCompact). Botao virou switch (verde on / cinza off).
+
+## 115.5. Funil: venda unica x agregados + conversao do checkout (dono 22/10/2026)
+Dono: a conversao do checkout tem que ser sobre a VENDA UNICA (produto principal = nº de compradores), nao sobre o total
+(que conta cada order bump como venda e inflava). agregarVendasDoFunil agora devolve vendasPrincipal (conta
+ehProdutoPrincipal) alem do total. API devolve vendasPrincipal no resumo. Tela: a caixa do funil virou "Vendas unicas"
+(grande = principal) + subtexto "+ X agregados · Y total"; a "Tx de conversao do checkout" usa vendasPrincipal/checkouts.
+Faturamento/ROAS do bloco Resultado seguem com TUDO (principal+agregados). Ex CSP hoje: 13 unicas, +14 agregados, 27 total.
+- getAdsComInsights (todos os ads via /ads edge, 333) ABANDONADO - nao e mais usado.
+- API: ?criativos=1 (ativos) | ?criativos=1&todos=1 (todos). Tela: botao "Somente ativos" (default ON); efeito proprio
+  refaz so a tabela ao ligar/desligar (mesmo cache, troca instantanea).
+PENDENTE instantaneo-total: ainda o sync (cachear Meta no banco) - mas ja abre rapido.
+STATUS: tsc 0, 966 testes.
+
+
+# 116. Performance de Funis - dossie completo (build 21-22/10/2026)
+
+Este item e o registro MAXIMAMENTE DETALHADO e redundante da feature "Performance
+de Funis" do DRE Financeiro (branch feature/performance-funis-2a). A intencao e que
+qualquer pessoa - ou uma IA sem nenhum contexto previo - consiga entender, so lendo
+aqui, exatamente o que foi construido, como funciona e por que cada decisao foi
+tomada. Cita arquivo, funcao e linha aproximada em toda afirmacao sobre codigo.
+Os itens 114 e 115 descrevem a construcao em fases e a revisao da captura do
+produto_id; este item 116 consolida TUDO num unico lugar. O item 117 registra a
+revisao adversarial final (22/10/2026).
+
+Nota de estilo: neste documento nunca se usa o travessao longo; onde o codigo tem
+o caractere de travessao em labels da tela, isso esta explicitado como literal.
+
+## 116.1. VISAO GERAL e as decisoes do dono
+
+1. A feature mede, por FUNIL de vendas, o caminho inteiro: do clique no anuncio da
+   Meta ao que sobra no bolso (resultado liquido). Subtitulo literal da tela
+   (app/performance-funis/dashboard/page.tsx, linha ~186): "Do clique no anuncio ao
+   que sobra no bolso, por produto."
+2. Sao DOIS funis, e so dois por enquanto (decisao do dono, 21/10/2026):
+   - "Como Ser Perdoado" (id interno `como-ser-perdoado`).
+   - "Imersao a Reaproximacao" (id interno `imersao-reaproximacao`; na config o nome
+     tem acentos: "Imersão a Reaproximação").
+   Os demais produtos nao entram em funil nenhum.
+3. CONFIG NO CODIGO, nao no banco. Decisao do dono (12-21/10/2026): nao ha tela de
+   cadastro nem tabela no banco para funis. Os funis, seus produtos, a nomenclatura
+   das campanhas da Meta e a aliquota de imposto vivem em lib/funis/funis-config.ts.
+   Adicionar/mudar um funil e "uma conversa com o dono + editar o config + deploy",
+   igual ao resto do sistema (readequacoes, ofertas do diagnostico, mentoria por
+   sessao). Ver o cabecalho do arquivo (linhas 1-8) e app/api/funis/route.ts
+   (comentario linhas 14-16, e o POST que responde 405 de proposito, linhas 26-31).
+4. VENDAS POR PRODUTO, nao por campanha. O faturamento de um funil e a soma das
+   vendas APROVADAS cujos PRODUTOS pertencem ao funil (match por produto_id ou nome
+   do produto). Isto e DIFERENTE do modelo da UTMify/VK, que atribui por
+   campanha/UTM. Consequencia consciente e registrada (item 115.3): uma venda de um
+   produto do funil conta no funil mesmo que tenha vindo de uma campanha que NAO e
+   do funil (ou sem UTM); o gasto dessa campanha nao entra no trafego do funil.
+   O dono escolheu essa simplicidade (por produto) ciente do efeito no ROAS.
+5. INVESTIMENTO da Meta por NOMENCLATURA de campanha. O gasto (trafego) de um funil
+   vem das campanhas da Meta cujo NOME contem um dos termos do funil:
+   - Como Ser Perdoado: termo "CSP".
+   - Imersao a Reaproximacao: termos "IRM" e "IAR".
+   (Ver 116.2 abaixo e o item 114.4d para a prova de que csp&irm = csp&iar = 0 nas
+   campanhas reais.)
+6. IMPOSTO por funil (fracao do faturamento BRUTO, decisao do dono 21/10/2026):
+   - Como Ser Perdoado: 12,85% (impostoRate = 0.1285).
+   - Imersao a Reaproximacao: 3,85% (impostoRate = 0.0385).
+7. ACRESCIMO de trafego (IOF etc.), global: 13,85%. Investir R$ 1.000 "custa"
+   R$ 1.138,50. Aplicado como `trafego * (1 + 0.1385)`. Constante exportada
+   ACRESCIMO_TRAFEGO = 0.1385 em lib/funis/funis-config.ts, linha 65.
+
+## 116.2. CONFIG (lib/funis/funis-config.ts) - tudo, com nomes byte-a-byte
+
+Tipos e constantes:
+1. `type PlataformaFunil = 'hubla' | 'kiwify'` (linha 10).
+2. `type ProdutoDoFunil` (linhas 12-34): campos
+   - `plataforma: PlataformaFunil`
+   - `nome: string` - NOME exato do produto, como vem no campo `produto` da tabela
+     sales. E por aqui que a venda casa com o funil (mesma fonte que o DRE).
+   - `produto_id?: string` - produto_id da plataforma; REFORCO ao nome. O casamento
+     tenta o id e, quando null (historico antigo antes de 05/10/2026), cai no nome.
+   - `principal?: boolean` - marca o produto PRINCIPAL do funil (a "venda unica").
+     Um funil pode ter o principal em mais de uma plataforma.
+3. `type FunilConfig` (linhas 38-59): `id`, `nome`, `produtoLabel` (label do produto
+   principal para o subtitulo), `termosCampanha: string[]` (nomenclatura das
+   campanhas da Meta), `produtos: ProdutoDoFunil[]`, `impostoRate: number`.
+4. `const norm` (linha 36): normaliza string para o match - tira acentos (NFD +
+   remocao de diacriticos), poe em minusculo e faz trim. Usado nos dois lados do
+   casamento (nome do produto da venda x nome configurado).
+5. `const ACRESCIMO_TRAFEGO = 0.1385` (linha 65).
+
+FUNIL 1 - "Como Ser Perdoado" (`FUNIS[0]`, linhas 68-91):
+- id: `como-ser-perdoado`; nome: `Como Ser Perdoado`; produtoLabel: `Como Ser Perdoado`.
+- termosCampanha: `['CSP']` (linha 74).
+- impostoRate: `0.1285` (linha 90).
+- produtos (todos Hubla; todos levam o sufixo "- CSP" salvo o principal e a mentoria):
+  1. principal: plataforma `hubla`, produto_id `1s8rVxvbITB2ejQHEHKx`, nome
+     `COMO SER PERDOADO`, `principal: true` (linha 77).
+  2. `hubla`, `eNsZ824PsAgz2DrvKYxw`, `ALIANÇA SAGRADA - CSP` (linha 78).
+  3. `hubla`, `OOKdn0lKVKGBBLhY78BY`, `COMBO - OS PRIMEIROS PASSOS DA RESTAURAÇÃO - CSP` (linha 79).
+  4. `hubla`, `HYscfyfSoG2CrsS6JpSe`, `ACESSO VITALÍCIO - CSP` (linha 80).
+  5. `hubla`, `4c7FpX4SdlqVQT0WJfOv`, `O RESGATE - CSP` (linha 83). O produto_id foi
+     CONFIRMADO no payload cru do webhook (compra de teste 21/10/2026:
+     event.product.id = 4c7FpX4SdlqVQT0WJfOv, bate com o link hub.la/g/4c7F...).
+  6. AGREGADO (upsell/backend do funil, NAO principal) - MENTORIA EM GRUPO, nas duas
+     plataformas (nomes diferentes), adicionado pelo dono em 22/10/2026 (item 115.3):
+     - `hubla`, `FL2Rs2rICpeVMCW77j6n`, `MENTORIA EM GRUPO - PEDRO RONCADA` (linha 87).
+     - `kiwify`, `b7dee3f0-5b82-11f1-bec6-3d073756b1c6`, `Mentoria em grupo- Pedro Roncada`
+       (linha 88). Atencao: o nome Kiwify nao tem espaco antes do "-" ("grupo-").
+  OBS: o funil CSP SO tem produtos na Hubla (menos a mentoria na Kiwify). Se um dia
+  vender o principal CSP na Kiwify, o funil perde essa venda em silencio ate alguem
+  adicionar a entrada Kiwify no config (ver item 117 - MENORES/INFO).
+
+FUNIL 2 - "Imersao a Reaproximacao" (`FUNIS[1]`, linhas 92-124):
+- id: `imersao-reaproximacao`; nome: `Imersão a Reaproximação`;
+  produtoLabel: `Imersão a Reaproximação`.
+- termosCampanha: `['IRM', 'IAR']` (linha 100).
+- impostoRate: `0.0385` (linha 123).
+- produtos (vende nas DUAS plataformas; cada produto tem id DIFERENTE por plataforma
+  e nome ligeiramente diferente; o nome Kiwify leva o prefixo emoji "🥝 "):
+  1. PRINCIPAL Hubla: `hubla`, `d7tvBd7toCPnVZnOWUaZ`, `Imersão - A reaproximação`,
+     `principal: true` (linha 108).
+  2. PRINCIPAL Kiwify: `kiwify`, `f34a2630-d9e0-11f0-ac73-b5cf3aba727f`,
+     `IImersão - A Reaproximação - Oficial`, `principal: true` (linha 109). O "II" no
+     inicio NAO e erro de digitacao - e assim que esta no banco.
+  3. Bump Combo Primeiros Passos (Hubla): `hubla`, `hQDdIiz1jjuM9jtWwMjk`,
+     `Combo: Primeiros Passos da Restauração - OB` (linha 111).
+  4. Bump Combo Primeiros Passos (Kiwify): `kiwify`, `e6bd44b0-ee85-11f0-a468-3f63a07cd627`,
+     `🥝 Combo: Primeiros Passos da Restauração - OB - imersão` (linha 112).
+  5. Bump Guia Anti-brigas (Hubla): `hubla`, `8C4fqbB8IdQXrydNNgmg`,
+     `Guia prático - Anti-brigas - OB` (linha 114).
+  6. Bump Guia Anti-brigas (Kiwify): `kiwify`, `4eefa810-ee87-11f0-b4f2-9f6e27362ab7`,
+     `🥝 Guia prático - Anti-brigas - OB Imersão` (linha 115).
+  7. Bump Gravacao (Hubla): `hubla`, `0uQLyW37o3FYhr7tLPhd`,
+     `Gravação - Imersão A reaproximação` (linha 117).
+  8. Bump Gravacao (Kiwify): `kiwify`, `32e2ad30-ee86-11f0-8fbb-ab178724d381`,
+     `🥝 Gravação da Imersão - A Reaproximação - OB Imersão` (linha 118).
+  9. Bump "O Que fazer Apos a traicao" (Hubla): `hubla`, `qSNHES80x9ut1fuo9qOv`,
+     `O Que fazer Após a traição?  OB` (linha 120). ATENCAO: tem DOIS espacos antes do
+     "OB", exatamente como no banco.
+  10. Bump "O Que fazer Apos a traicao" (Kiwify): `kiwify`, `703507b0-ee85-11f0-8e0e-212248210abf`,
+      `🥝 O Que fazer Após a traição?  OB - Imersão` (linha 121). Tambem com 2 espacos.
+
+EXCLUSOES DE PROPOSITO (registradas aqui porque sao faceis de confundir):
+1. "O RESGATE" sem a sigla CSP (Hubla id t4ytLBgwp69xubk1irZK, ~765 vendas; Kiwify
+   "🥝 O Resgate" 72fcdce0-d821-11f0-96bf-731259ca42de) NAO entra em funil nenhum. So
+   "O RESGATE - CSP" (4c7FpX4SdlqVQT0WJfOv) entra no Como Ser Perdoado. Como o match e
+   por nome EXATO (norm ===) + id, "O RESGATE" != "O RESGATE - CSP" ja separa (item 114.4b).
+2. Produtos de sigla "CCC" (ex.: "Como convencer seu conjuge", "Combo ... - OB - CCC",
+   "ACESSO VITALICIO - CCC") NAO entram na Imersao. A nivel de PRODUTO, CCC e outro
+   funil. (A nivel de CAMPANHA, o gasto das lives "IAR" que tinham "CCC" no nome conta
+   na Imersao - equivoco de nomenclatura que o dono aceitou; item 114.4d.)
+3. Produtos "IMERSAO - PROFISSAO TERAPEUTAS" e "GRAVACAO - IMERSAO TERAPEUTAS"
+   (produto Terapeutas) e "IMERSAO - PRESENCIAL" ficam de fora (item 114.4).
+4. termosCampanha: CSP = `['CSP']`; Imersao = `['IRM', 'IAR']`.
+
+FUNCAO `funilDaVenda(venda)` (linhas 133-141): devolve o FunilConfig de uma venda, ou
+null. Casa se EXISTE um funil com ALGUM produto onde:
+`p.plataforma === venda.plataforma && (norm(p.nome) === norm(venda.produto) || (venda.produto_id && p.produto_id === venda.produto_id))`.
+Ou seja: plataforma TEM que bater, e entao vale o nome exato normalizado OU o
+produto_id. A plataforma entra junto para nao casar um produto Hubla com uma venda
+Kiwify de nome parecido.
+
+FUNCAO `ehProdutoPrincipal(venda, funilId)` (linhas 148-160): mesma regra de
+casamento (plataforma + nome-normalizado-ou-id), mas restrita aos produtos marcados
+`principal === true` do funil `funilId`. Serve para separar "venda unica" (principal)
+de "venda com agregados" (bumps/upsell) por criativo e no funil.
+
+## 116.3. CAMADA DE DADOS (libs puras) - assinaturas e regra do dinheiro
+
+Convencao comum: todas essas libs sao PURAS (nao acessam banco; recebem as vendas e
+numeros ja prontos) e usam `const cent = (n) => Math.round(n * 100) / 100` para fixar
+os valores em centavos (evita ruido de float). Ver item 117 ROBUSTEZ B para a
+excecao (totalReembolso na route, somado sem cent final).
+
+1. lib/funis/vendas-do-funil.ts
+   - `type VendaParaFunil` (linhas 6-13): plataforma, produto, produto_id?, status,
+     valor_pago_cliente, valor_liquido. O minimo para somar uma venda num funil.
+   - `type AgregadoVendasFunil` (linhas 15-24): vendas (TOTAL: principal + agregados),
+     vendasPrincipal (so o principal = nº de compradores), faturamentoBruto (soma de
+     valor_pago_cliente), taxas (soma de valor_pago_cliente - valor_liquido).
+   - `agregarVendasDoFunil(vendas: VendaParaFunil[], funilId: string): AgregadoVendasFunil`
+     (linhas 36-50). Regras: ignora quem nao e `status === 'aprovada'` (reembolso e
+     chargeback nao entram no faturamento; reembolso tem bloco a parte); ignora quem
+     nao e do funil (`funilDaVenda(v)?.id !== funilId`); para cada venda valida:
+     incrementa `vendas`, e se `ehProdutoPrincipal(v, funilId)` incrementa
+     `vendasPrincipal`; soma `valor_pago_cliente` no bruto e `pago - liquido` nas
+     taxas. Devolve bruto e taxas arredondados por `cent`.
+
+2. lib/funis/resultado-do-funil.ts
+   - `type EntradaResultado` (linhas 5-14): faturamentoBruto, taxas, trafego (sem
+     acrescimo), impostoRate.
+   - `type ResultadoDoFunil` (linhas 16-26): faturamentoLiquido, impostos,
+     trafegoComAcrescimo, resultadoLiquido, roas, margem.
+   - `resultadoDoFunil(e: EntradaResultado): ResultadoDoFunil` (linhas 32-40). A conta
+     financeira do funil:
+     - `faturamentoLiquido = cent(faturamentoBruto - taxas)`.
+     - `impostos = cent(faturamentoBruto * impostoRate)` (imposto incide sobre o
+       BRUTO, nao sobre o liquido).
+     - `trafegoComAcrescimo = cent(trafego * (1 + ACRESCIMO_TRAFEGO))` = trafego * 1,1385.
+     - `resultadoLiquido = cent(faturamentoLiquido - impostos - trafegoComAcrescimo)`.
+     - `roas = trafego > 0 ? faturamentoBruto / trafego : 0` (divisao por zero
+       tratada: sem trafego, ROAS = 0).
+     - `margem = faturamentoBruto > 0 ? resultadoLiquido / faturamentoBruto : 0`
+       (sem faturamento, margem = 0).
+
+3. lib/funis/cadencia-do-funil.ts
+   - `type VendaDia` (linha 5): data_hora, valor_pago_cliente, valor_liquido.
+   - `type TrafegoDia` (linha 6): data, investido.
+   - `type PontoResultado` (linha 7): data, faturamento, resultadoLiquido.
+   - `resultadoDiario(vendas: VendaDia[], trafego: TrafegoDia[], impostoRate: number): PontoResultado[]`
+     (linhas 15-34). Combina vendas por dia (usa `data_hora.slice(0,10)` - os primeiros
+     10 chars YYYY-MM-DD; a data_hora ja esta em BRT porque o mapSaleRow normaliza) com
+     o trafego por dia (por `t.data`). Para cada dia (uniao dos dias de venda e de
+     trafego, ordenados): `resultadoLiquido = cent((b - tx) - b*impostoRate - tr*(1+ACRESCIMO_TRAFEGO))`,
+     onde b = bruto do dia, tx = taxas do dia, tr = trafego do dia. Dia com trafego e
+     sem venda aparece (resultado negativo); dia com venda e sem trafego tambem.
+   - `type VendaReembolso` (linha 36): data_reembolso?, valor_pago_cliente.
+   - `type PontoReembolso` (linha 37): data, reembolso.
+   - `reembolsoDiario(reembolsos: VendaReembolso[]): PontoReembolso[]` (linhas 43-51).
+     Agrupa por `data_reembolso` (que no banco e uma DATA pura YYYY-MM-DD, nao um
+     timestamp - por isso nao desloca de fuso). Soma valor_pago_cliente das vendas
+     estornadas; pula quem nao tem data_reembolso; ordena por data.
+
+4. lib/funis/atribuicao-criativo.ts
+   - `adIdDaVenda(utmContent: string | null | undefined): string | null` (linhas 12-20).
+     Extrai o ad id da Meta embutido no utm_content da venda. Formato esperado:
+     `"<nome do anuncio>|<adId>::<tracking facebook>::"`. Pega o segmento depois do
+     PRIMEIRO "|" ate o "::", faz trim. So devolve se for NUMERICO (`/^\d+$/`); senao
+     devolve null (sem UTM, organico, link na bio, ou formato inesperado). Falha
+     SEGURA: prefere null a inventar atribuicao. Nota (item 117 MENORES): se o NOME do
+     anuncio tiver um "|", a extracao pega o pedaco errado e, como ele nao sera so
+     digitos, cai em null (nao em id errado) - mesma falha segura.
+
+5. lib/funis/criativos-do-funil.ts
+   - `type CriativoMeta` (linhas 6-21): adId, criativo, thumbnail, investido, isVideo,
+     ctr, hookRate, previewUrl, videoP25/P50/P75/P95. O criativo como a Meta entrega.
+   - `type VendaAtribuivel` (linhas 24-29): utm_content?, valor_pago_cliente,
+     ehPrincipal? (se e do produto principal).
+   - `type CriativoLinha` (linhas 31-57): adId, criativo, formato ('Vídeo' | 'Imagem'),
+     thumbnail, investido, vendasPrincipal, vendas (total), faturamento, roasPrincipal,
+     roas, cpaPrincipal, cpa, ctr, hookRate, previewUrl, videoP25/50/75/95.
+   - `type CriativosDoFunil` (linhas 59-68): linhas (uma por anuncio, ordenada por
+     vendas desc) + naoAtribuido { vendas, faturamento }.
+   - `montarCriativos(ads: CriativoMeta[], vendas: VendaAtribuivel[]): CriativosDoFunil`
+     (linhas 75-120). Junta os criativos da Meta (investido + metricas) com as vendas
+     REAIS do funil, casando pelo ad id que vem no utm_content (via adIdDaVenda). Fluxo:
+     - monta um Set `adsValidos` com os ad ids que a Meta entregou.
+     - para cada venda: `id = adIdDaVenda(v.utm_content)`; se o id existe E esta em
+       adsValidos, acumula no mapa por ad (vendas++, faturamento += pago; e se
+       `v.ehPrincipal`: vendasPrincipal++, faturamentoPrincipal += pago). Caso
+       contrario, vai pro balde `naoAtribuido` (vendas++ e faturamento) - nunca some
+       em silencio.
+     - para cada ad, monta a linha: formato = `isVideo ? 'Vídeo' : 'Imagem'` (ATENCAO:
+       aqui `isVideo` ja chega significando o TIPO real do criativo - ver 116.4 e a
+       transformacao na route);
+       roasPrincipal = investido>0 ? cent(faturamentoPrincipal/investido) : 0;
+       roas = investido>0 ? cent(faturamento/investido) : 0;
+       cpaPrincipal = vendasPrincipal>0 ? cent(investido/vendasPrincipal) : null;
+       cpa = vendas>0 ? cent(investido/vendas) : null. Ordena por `vendas` desc.
+     - Separacao PRINCIPAL x AGREGADOS: vendasPrincipal/faturamentoPrincipal e
+       roasPrincipal/cpaPrincipal olham so o produto principal; vendas/faturamento e
+       roas/cpa olham o total (principal + bumps). Garantia: vendasPrincipal <= vendas
+       sempre (o principal e subconjunto do total).
+
+## 116.4. INTEGRACAO META (lib/meta.ts e lib/funis/meta-funil.ts)
+
+Base da API: `https://graph.facebook.com/v19.0` (lib/meta.ts linha 1). Token em
+`process.env.META_ACCESS_TOKEN` (getToken, linhas 11-13). Contas de anuncio em
+`process.env.META_AD_ACCOUNT_IDS` (CSV) com fallback de 5 contas em
+FALLBACK_ACCOUNT_IDS (linha 15): 839071654129606, 634349981641861, 648308663489123,
+414167410861240, 1400409620438158. `getAccountIds()` (linhas 17-20) parseia o CSV.
+Padrao defensivo: erro de rede ou HTTP numa conta NUNCA propaga - loga e segue com o
+que deu (fetchAccountPages, fetchPaginas, fetchInsights todos fazem break no erro).
+
+Nivel CAMPANHA (totais rapidos + diario):
+1. `getCampanhaInsights(accountId, dateStart, dateEnd, datePreset?)` (linhas 285-295).
+   Chama o endpoint /insights nivel campaign (so campanhas COM ENTREGA no periodo,
+   agregadas pela Meta - muito mais rapido que listar todas). Campos:
+   `campaign_name,${INSIGHT_FIELDS}`. Devolve a linha "chata" (campaign_name +
+   metricas no topo, sem creative/thumb) para o normalizarInsight.
+   INSIGHT_FIELDS (linha 251): spend, impressions, reach, inline_link_clicks,
+   unique_clicks, actions, video_play_actions, video_p25/p50/p75/p95_watched_actions.
+2. `getCampanhaInsightsDiario(accountId, dateStart, dateEnd, datePreset?)` (linhas
+   342-364). Trafego DIARIO por campanha: /insights nivel campaign com
+   `time_increment=1`. Campos: campaign_name, spend, inline_link_clicks, date_start.
+   Barato (poucas campanhas x dias, em vez de todos os ads). Alimenta o grafico de
+   resultado liquido diario.
+
+Nivel AD (so os ENTREGUES) + detalhes do criativo em lote:
+3. `getAdInsightsPorTermos(accountId, dateStart, dateEnd, termos, datePreset?)` (linhas
+   302-319). Anuncios que TIVERAM ENTREGA no periodo (insights NIVEL AD), filtrados por
+   termo de campanha. Faz UM fetch por termo (filtering `campaign.name CONTAIN <termo>`),
+   junta e deduplica por `ad_id`. Campos: `ad_id,ad_name,campaign_name,${INSIGHT_FIELDS}`.
+   Linha "chata" (sem creative/thumb). E a busca LEVE: evita puxar os 300+ anuncios da
+   Imersao que nunca rodaram. A dedup por ad_id impede dupla contagem quando um anuncio
+   casa mais de um termo.
+4. `getAdsCreativeDetails(ids: string[]): Map<string, Record<string, unknown>>` (linhas
+   323-337). Detalhes de criativo so dos ads entregues, em LOTE de ate 50 ids por
+   request (endpoint batch `/?ids=a,b,c&fields=...`). Campos:
+   `id,name,effective_status,campaign{name},preview_shareable_link,creative{name,thumbnail_url,object_type,video_id,instagram_permalink_url}`.
+   Daqui saem: nome (name), thumb (creative.thumbnail_url),
+   tipo/formato (creative.object_type === 'VIDEO' ou creative.video_id),
+   previewUrl (creative.instagram_permalink_url, senao preview_shareable_link),
+   ativo (effective_status === 'ACTIVE'). Erro num lote nao derruba os outros (continue),
+   mas se um lote falha, os 50 ids daquele lote ficam sem detalhe (ver item 117 ROBUSTEZ A).
+
+Normalizacao (lib/funis/meta-funil.ts):
+5. `type AdInsight` (linhas 1-20): adId, campanha, criativo, anuncio, thumbnail, spend,
+   impressions, reach, inlineLinkClicks, uniqueClicks, landingPageView,
+   initiateCheckout, videoView, isVideo, creativoEhVideo, videoP25/50/75/95, previewUrl.
+   Distincao importante (documentada no proprio tipo, linhas 9-15):
+   - `isVideo` = "teve video view no periodo" (videoView > 0). Serve so pro hook rate.
+   - `creativoEhVideo` = o criativo E um video pelo tipo REAL na Meta
+     (creative.object_type === 'VIDEO' ou tem video_id). E ESTE que decide o Formato
+     na tela. Um video sem entrega no periodo continua sendo video (corrigido no item
+     115.2 - antes o formato vinha do video_view e um anuncio parado aparecia "Imagem").
+6. `normalizarAd(raw)` (linhas 34-63): le `raw.insights.data[0]` para as metricas,
+   `raw.campaign.name`, `raw.creative` (name/thumbnail_url/object_type/video_id/
+   instagram_permalink_url). Calcula videoView via `acao(actions, 'video_view')`,
+   `creativoEhVideo = object_type === 'VIDEO' || !!video_id`,
+   `previewUrl = creative.instagram_permalink_url || raw.preview_shareable_link || ''`,
+   landingPageView e initiateCheckout via helper `acao` (procura action_type no array
+   actions), e os marcos video_pXX via helper `arrVal` (o campo vem como array de 1
+   item [{ value }]).
+7. `normalizarInsight(row)` (linhas 67-91): normaliza a linha "chata" do /insights
+   (campaign_name/ad_name + metricas no topo). adId fica vazio no nivel campanha;
+   creativoEhVideo = false (nivel campanha nao tem criativo); previewUrl = ''.
+8. `adsDoFunil(ads: AdInsight[], termos: string[]): AdInsight[]` (linhas 93-97): filtra
+   os ads/campanhas cujo `campanha` (minusculo) CONTEM algum termo (`c.includes(t)`).
+   Se termos vazio, devolve []. (Ver item 117 RISCO 2: o `includes` nao tem fronteira
+   de palavra; hoje 100% limpo, mas 'irm'/'iar'/'csp' sao substrings de palavras PT.)
+9. `agregarFunil(ads: AdInsight[]): FunilAgregado` (linhas 114-133): soma do topo do
+   funil - investido (spend), impressoes, alcanceAprox (reach), cliques
+   (inline_link_clicks), visitas (landing_page_view), checkouts (initiate_checkout);
+   ctr = pct(uniqueClicks, alcanceAprox); hookRate = pct(videoViews, impressoesVideo)
+   so dos ads com isVideo; custoPorCheckout = razao(investido, checkouts). Helpers `pct`
+   e `razao` devolvem null quando o denominador e zero.
+10. `metricasDoCriativo(ad): CriativoMetricas` (linhas 137-139): adiciona ao AdInsight o
+    ctr = pct(uniqueClicks, reach) e hookRate = ad.isVideo ? pct(videoView, impressions) : null.
+11. `serieDiaria(linhas)` (linhas 143-152): agrupa linhas diarias por date_start
+    somando spend e inline_link_clicks (usado em cadencia por-ad, hoje substituido pela
+    cadencia por campanha no grafico).
+
+CODIGO MORTO em lib/meta.ts (exports nao usados por ninguem desde a config-no-codigo):
+`getCampanhasComInsights` (367), `getCampanhasPorTermos` (380), `getAdsComInsights`
+(415), `getAdsDiariosComInsights` (433). Ficaram da fase em que o detalhe/criativos
+puxava todos os ads (/ads edge). Ver item 117 MENORES.
+
+## 116.5. API route (app/api/funis/performance/route.ts)
+
+1. Guarda de acesso (linhas 45-47): so administrador (lerIdentidade + podeAdministrar);
+   401 sem login, 403 sem permissao. `export const dynamic = 'force-dynamic'`.
+2. Janela/fuso (linhas 35-42). `ymdBRT(ms)` devolve a data YYYY-MM-DD em BRT (UTC-3)
+   subtraindo 3h do timestamp. `janela(datePreset, dateStart, dateEnd)`: se vierem
+   datas custom, usa `{de: dateStart, ate: dateEnd}`; senao calcula a partir do preset
+   (today = 1 dia, last_30d = 30 dias, qualquer outro = 7 dias) terminando em hoje-BRT.
+   UMA janela unica serve a Meta E as vendas, para os dois lados baterem o mesmo periodo
+   (senao o ROAS compararia janelas diferentes).
+3. Cache em memoria (linhas 22-30): `Map<string, {t, v}>` com TTL = 120_000 ms (2 min).
+   `cached(key, fn)` devolve o valor em cache se dentro do TTL, senao executa e guarda.
+   Chaves por periodo: `vendas|<periodo>`, `reemb|<periodo>`, `camps|<periodo>`,
+   `campdia|<periodo>`, `adsEntregues|<funilId>|<periodo>`. (Ver item 117 MENORES: o
+   Map nao tem eviction - memoria cresce num processo longo.)
+4. Branch CRIATIVOS (?criativos=1, linhas 61-111): a parte LENTA, numa chamada a parte.
+   - Busca em PARALELO as vendas aprovadas (getSalesParaFunil, cacheada por periodo) e
+     os ads entregues (adsEntregues, cacheada por funil+periodo).
+   - adsEntregues: para cada conta, getAdInsightsPorTermos(termos do funil); junta,
+     deduplica ad ids, chama getAdsCreativeDetails em lote; para cada row monta o
+     AdInsight (normalizarAd + metricasDoCriativo), e marca `ativo = effective_status === 'ACTIVE'`.
+   - Modos (o botao so muda o FILTRO em memoria; os dois modos usam a mesma busca leve):
+     `ads = adsBase.filter(a => a.spend > 0 && (todos || a.ativo))`.
+     - "Somente ativos" (padrao): spend>0 E ativo (ACTIVE agora).
+     - "todos" (?todos=1): spend>0 (ativos + pausados). Anuncio R$0 nunca aparece.
+   - Monta CriativoMeta a partir de cada ad: adId; criativo = `a.anuncio || a.criativo`
+     (usa o NOME do anuncio, nao o nome do criativo que a Meta as vezes enche com
+     texto); investido = a.spend; isVideo = a.creativoEhVideo (o TIPO real vira o
+     campo isVideo que montarCriativos usa pro Formato); ctr, hookRate, previewUrl,
+     videoP25..95.
+   - vendasDoFunil = vendas filtradas por funilDaVenda; passa pra montarCriativos com
+     ehPrincipal = ehProdutoPrincipal(v, funil.id). Devolve { criativos, naoAtribuido }.
+5. Branch RESUMO / VISAO GERAL (linhas 113-182): 4 buscas em PARALELO (Promise.all),
+   todas cacheadas por periodo: vendas (getSalesParaFunil aprovada), reembolsos
+   (getReembolsosParaFunil), campanhas (getCampanhaInsights de cada conta ->
+   normalizarInsight), diariosCamp (getCampanhaInsightsDiario de cada conta).
+   - VISAO GERAL (sem funilId, linhas 122-134): para cada funil, topo = agregarFunil(
+     adsDoFunil(campanhas, termos)); vf = agregarVendasDoFunil(vendas, funil.id);
+     r = resultadoDoFunil(...). Devolve resumo por funil (vendas, faturamentoBruto,
+     investido, resultadoLiquido, roas) + periodo + aviso.
+   - DETALHE (com funilId, linhas 136-182): vendasDoFunil filtradas; topo e resultado
+     como acima; trafego diario por campanha (filtra diariosCamp pelos termos, soma
+     spend por date_start) -> resultadoDiario; reembolsosDoFunil filtrados por
+     funilDaVenda -> reembolsoDiario; melhorHorario (janela de 2h com mais vendas, da
+     data_hora ja em BRT, linhas 163-168); totalReembolso = soma dos reembolsos
+     (sem cent final - ruido de float, ver item 117 ROBUSTEZ B). Devolve funil, topo,
+     vendas, vendasPrincipal, faturamentoBruto, taxas, investido, resultado,
+     resultadoDiario, reembolsoDiario, melhorHorario, totalReembolso, periodo, aviso.
+6. `aviso` (linhas 55-56): se nao ha META_ACCESS_TOKEN, avisa que os dados da Meta
+   estao indisponiveis (a tela mostra o aviso em amarelo).
+7. getSales com projectId null (lib/services.ts linhas 56-141): quando projectId e
+   null, NAO filtra project_id - soma vendas de TODOS os projetos (o funil soma por
+   PRODUTO, nao por projeto). getSalesParaFunil (linhas 148-154) e getReembolsosParaFunil
+   (linhas 162-183) usam essa via. Quem passa um projectId string continua com o
+   comportamento de sempre (filtra o projeto). Mesmo filtro de fuso (Hubla UTC x Kiwify
+   BRT-como-UTC) e paginacao por cursor de `id` que o getSales ja tinha.
+
+## 116.6. app/api/funis/route.ts (lista dos funis)
+
+- GET (linhas 17-22): guarda de admin, devolve `FUNIS.map(f => ({id, nome, produtoLabel}))`
+  - a lista vem do config no codigo, instantaneo. Alimenta as abas do dashboard.
+- POST (linhas 26-31): desativado de proposito, responde 405 com a mensagem
+  "O cadastro de funis e feito no codigo (lib/funis/funis-config.ts), nao pela tela."
+
+## 116.7. DASHBOARD (app/performance-funis/dashboard/page.tsx)
+
+Layout igual ao prototipo. Componente `Conteudo` dentro de `ProtectedRoute` + Header +
+MobileNav. Fontes Space_Grotesk (display) e Inter (ui). Tema escuro (#0E0F13 fundo,
+cartoes #15171D, acento laranja). Formatadores (linhas 61-68): int (pt-BR inteiro),
+brl (moeda COM centavos), brlCompact (moeda sem centavos), pctFrac/pctN (porcentagens),
+roasFmt (Nx), fmtDiaBR/fmtBR (datas). POR_PAGINA = 10 (linha 69). PRESETS: Hoje
+(today), 7 dias (last_7d), 30 dias (last_30d) (linhas 71-75); default last_30d.
+
+Os TRES useEffect (o coracao do stale-while-revalidate):
+1. Lista de funis (linhas 102-114): busca /api/funis uma vez; se nao ha funilId
+   selecionado, seleciona o primeiro. Instantaneo (config no codigo).
+2. Limpa a tela so ao TROCAR de funil (linhas 118-120): depende de [funilId]; zera d,
+   criativos e naoAtribuido. Mudar so o PERIODO NAO limpa.
+3. Resumo do funil (linhas 126-136): depende de [funilId, query]; marca carregando,
+   busca /api/funis/performance?funilId=...&<query>; NAO limpa os dados atuais no
+   refetch de periodo (substitui quando chega). Usa flag `cancelado` no cleanup para
+   cobrir a race (resposta antiga chegando depois da nova).
+4. Criativos num efeito a parte (linhas 140-154): depende de [funilId, query,
+   somenteAtivos]; recarrega a tabela ao ligar/desligar "Somente ativos"; busca
+   ?criativos=1 (+ &todos=1 quando somenteAtivos = false). Tambem usa flag cancelado.
+
+Stale-while-revalidate (explicado nos comentarios linhas 116-125): trocar o periodo
+NAO recarrega a tela - mantem os numeros/graficos e so atualiza no lugar, com
+opacidade 50% enquanto chega (`transition-opacity ... ${carregando ? 'opacity-50' : 'opacity-100'}`,
+linha 230). "Carregando" cheio so na 1a carga ou ao trocar de funil.
+
+FUNIL de vendas (secao esquerda, linhas 234-269). Etapas de cima pra baixo:
+1. "Cliques no link" = topo.cliques.
+2. Pill "Tx de carregamento da pagina" = visitas/cliques.
+3. "Visualizacoes da pagina de destino" = topo.visitas.
+4. Pill "Tx de conversao da pagina" = checkouts/visitas.
+5. "Acessos ao checkout" = topo.checkouts.
+6. Pill "Tx de conversao do checkout" = vendasPrincipal/checkouts (usa a VENDA UNICA,
+   nao o total - decisao do dono, item 115.5, para nao inflar com order bumps).
+7. "Vendas unicas" = vendasPrincipal (destaque laranja), com subtexto
+   "+ X agregados · Y total" (X = vendas - vendasPrincipal; Y = vendas).
+8. "Faturamento bruto" = faturamentoBruto (caixa laranja no fim).
+Nota de rodape (linha 268): topo (cliques, visualizacoes, checkout) vem da Meta;
+vendas e faturamento, do banco por produto.
+
+RESULTADO (secao direita, linhas 272-304). Cascata (WaterRow):
+- Faturamento bruto.
+- − Taxas da plataforma.
+- − Investimento em trafego (+13,85%) = resultado.trafegoComAcrescimo.
+- − Impostos (<rate do funil>%) = resultado.impostos.
+- = Total liquido apos todas as deducoes = resultado.resultadoLiquido.
+Caixa grande "Resultado liquido" verde (positivo) ou rosa (negativo). Tres KPIs:
+ROAS (bruto/trafego), Margem liquida (liquido/bruto), Investido (brlCompact, trafego Meta).
+
+CRIATIVOS (tabela, linhas 308-445). Cabecalho com toggle "Somente ativos" (switch
+verde on / cinza off, DEFAULT ON, linhas 314-320). Colunas da tabela (linhas 339-357):
+1. "#" (rank; o 1o com vendas ganha medalha laranja).
+2. "Anuncio" - thumbnail + nome; CLICAVEL quando ha previewUrl (abre o anuncio em nova
+   aba, icone ExternalLink).
+3. "Formato" (Video com icone laranja / Imagem com icone azul).
+4. "Investido" - com CENTAVOS (brl, nao brlCompact; mudanca do item 115.4).
+5. "Vendas" = vendasPrincipal (negrito branco) - a venda unica.
+6. "Com agregados" = vendas (total).
+7. "Faturamento" (brlCompact).
+8. "ROAS" = roasPrincipal (verde).
+9. "ROAS c/ agreg." = roas (verde claro).
+10. "CPA" = cpaPrincipal (brlCompact).
+11. "CPA c/ agreg." = cpa.
+12. "CTR".
+13. "Hook" (hookRate).
+14-17. "Viu 25%/50%/75%/95%" = videoP25/50/75/95 (so quando formato = Video; senao "—").
+Abaixo da tabela: linha de naoAtribuido quando > 0 ("+ N venda(s) sem anuncio
+identificavel na UTM (organico / link na bio): R$..."). Paginacao 10/pagina com
+"Anterior"/"Proxima" e contador "inicio–fim de N anuncios" (linhas 421-442).
+
+OS 2 GRAFICOS (componente GraficoDiario, linhas 516-565; usados em 448-465):
+1. "Resultado liquido diario" (subiuEhBom = true; verde, negativo em rosa). Cartoes:
+   "Melhor dia (amostra)" (dia da semana de maior media, funcao diaDeMaiorMedia) +
+   "Melhores horarios" (d.melhorHorario, janela de 2h com mais vendas).
+2. "Reembolsos" (subiuEhBom = false; rosa). Cartoes: "Total reembolsado" (d.totalReembolso)
+   + "Pior dia (amostra)".
+Cada grafico tem DUAS linhas (helper comDelta, linhas 40-46): "valor" (o dado do dia)
+e "Oscilacao vs dia anterior" (delta = valor do dia - valor do dia anterior; o
+primeiro ponto tem delta null). Linha de referencia em y = 0. Tooltip mostra dia da
+semana, data, valor e oscilacao (verde/rosa conforme subir seja bom ou ruim).
+
+PERFORMANCE (medida rodando): a Imersao tinha ~300+ anuncios (a maioria parados/R$0);
+puxar TODOS levava ~29s. Trocando pela busca so dos ENTREGUES
+(getAdInsightsPorTermos + getAdsCreativeDetails), a Imersao caiu para ~14 anuncios
+que gastaram, ~3s. O resumo (4 buscas em paralelo, cache 2 min) sai em ~2,5s; ads CSP
+~3,2s. O gargalo antigo era a busca por-anuncio DIARIA, trocada por trafego diario por
+CAMPANHA (barato) para o grafico. Ver itens 115.1, 115.4.
+
+## 116.8. STATUS do build (116)
+
+- tsc: `npx tsc --noEmit` exit 0.
+- testes: 966 testes passando, 0 falha.
+- build: compila (exit 0).
+- NAO deployado. Decisao do dono: deploy depois, junto com o item 114.5.
+- Ja deployado ANTES e a parte: a captura de produto_id no webhook (deploy 5d67a14,
+  05/10, itens 104/114). O read-path fix (tipo Sale com produto_id, mapSaleRow copiando
+  produto_id, addSale gravando produto_id) foi feito na branch (item 114.5) e vai pro
+  ar junto com o funil.
+
+---
+
+# 117. Revisao adversarial completa do funil (22/10/2026, 4 revisores + skill)
+
+Revisao pedida pelo dono: "nao pode ter furo". 4 subagentes adversariais em frentes
+distintas + a skill de revisao. Os achados abaixo estao preservados exatamente como
+os revisores reportaram. Nada aqui foi corrigido ainda, salvo onde dito; sao achados
+a tratar (ou a confirmar com o dono).
+
+## 117.1. VEREDITO GERAL
+
+- Sem regressao no DRE nem no resto do app.
+- Totais corretos; a conta do resultado (faturamento - taxas - imposto - trafego com
+  acrescimo) esta correta.
+- Nomes e ids dos produtos batem BYTE-A-BYTE com o banco real (14 mil vendas) e as
+  campanhas batem com a Meta real (1.145 campanhas).
+- tsc limpo. 30+ testes do funil passam.
+
+## 117.2. FURO 1 (dinheiro, A CORRIGIR): venda internacional (moeda != real)
+
+- O funil NAO trata venda internacional. agregarVendasDoFunil (lib/funis/vendas-do-funil.ts),
+  a cadencia (lib/funis/cadencia-do-funil.ts) e getSalesParaFunil (lib/services.ts) NAO
+  checam o campo `moeda` da venda.
+- O DRE se protege: tem a guarda `precisaConverter` e EXCLUI venda ainda nao convertida
+  (ver o campo Sale.moeda em types/index.ts linhas 75-83, e lib/moeda-da-venda.ts, item
+  57). O funil esqueceu essa guarda.
+- Cenario do bug: uma compra em USD de um produto do funil entra com o valor em DOLAR
+  tratado como se fosse BRL. Como os quatro campos de dinheiro (valor_pago_cliente,
+  valor_liquido etc.) estao na moeda estrangeira enquanto `moeda` esta preenchida, o
+  faturamento fica subestimado em ~5x (ordem de grandeza do cambio). Isso distorce
+  faturamento, imposto, ROAS, margem, resultado liquido e os graficos diarios.
+- Hoje e raro (10.768 de 10.769 vendas sao em real), mas e um furo de DINHEIRO.
+- Fix sugerido: espelhar a guarda de moeda do DRE (excluir, ou converter antes de somar,
+  venda com `moeda` preenchida) em agregarVendasDoFunil, na cadencia e/ou no
+  getSalesParaFunil.
+
+## 117.3. ROBUSTEZ A (A CORRIGIR): lote de getAdsCreativeDetails que falha
+
+- Se um lote de getAdsCreativeDetails (lib/meta.ts linhas 323-337) falhar (rede/HTTP),
+  os ads daquele lote ficam sem detalhe: `effective_status` undefined -> `ativo = false`
+  (route.ts linha 88) -> no modo "Somente ativos" (padrao) um anuncio que GASTOU some da
+  tela. E `creative` undefined -> creativoEhVideo = false -> o anuncio vira "Imagem"
+  mesmo sendo video.
+- Fix sugerido: falhar para o lado SEGURO - quando o status e desconhecido (lote falhou),
+  mostrar o anuncio (tratar status desconhecido como "mostrar"), em vez de esconder.
+
+## 117.4. ROBUSTEZ B (cosmetico, A CORRIGIR): totalReembolso sem cent final
+
+- `totalReembolso` na route (app/api/funis/performance/route.ts linha 179) e a soma dos
+  reembolsos diarios em FLOAT, sem o `cent()` no final -> aparece ruido tipo
+  1234.56000001.
+- Fix sugerido: aplicar `cent()` na saida do totalReembolso.
+
+## 117.5. RISCO 1 (A CONFIRMAR COM O DONO, nao e bug de codigo): fuso das contas
+
+- O grafico diario usa `row.date_start` da Meta (getCampanhaInsightsDiario), que vem no
+  FUSO da conta de anuncios.
+- Se alguma das 5 contas NAO estiver em America/Sao_Paulo (GMT-3), o gasto diario
+  desalinha em 1 dia em relacao as vendas (que estao em BRT).
+- Acao: o dono precisa conferir o fuso das 5 contas no Gerenciador de Anuncios. Nao e
+  correcao de codigo - e verificacao externa.
+
+## 117.6. RISCO 2 (so fazer se o dono pedir): match de termo por substring
+
+- `adsDoFunil` (lib/funis/meta-funil.ts linhas 93-97) casa o termo de campanha por
+  `includes` (substring), SEM fronteira de palavra.
+- Hoje esta 100% limpo: nas 1.145 campanhas reais, ZERO campanha casa 2 funis
+  (verificado; csp&irm = csp&iar = 0, item 114.4d).
+- Mas 'irm'/'iar'/'csp' sao substrings de palavras em portugues (ex.: "confirmar" contem
+  "irm"; "anunciar" contem "iar"). Se um dia escreverem "IRM" ou "IAR" no nome de uma
+  campanha "CSP", o trafego dessa campanha contaria nos DOIS funis em silencio.
+- Blindagem sugerida: casar por PALAVRA INTEIRA (fronteira de palavra) + emitir alerta
+  quando uma campanha casar mais de um funil.
+
+## 117.7. MENORES / INFO (nao sao bugs ativos, ficam registrados)
+
+1. adIdDaVenda (lib/funis/atribuicao-criativo.ts) retorna null (a venda cai em
+   naoAtribuido) se o NOME do anuncio tiver um "|". E falha SEGURA: nunca atribui a um id
+   ERRADO; no maximo manda a venda pro balde nao atribuido.
+2. O id do produto "O RESGATE - CSP" (4c7FpX4SdlqVQT0WJfOv) nunca aparece numa venda
+   real (so na compra de teste de 21/10); a venda real casa por NOME. Esta no config por
+   seguranca.
+3. O funil CSP so tem produtos na Hubla (salvo a mentoria na Kiwify). Se um dia venderem
+   o principal CSP na Kiwify, essa venda some em silencio ate alguem adicionar a entrada
+   Kiwify no config.
+4. O cache (Map em app/api/funis/performance/route.ts) nao tem eviction - a memoria so
+   cresce num processo de vida longa.
+5. O batch de getAdsCreativeDetails usa `/?ids=<ate 50>` - UM id ruim no lote pode
+   derrubar a resposta dos 50 daquele lote (relacionado a ROBUSTEZ A).
+6. Codigo morto (orfaos apos a config-no-codigo): em lib/meta.ts os 4 exports
+   getCampanhasComInsights, getCampanhasPorTermos, getAdsComInsights,
+   getAdsDiariosComInsights; e os arquivos lib/funis/validar-funil.ts,
+   catalogo-dos-eventos.ts e resolver-produto.ts (ficaram da fase de cadastro/tabela).
+
+## 117.8. VERIFICADO E SOLIDO (por que cada coisa esta certa)
+
+1. PARTICIONAMENTO EXAUSTIVO: nenhuma venda some. Em montarCriativos, toda venda ou cai
+   num criativo (id valido e presente nos ads) ou vai pro balde naoAtribuido - os dois
+   somados reconstroem o total.
+2. NUNCA INVENTA ATRIBUICAO: adIdDaVenda so devolve id numerico valido; qualquer duvida
+   vira null (balde), nunca um id chutado.
+3. vendasPrincipal <= vendas SEMPRE: o principal e subconjunto do total (ehProdutoPrincipal
+   e um subconjunto do casamento do funil).
+4. DIVISAO POR ZERO TRATADA: roas/margem (resultadoDoFunil) e roas/cpa por criativo
+   (montarCriativos) retornam 0 ou null quando o denominador e zero; ctr/hookRate
+   (helpers pct/razao) retornam null.
+5. R$0 NUNCA LISTADO: o filtro de criativos exige spend > 0 (route.ts linha 97), entao
+   anuncio que nao gastou nunca aparece na tabela.
+6. effective_status CASADO POR ID: o detalhe do criativo (getAdsCreativeDetails) casa o
+   status pelo id do anuncio, nao por posicao/nome.
+7. DEDUP DE TERMOS: getAdInsightsPorTermos e fetchAdsPorTermos deduplicam por ad id (Set
+   `vistos`), entao um anuncio que casa 'IRM' e 'IAR' nao e contado duas vezes.
+8. FORMATO PELO TIPO REAL: creativoEhVideo vem de object_type === 'VIDEO' ou video_id,
+   nao do video_view do periodo - video sem entrega continua video.
+9. data_reembolso e DATA PURA (YYYY-MM-DD): reembolsoDiario agrupa direto, sem risco de
+   deslocar de fuso.
+10. getSales SEM REGRESSAO: aceitar projectId null nao mexe em quem passa projectId
+    string - todos os chamadores existentes passam string e seguem filtrando o projeto.
+11. /api/funis SEM CONSUMIDOR DO FORMATO ANTIGO: a rota agora so expoe a lista do config;
+    nao sobrou nada consumindo o formato de cadastro antigo (o POST responde 405).
+12. RACE COBERTA: os useEffect do dashboard usam a flag `cancelado` no cleanup, entao uma
+    resposta antiga que chega depois da nova nao sobrescreve a tela.
+
+
+---
+
+# 118. Botão "Atualizar" no dashboard de funis (23/10/2026, dono)
+
+Pedido do dono: um botão de refresh pra atualizar os números sem precisar dar Cmd+R
+na página. Regra que ele deu: "o botão precisa trazer os dados daquele momento uma
+vez acionado" - ou seja, dado FRESCO, furando o cache de 2min do servidor (senão
+clicaria e veria o mesmo de até 2min atrás).
+
+Classificação: bounded (acréscimo pequeno na tela que já existe). Desenho curto
+aprovado pelo dono antes de implementar. TDD na parte do servidor.
+
+## 118.1. Helper de cache isolado e testável (lib/funis/cache-curto.ts)
+
+O cache em memória que estava inline na route (Map + função `cached`, TTL 120s) foi
+extraído para `lib/funis/cache-curto.ts`:
+- `criarCacheCurto(ttl, agora = Date.now): CacheCurto`. Devolve `{ get(key, fn, bust?) }`.
+  `agora` é injetável só pra teste (TTL determinístico, sem sleep).
+- `get(key, fn, bust)`: sem bust, serve do cache dentro do TTL; com `bust === true`,
+  IGNORA o cache - reexecuta `fn` e grava o valor fresco (as leituras seguintes sem
+  bust já pegam o novo).
+- Testes (lib/funis/cache-curto.test.ts, 4 casos, TDD - escritos antes, viram
+  vermelho por falta do módulo, depois verde):
+  1. sem bust, dentro do TTL -> fn chamada 1 vez (serve do cache).
+  2. bust=true -> reexecuta sempre, mesmo dentro do TTL (traz o dado do momento).
+  3. o refresh (bust) atualiza o cache: a próxima leitura sem bust pega o valor novo.
+  4. sem bust, passado o TTL -> reexecuta.
+
+## 118.2. Route honra ?nocache=1 (app/api/funis/performance/route.ts)
+
+- `const cacheCurto = criarCacheCurto(120_000)` no topo do módulo (persiste entre
+  requests, igual era o Map antigo).
+- `const bust = sp.get('nocache') === '1'` lido dos searchParams.
+- Todas as 6 buscas cacheadas trocaram `cached(key, fn)` por
+  `cacheCurto.get(key, fn, bust)`: adsEntregues, vendas (resumo e criativos), reemb,
+  camps, campdia. Com `nocache=1`, todas furam o cache e buscam na hora.
+- Sem o param, comportamento idêntico ao de antes (cache de 2min, navegação instantânea).
+
+## 118.3. Botão na tela (app/performance-funis/dashboard/page.tsx)
+
+- Estado `const [refresh, setRefresh] = useState(0)` e
+  `const noCache = refresh > 0 ? '&nocache=1' : ''`.
+- Botão "Atualizar" (ícone RotateCcw do lucide, já importado) no cabeçalho, ao lado
+  do seletor de data. Gira (`animate-spin`) enquanto `carregando || carregandoCriativos`;
+  desabilitado sem funil ou durante carga. `atualizar()` faz `setRefresh(n => n + 1)`.
+- Os dois useEffect (resumo e criativos) ganharam `refresh` nas dependências e
+  `${noCache}` na URL do fetch. Clicar o botão incrementa refresh -> os dois efeitos
+  refazem a busca com `&nocache=1` -> dado do momento (resumo + criativos juntos).
+- Navegar (selecionar funil, trocarPreset, mudarData) chama `setRefresh(0)`: volta a
+  usar o cache (navegação entre funis/períodos continua instantânea). Só o botão
+  força o fresh.
+
+## 118.4. STATUS (118)
+
+- tsc 0. Suite: 970 testes passando (eram 966; +4 do cache-curto).
+- PROVADO RODANDO: os 4 testes do cache (bust fura o cache, TTL, refresh atualiza);
+  a route serve com e sem `?nocache=1` no dev server (401 de login nos dois, não 500
+  de compilação - o param não quebra a rota).
+- NÃO verificado no navegador logado: o clique do botão trazendo número novo na tela
+  real depende da sessão de admin do dono (o endpoint é admin-only). Falta o dono
+  clicar na aba logada pra fechar a prova de ponta a ponta.
+- NÃO deployado (vai junto com o funil + item 114.5).
+
+
+---
+
+# 119. Performance de Funis - evolucao da tela + otimizacao de velocidade (23/10/2026)
+
+Rodada com o dono em 23/10. Duas frentes: (A) mudancas na tela do dashboard de
+funis (seletor, aba Vendas, funil de produtos/esteira) e (B) atacar a lentidao em
+periodos grandes. Tudo na branch feature/performance-funis-2a, NAO deployado.
+Skills usadas: superpowers:systematic-debugging (achar a causa da lentidao),
+superpowers:brainstorming (desenhar o caminho), superpowers:test-driven-development
+(implementar as otimizacoes). Regra reforcada pelo dono (ver
+[[feedback_sempre_usar_superpowers]]): invocar a skill pelo nome sempre e, o que foi
+feito sem ela, pedir revisao.
+
+## 119.1. Seletor de funil + botao Atualizar laranja
+
+- As duas abas de funil lado a lado viraram "Selecione o funil" + um DROPDOWN
+  (app/performance-funis/dashboard/page.tsx). O select tem BORDA LARANJA FIXA
+  (border-2 border-orange-500/70) - antes era so o anel de foco, que sumia ao clicar
+  fora (reclamacao do dono).
+- O botao "Atualizar" (item 118) ganhou contorno laranja (border-orange-500/60
+  bg-orange-500/10 text-orange-300).
+
+## 119.2. Abas internas (Visao geral / Vendas) ao lado do seletor
+
+- Dentro do funil, abas "Visao geral" e "Vendas", posicionadas AO LADO do seletor
+  (pedido do dono). Estado `abaInterna`. "Visao geral" = o conteudo de antes (funil
+  clique->venda, resultado, criativos, graficos). "Vendas" = item 119.3 + 119.4.
+
+## 119.3. Aba Vendas (como o setor de Vendas do DRE)
+
+- Sub-abas "Aprovadas" / "Reembolsos" (estado `subVendas`), igual app/vendas/page.tsx.
+- Tabela com as colunas do DRE: Nome, E-mail, Telefone, Produto, Plataforma, Bruto,
+  Liquido, Data (Reembolso na aba de reembolsos). Aprovadas ordenadas por data_hora
+  desc; reembolsos por data_reembolso desc.
+- PAGINACAO de 15/pagina (dono: "sem scroll infinito"). Estado `pagVendas`, reseta ao
+  trocar de funil/sub-aba.
+- API (app/api/funis/performance/route.ts, branch detalhe): passou a devolver
+  `vendasLista` e `reembolsosLista` (mapeadas de vendasDoFunil e reembolsosDoFunil):
+  id, nome, email, telefone, produto, plataforma, bruto (valor_pago_cliente), liquido
+  (valor_liquido), dataHora, status, dataReembolso.
+
+## 119.4. Funil de produtos = ESTEIRA (value ladder), dentro da aba Vendas
+
+Conceito do dono (23/10): visao visual da performance dos produtos na esteira pra
+entender LTV. Pontos-chave:
+- Estagios FIXOS, montados SEMPRE - com ou sem venda no periodo. Sem venda = aparece
+  ZERADO, nao some. (Antes a versao por-produto so criava linha se houvesse venda.)
+- Vai DENTRO da aba Vendas (nao e aba separada) - "e uma coisa so".
+- Visual: FUNIL HORIZONTAL no estilo do "Funil de Conversao (Meta Ads)" que o dono
+  mandou de referencia. Componente `FunilEsteira` (page.tsx): SVG com banda suave
+  (spline Catmull-Rom) que afunila da esquerda (boca) pra direita, gradiente
+  azul->roxo->rosa, cabecalho de cada estagio em cima, divisorias verticais, % no
+  meio (relativo a boca = 100%) e nº de vendas + faturamento embaixo. Estagio zerado
+  = banda com altura minima (visivel). Largura total enxuta (ajuste estetico do dono).
+
+Config da esteira (lib/funis/funis-config.ts):
+- Novo campo `estagio?: string` em ProdutoDoFunil (o rotulo do degrau a que o produto
+  pertence; order bumps compartilham o mesmo rotulo = 1 linha).
+- Novo campo `esteira: string[]` em FunilConfig (ordem dos estagios, da boca pro fim).
+- CSP (dono 23/10): ['Como Ser Perdoado', 'Order bumps', 'Mentoria em grupo', 'O Resgate - CSP'].
+  - Boca: COMO SER PERDOADO (principal).
+  - Order bumps (1 linha): ALIANCA SAGRADA - CSP + COMBO PRIMEIROS PASSOS - CSP +
+    ACESSO VITALICIO - CSP.
+  - Upsell: MENTORIA EM GRUPO (hubla + kiwify).
+  - Backend: O RESGATE - CSP (por ultimo).
+  - OBS: o dono citou "Como convencer seu conjuge" por engano - esse e do CCC, que ele
+    mesmo mandou deixar FORA do CSP. Usado o principal real (Como Ser Perdoado).
+- Imersao: ['Imersão - A reaproximação', 'Order bumps'] - PADRAO provisorio (principal
+  -> os 4 bumps juntos); o dono ainda vai definir a esteira dela.
+
+Camada de dados:
+- Nova funcao `produtoDoFunil(venda, funilId)` (funis-config.ts): devolve a entrada de
+  produto do config que casa com a venda (nome-normalizado ou produto_id + plataforma),
+  ou null. 2 testes.
+- Nova lib `lib/funis/esteira-do-funil.ts`: `agregarEsteira(vendas, funilId)` ->
+  EstagioEsteira[] { rotulo, vendas, faturamento }. Sempre devolve TODOS os estagios na
+  ordem (zerados quando nao ha venda); conta so 'aprovada'; casa via produtoDoFunil +
+  estagio. Pura. 5 testes.
+- Route: devolve `esteira` no detalhe (substituiu a versao `produtosFunil` que ordenava
+  por nº de vendas e so mostrava quem vendeu).
+
+## 119.5. Investigacao da lentidao (systematic-debugging)
+
+- Medido 1 dia vs 30 dias, peca por peca (contas reais, chamadas frias). Gargalo
+  isolado = a ABA DE CRIATIVOS. No CSP 30d: vendas DB ~0,9s; campanhas ~1,7s;
+  campanhas diario ~1,4s; ads entregues (getAdInsightsPorTermos) ~2,0s; detalhes de
+  criativo (getAdsCreativeDetails) ~2,7s. O resumo roda em paralelo (~1,7s); os
+  criativos rodam `ads entregues` E DEPOIS `detalhes` em serie (~4,7s) e escalam com o
+  nº de anuncios.
+- Causa raiz: o painel chama a Meta AO VIVO a cada request (varias idas e vindas; a
+  Meta e lenta por chamada, ~1-1,5s). Periodo maior = mais anuncios = mais chamadas.
+- Como UTMify/VK nao travam: sincronizam a Meta no BANCO deles e leem do banco (as
+  vendas ja chegam por webhook = tempo real; o gasto e "do ultimo sync"). O "atualizar"
+  deles (~3s) e um sync na hora.
+- Decisao do dono: NAO fazer o "B" (sync da Meta no banco) por ora - ir pelas
+  otimizacoes de MENOR RISCO. A ideia dele de carregamento PROGRESSIVO (mostrar a 1a
+  pagina na hora, resto em 2o plano) ficou de lado por ser mais arriscada. O B fica
+  guardado como projeto futuro (brainstorming ja iniciado: tabelas meta_ad_insights_dia
+  + meta_ad_criativo + estado do sync; cron da Vercel ~5 min + botao Atualizar; como a
+  escrita no banco do Claude e bloqueada, o SQL seria entregue pro dono rodar).
+
+## 119.6. Fase 1 - lotes de criativo em PARALELO (lib/meta.ts, getAdsCreativeDetails)
+
+- Antes: os lotes de 50 ids eram buscados em SERIE (for com await). Agora: em PARALELO
+  (Promise.all), em ondas de ate `limiteConcorrencia` (default 6) pra nao disparar
+  chamadas demais se houver muitos anuncios. Fail-open mantido (cada lote tem try/catch
+  e nao rejeita; um lote que falha nao derruba os outros).
+- Provado rodando: mesmo conjunto de ids, SEQUENCIAL (cap=1) vs PARALELO (cap=6), saida
+  IDENTICA (0 diferencas ignorando o campo volatil `preview_shareable_link`, que a Meta
+  regenera a cada chamada - confirmado que paralelo-vs-paralelo diverge igual, logo e da
+  Meta, nao da paralelizacao). Ganho: 31-45% no passo de detalhes em alguns runs, mas
+  INCONSISTENTE no volume atual (CSP = 63 anuncios = so 2 lotes; com 2 lotes economiza ~1
+  ida). O ganho CRESCE com mais lotes (3+).
+- TDD (lib/meta-creative-details.test.ts, fetch mockado): fatiamento em 50, paralelismo,
+  fail-open, vazio, e o LIMITE DE CONCORRENCIA (este ultimo foi um furo pego na revisao
+  de TDD - o cap tinha sido escrito sem teste; corrigido red-green).
+
+## 119.7. Fase 2 - cache por ad_id (lib/meta.ts)
+
+- getAdsCreativeDetails ganhou um CACHE por ad_id (Map modulo-level, TTL 5 min). Ao
+  pedir os detalhes, os ids com detalhe fresco saem do cache; so os que FALTAM vao na
+  Meta. Trocar de periodo para de re-buscar anuncio ja buscado (ganho ao navegar entre
+  periodos que compartilham anuncios).
+- `bust` (ligado ao ?nocache=1 do botao Atualizar) ignora o cache e re-busca tudo.
+- Status (effective_status) fica no cache por ate 5 min (trade-off aceito: status pode
+  ficar ate 5 min desatualizado; o Atualizar sempre pega fresco).
+- Cache e injetavel (opts.cache/agora/ttl) - usado so pra isolar os testes.
+- TDD: reaproveita o cache (2a chamada nao re-busca), busca so os que faltam (cache
+  parcial), bust re-busca, expira pelo TTL.
+
+## 119.8. STATUS (119)
+
+- tsc 0. Suite: 986 testes passando (eram 965 no inicio da feature; +esteira +criativos).
+- NAO deployado. Vai junto com o funil + item 114.5 quando o dono aprovar o deploy.
+- Pendencias: (1) deploy; (2) esteira da Imersao a definir pelo dono; (3) o projeto B
+  (sync no banco) guardado; (4) a 3a otimizacao ("status enxuto no somente ativos")
+  ficou FORA por ser a de maior risco - so se o dono pedir.
+
+
+---
+
+# 120. Trava de data: contabilizar so a partir de 23/10/2026 (dono 23/10/2026)
+
+Pedido do dono: o funil deve contabilizar SO a partir de hoje (23/10). Qualquer
+periodo selecionado, mesmo retroativo, usa a data de corte como base; periodo todo
+antes do corte vem ZERADO. O dono avisa por mensagem quando quiser TIRAR a trava.
+
+Comportamento confirmado com o dono (opcao A): o inicio do periodo e CLAMPADO no
+corte. Ex (hoje=23): botao "30 dias" normalmente pega 24/09..23/10, mas passa a
+contar so 23/10..23/10 (e vai enchendo conforme os dias passam). Periodo todo antes
+(ex 01/10..10/10) -> tudo zero.
+
+Implementacao (TDD):
+- lib/funis/corte-funil.ts: `aplicarCorte(de, ate, corte)` -> { de, ate, semMeta }.
+  corte null = trava desligada. Se ate < corte -> semMeta=true (periodo todo antes:
+  pula a Meta; as vendas ja vem vazias porque de>ate). Senao, de = max(de, corte).
+  Puro. 5 testes (corte-funil.test.ts): sem corte, cruza o corte, todo antes, todo
+  depois, inicio no corte.
+- lib/funis/funis-config.ts: `export const DATA_CORTE_FUNIS: string | null = '2026-10-23'`.
+  Pra DESLIGAR a trava no futuro, trocar por `null` (feito pra ser facil de remover,
+  a pedido do dono).
+- app/api/funis/performance/route.ts: depois do `janela(...)`, aplica aplicarCorte;
+  usa o `de` clampado em tudo (Meta + vendas + reembolsos + esteira + graficos). Quando
+  `semMeta`, as chamadas da Meta (campanhas, campanhas-diario, adsEntregues) sao puladas
+  (retornam []); as vendas/reembolsos ja vem vazias porque de>ate. O `periodo` devolvido
+  mostra o `de` clampado (a tela exibe 23/10 como inicio real contabilizado).
+
+STATUS: tsc 0, 991 testes passando, nao deployado. A trava vale pra captura NOVA (daqui
+pra frente); o historico antigo nao e apagado, so nao e somado enquanto a trava estiver
+ligada.
+
+
+---
+
+# 121. Revisao adversarial pre-deploy + correcoes (23/10/2026, 4 agentes)
+
+Antes do deploy, o dono pediu revisao com 4 agentes adversariais (frentes: dinheiro,
+cache/Meta, regressao, frontend/seguranca). Skills: requesting-code-review +
+test-driven-development. Abaixo os achados e o que foi corrigido.
+
+## 121.1. CORRIGIDO (3 furos confirmados, com TDD)
+
+1. VAZAMENTO DE PII (seguranca) - os endpoints /api/funis e /api/funis/performance
+   checavam so `podeAdministrar` (papel==='admin'), SEM checar a area. Um admin do
+   modulo de terapeutas (area 'sistema') conseguia puxar a lista de vendas do funil
+   com nome/email/telefone do cliente + faturamento. Todos os outros endpoints de
+   dinheiro do DRE ja exigem `ehDoDre && admin`; o funil era o unico que nao exigia.
+   FIX: nova funcao `ehAdminDoDre(id)` (lib/identidade-da-chamada.ts = ehDoDre && admin),
+   usada nos 2 endpoints. Teste em identidade-da-chamada.test.ts (adminDre sim,
+   adminSistema nao, socio/financeiro/comercial/terapeuta nao). Dono confirmou: acesso
+   e so pra usuario do dashboard (DRE).
+
+2. MOEDA INTERNACIONAL (dinheiro) - era o FURO 1 do item 117, ainda vivo: venda em
+   moeda estrangeira nao convertida entrava com o valor em dolar como se fosse real
+   (~5x menor), distorcendo faturamento/imposto/ROAS/resultado. O DRE ja se protege
+   com `precisaConverter` (lib/moeda-da-venda.ts). FIX (reusando a regra do DRE):
+   guarda `if (precisaConverter(v)) continue` em agregarVendasDoFunil
+   (vendas-do-funil.ts, + campo moeda no VendaParaFunil) E filtro no limite -
+   getSalesParaFunil e getReembolsosParaFunil (services.ts) excluem venda com moeda !=
+   real, cobrindo esteira/cadencia/criativos/reembolsos. Teste em vendas-do-funil.test.ts.
+
+3. FAIL-OPEN NO PARSE (robustez) - `res.json()`/`res.text()` ficavam FORA do try/catch
+   em getAdsCreativeDetails (buscarLote), fetchInsights e getCampanhaInsightsDiario. Uma
+   unica das 5 contas respondendo corpo nao-JSON (pagina de erro HTML, body truncado)
+   fazia o parse estourar -> Promise.all rejeitava -> a view inteira caia num 500, em
+   vez do "ignora aquela conta". FIX: parse dentro de try/catch (retorna/break pra
+   aquela conta). Teste em meta-creative-details.test.ts (lote nao-JSON nao derruba os
+   outros). Obs: fetchAccountPages/fetchPaginas tambem tem o padrao, mas so sao chamados
+   pelos exports MORTOS (0 uso externo) - deixados como candidatos a remocao.
+
+## 121.2. NAO corrigido (decisao do dono / fora de escopo / latente)
+
+- TRAVA render enganoso (IMPORTANT): ao escolher "30 dias" a tela mostra 1 dia com o
+  botao aceso como "30 dias", sem aviso; periodo retroativo mostra rotulo de data
+  invertido ("23/10 - 01/05"). PENDENTE decisao do dono: por um aviso na tela
+  ("contabilizando a partir de 23/10") e arrumar o rotulo.
+- STATUS ativo/pausado ate 5 min desatualizado (cache por ad_id TTL 5min; recarregar
+  nao refresca, so o Atualizar). PENDENTE: baixar TTL / nao cachear status / aceitar.
+- REEMBOLSO PARCIAL: nao abate no funil. Dono esclareceu que reembolso parcial e
+  mecanica da MENTORIA, outro contexto - fora do escopo do funil. DROPADO.
+- Menores/latentes (registrados, nao corrigidos): totalReembolso sem cent (ROBUSTEZ B
+  do 117); lote com erro parcial por anuncio cacheado como valido; esteira sem guarda
+  se um produto nao tiver estagio valido; match de termo de campanha por substring
+  (RISCO 2 do 117); ProtectedRoute so autentica (API ja bloqueia; defesa em profundidade);
+  erro cru devolvido ao client; previewUrl sem validar protocolo; caches sem eviction.
+
+## 121.3. CHECKLIST DE DEPLOY (nao e codigo)
+
+1. MIGRACAO ANTES DO CODIGO: o codigo grava sales.produto_id; a coluna vem da migracao
+   20261005000000. Se o codigo subir antes da migracao rodar em producao, TODA venda
+   nova (webhook + manual) falha ao gravar e o DRE para de ver receita. CONFIRMAR com o
+   dono se a producao JA tem a coluna (do deploy de 05/10); se nao, rodar a migracao
+   primeiro. Leitura e segura pre-migracao (mapSaleRow trata null).
+2. OS NUMEROS DO DRE SOBEM DE PROPOSITO: a branch inclui a correcao do imposto
+   (mapSaleRow preserva valor_com_juros + getImpostoBase com Math.max) - aumenta o
+   imposto de vendas parceladas nos fechamentos EM ABERTO (os ja fechados ficam). Dono
+   ciente antes de subir.
+
+STATUS (121): tsc 0, 994 testes passando, nao deployado.

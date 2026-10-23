@@ -248,7 +248,7 @@ async function fetchAdsPorTermos(
   return out
 }
 
-const INSIGHT_FIELDS = 'spend,impressions,reach,inline_link_clicks,unique_clicks,actions,video_play_actions'
+const INSIGHT_FIELDS = 'spend,impressions,reach,inline_link_clicks,unique_clicks,actions,video_play_actions,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions'
 
 // Endpoint /insights (nivel campanha/ad): devolve SO o que teve entrega no
 // periodo, agregado pela Meta - muito mais rapido que listar todas as campanhas.
@@ -259,20 +259,25 @@ async function fetchInsights(
   fields: string,
   dateParam: string,
   token: string,
+  filtering?: string,
 ): Promise<AdsRow[]> {
   let nextUrl: string | null =
-    `${BASE_URL}/act_${accountId}/insights?level=${level}&fields=${fields}&${dateParam}&limit=500&access_token=${token}`
+    `${BASE_URL}/act_${accountId}/insights?level=${level}&fields=${fields}&${dateParam}&limit=500` +
+    (filtering ? `&filtering=${encodeURIComponent(filtering)}` : '') +
+    `&access_token=${token}`
   const all: AdsRow[] = []
   while (nextUrl) {
     let res: Response
     try { res = await fetch(nextUrl) } catch (err) {
       console.error('[Meta API] Erro de rede (insights):', accountId, err); break
     }
-    if (!res.ok) { console.error('[Meta API] Erro HTTP (insights):', accountId, res.status, (await res.text()).slice(0, 300)); break }
-    const json = await res.json() as { data?: AdsRow[]; paging?: { next?: string }; error?: { message: string } }
-    if (json.error) { console.error('[Meta API] Erro (insights):', accountId, json.error.message); break }
-    all.push(...(json.data ?? []))
-    nextUrl = json.paging?.next ?? null
+    try {
+      if (!res.ok) { console.error('[Meta API] Erro HTTP (insights):', accountId, res.status, (await res.text()).slice(0, 300)); break }
+      const json = await res.json() as { data?: AdsRow[]; paging?: { next?: string }; error?: { message: string } }
+      if (json.error) { console.error('[Meta API] Erro (insights):', accountId, json.error.message); break }
+      all.push(...(json.data ?? []))
+      nextUrl = json.paging?.next ?? null
+    } catch (err) { console.error('[Meta API] parse (insights):', accountId, err); break } // fail-open no parse (item 121)
   }
   return all
 }
@@ -289,6 +294,133 @@ export async function getCampanhaInsights(
   if (!token) return []
   const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
   return fetchInsights(accountId, 'campaign', `campaign_name,${INSIGHT_FIELDS}`, dateParam, token)
+}
+
+// RÁPIDO: anúncios que TIVERAM ENTREGA no período (insights nível ad), filtrados
+// por termo de campanha. Um fetch por termo, dedup por ad_id. Linha "chata"
+// (ad_id/ad_name/campaign_name + métricas no topo), SEM creative/thumb - isso vem
+// depois, em lote, só pros ads entregues. Alimenta a visão "somente ativos" dos
+// criativos sem puxar os anúncios parados (que fazem a Imersão ter 300+ ads).
+export async function getAdInsightsPorTermos(
+  accountId: string, dateStart: string, dateEnd: string, termos: string[], datePreset?: string,
+): Promise<Record<string, unknown>[]> {
+  const token = getToken(); if (!token) return []
+  const ts = (termos ?? []).map(t => t.trim()).filter(Boolean); if (ts.length === 0) return []
+  const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
+  const fields = `ad_id,ad_name,campaign_name,${INSIGHT_FIELDS}`
+  const porTermo = await Promise.all(ts.map(termo =>
+    fetchInsights(accountId, 'ad', fields, dateParam, token, JSON.stringify([{ field: 'campaign.name', operator: 'CONTAIN', value: termo }])),
+  ))
+  const vistos = new Set<string>(); const out: Record<string, unknown>[] = []
+  for (const row of porTermo.flat()) {
+    const id = row.ad_id as string | undefined
+    if (id) { if (vistos.has(id)) continue; vistos.add(id) }
+    out.push(row)
+  }
+  return out
+}
+
+// Detalhes de criativo (nome, thumb, tipo, preview) de ADs específicos, em lote
+// (até 50 por request). Usado só pros ads que tiveram entrega, então é leve.
+type CacheCriativo = Map<string, { t: number; detail: Record<string, unknown> }>
+// Cache por ad_id (Fase 2, item 119): trocar de periodo nao re-busca anuncio ja
+// buscado. Modulo-level (persiste entre requests na mesma instancia); nos testes
+// e injetado um Map novo por teste pra isolar.
+const cacheCriativosModulo: CacheCriativo = new Map()
+const TTL_CRIATIVO = 300_000 // 5 min: janela em que o detalhe (inclusive status) e reusado
+
+type OpcoesCriativo = {
+  /** Ignora o cache e re-busca tudo (botao Atualizar / ?nocache=1). */
+  bust?: boolean
+  /** Cache a usar (default: o do modulo). Injetado nos testes. */
+  cache?: CacheCriativo
+  /** Relogio (default Date.now). Injetado nos testes de TTL. */
+  agora?: () => number
+  /** Validade do cache em ms (default 5 min). */
+  ttl?: number
+}
+
+export async function getAdsCreativeDetails(
+  ids: string[],
+  limiteConcorrencia = 6,
+  opts: OpcoesCriativo = {},
+): Promise<Map<string, Record<string, unknown>>> {
+  const token = getToken(); const map = new Map<string, Record<string, unknown>>()
+  if (!token || ids.length === 0) return map
+  const cache = opts.cache ?? cacheCriativosModulo
+  const agora = opts.agora ?? Date.now
+  const ttl = opts.ttl ?? TTL_CRIATIVO
+  const bust = opts.bust ?? false
+  const fields = `id,name,effective_status,campaign{name},preview_shareable_link,creative{name,thumbnail_url,object_type,video_id,instagram_permalink_url}`
+
+  // CACHE: ids com detalhe fresco saem do cache; so os que faltam vao na Meta.
+  const faltam: string[] = []
+  for (const id of ids) {
+    const hit = bust ? undefined : cache.get(id)
+    if (hit && agora() - hit.t < ttl) map.set(id, hit.detail)
+    else faltam.push(id)
+  }
+  if (faltam.length === 0) return map
+
+  // Divide os que faltam em lotes de 50 (teto da Meta por chamada).
+  const lotes: string[][] = []
+  for (let i = 0; i < faltam.length; i += 50) lotes.push(faltam.slice(i, i + 50))
+
+  // Cada lote tem seu try/catch e NAO rejeita (fail-open): um lote que falha
+  // (rede/HTTP) nao derruba os outros - grava o que deu e segue. Ver item 119.
+  const buscarLote = async (lote: string[]): Promise<void> => {
+    const url = `${BASE_URL}/?ids=${lote.join(',')}&fields=${fields}&access_token=${token}`
+    let res: Response
+    try { res = await fetch(url) } catch (err) { console.error('[Meta API] rede (creative details):', err); return }
+    // fail-open tambem no PARSE: corpo nao-JSON (pagina de erro HTML, body truncado)
+    // nao pode derrubar os outros lotes/contas. Ver item 121 do spr-digital.md.
+    try {
+      if (!res.ok) { console.error('[Meta API] HTTP (creative details):', res.status, (await res.text()).slice(0, 200)); return }
+      const json = await res.json() as Record<string, unknown>
+      for (const id of Object.keys(json)) {
+        if (id === 'error') continue
+        const detail = json[id] as Record<string, unknown>
+        map.set(id, detail)
+        cache.set(id, { t: agora(), detail })
+      }
+    } catch (err) { console.error('[Meta API] parse (creative details):', err); return }
+  }
+
+  // Lotes em PARALELO (antes era em serie), em ondas de ate `limiteConcorrencia`
+  // pra nao disparar chamadas demais de uma vez se houver muitos anuncios.
+  for (let i = 0; i < lotes.length; i += limiteConcorrencia) {
+    await Promise.all(lotes.slice(i, i + limiteConcorrencia).map(buscarLote))
+  }
+  return map
+}
+
+// Tráfego DIÁRIO por campanha (nível campanha + time_increment=1). Muito mais
+// barato que a cadência por-anúncio: poucas campanhas × dias, em vez de todos os
+// ads. Usado pelo gráfico de resultado líquido diário.
+export async function getCampanhaInsightsDiario(
+  accountId: string,
+  dateStart: string,
+  dateEnd: string,
+  datePreset?: string,
+): Promise<{ campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[]> {
+  const token = getToken()
+  if (!token) return []
+  const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
+  let nextUrl: string | null =
+    `${BASE_URL}/act_${accountId}/insights?level=campaign&fields=campaign_name,spend,inline_link_clicks&${dateParam}&time_increment=1&limit=500&access_token=${token}`
+  const all: { campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[] = []
+  while (nextUrl) {
+    let res: Response
+    try { res = await fetch(nextUrl) } catch (err) { console.error('[Meta API] rede (camp diário):', accountId, err); break }
+    try {
+      if (!res.ok) { console.error('[Meta API] HTTP (camp diário):', accountId, res.status, (await res.text()).slice(0, 200)); break }
+      const json = await res.json() as { data?: typeof all; paging?: { next?: string }; error?: { message: string } }
+      if (json.error) { console.error('[Meta API] erro (camp diário):', accountId, json.error.message); break }
+      all.push(...(json.data ?? []))
+      nextUrl = json.paging?.next ?? null
+    } catch (err) { console.error('[Meta API] parse (camp diário):', accountId, err); break } // fail-open no parse (item 121)
+  }
+  return all
 }
 
 // Totais do funil / visão geral: campanhas (poucas) em vez de todos os ads.
@@ -351,7 +483,7 @@ export async function getAdsComInsights(
   if (!token) return []
   const mod = insightsModifier(buildDateParam(dateStart, dateEnd, datePreset))
   const fields =
-    `id,name,campaign{name},creative{name,thumbnail_url},insights.${mod}{${INSIGHT_FIELDS}}`
+    `id,name,campaign{name},preview_shareable_link,creative{name,thumbnail_url,object_type,video_id,instagram_permalink_url},insights.${mod}{${INSIGHT_FIELDS}}`
   return fetchAdsPorTermos(accountId, fields, termos, token)
 }
 

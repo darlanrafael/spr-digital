@@ -98,6 +98,16 @@ export function deveEsconderDivisaoDeSocios(id: Identidade): boolean {
  */
 const ehDoDre = (id: Identidade) => id.area === 'dashboard'
 
+/**
+ * Admin DO DRE (area dashboard). Pros endpoints do DRE que expoem dinheiro/PII
+ * do cliente - como o funil de metricas (nome/email/telefone + faturamento). NAO
+ * basta ser admin: o admin do modulo de terapeutas (area 'sistema') NAO entra,
+ * senao vaza dado do DRE pro outro sistema. Ver item 121 do spr-digital.md.
+ */
+export function ehAdminDoDre(id: Identidade): boolean {
+  return ehDoDre(id) && id.papel === 'admin'
+}
+
 /** Confirmar fechamento. So admin - copia app/fechamentos/page.tsx:237. */
 export function podeEditarFechamento(id: Identidade): boolean {
   return ehDoDre(id) && id.papel === 'admin'

@@ -35,6 +35,14 @@ export interface Sale {
   telefone: string
   cpf?: string
   produto: string
+  /**
+   * ID do produto no catálogo da plataforma (Hubla `event.product.id`, Kiwify
+   * `order.Product.product_id`), capturado no webhook desde 05/10. Chave que
+   * liga a venda ao FUNIL por id (redundância ao nome). NULL = histórico antigo
+   * antes da captura, ou gateway que não mandou; aí o funil resolve pelo nome.
+   * Ver lib/produto-do-evento.ts e o item 114 do spr-digital.md.
+   */
+  produto_id?: string | null
   plataforma: Platform
   plataforma_sale_id?: string
   /** "{idDaFatura}-{idDoProduto}" — duas linhas da mesma fatura compartilham
