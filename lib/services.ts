@@ -185,7 +185,6 @@ export async function getReembolsosParaFunil(dateStart: string, dateEnd: string)
   // Exclui reembolso em moeda estrangeira nao convertida (mesma protecao do DRE, item 121).
   return all.map(mapSaleRow).filter(v => !precisaConverter(v))
 }
-
 export function mapSaleRow(r: Record<string, unknown>): Sale {
   return {
     id: String(r.id),

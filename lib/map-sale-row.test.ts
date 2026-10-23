@@ -68,7 +68,6 @@ test('produto_id ausente no banco vira null (historico antigo, nao quebra)', () 
   delete row.produto_id
   assert.equal(mapSaleRow(row).produto_id, null)
 })
-
 // Guarda da CLASSE do bug: todo campo que o tipo Sale declara e que a linha do
 // banco traz tem que sobreviver ao mapeamento. Sem este teste, o proximo campo
 // novo e dropado em silencio como estes foram.
