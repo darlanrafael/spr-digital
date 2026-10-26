@@ -7396,8 +7396,9 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   reescrita). tsc limpo, 1025 testes. Executado por subagentes (TDD, revisor por tarefa,
   review final opus). As invariantes de $ foram confirmadas: nada pago sem aprovacao,
   nada perdido, nada em dobro, falta negada nunca paga, furo do fechamento FECHADO.
-- DEPLOY: a migration v2 PRECISA ser aplicada em producao ANTES do codigo subir - senao o
-  "nao compareceu" da 500 (coluna/tabela nao existem). Decisao de contagem (dono): a falta
+- MIGRATION v2 JA APLICADA EM PRODUCAO em 26/10/2026 (ver 125.6). O codigo ainda NAO foi
+  deployado. Ordem obrigatoria respeitada: banco antes do codigo (sem a coluna/tabela, o
+  "nao compareceu" daria 500). Decisao de contagem (dono): a falta
   CONTA como sessao entregue (pacote avanca, entra em "entregues"/ticket medio/desconto de
   reembolso parcial) - intencional.
 - Robustez PÓS-DEPLOY (review final confirmou que NENHUM bloqueia; sem perda/dobra de $):
@@ -7407,3 +7408,114 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   trava sem falta; sócio por nome (flag eh_socio antes de contratar outro "Pedro"); decisao
   nao-transacional (RPC/txn); nome do decisor vem do body; placeholder "Motivo da anulacao"
   no "Desfazer falta"; titulo vs resumo de contagem na tela de fechamento.
+
+## 125.4. Cronologia completa (25-26/10/2026) - o que foi feito, na ordem
+
+1. **Brainstorming com o dono** (skill brainstorming). Regras confirmadas em sequencia:
+   - falta SEMPRE grava no prontuario daquela consulta (todos os terapeutas);
+   - Pedro (socio) nao recebe por falta (ja recebe como socio nos fechamentos);
+   - Denise/Leomir: falta vai pra aprovacao do dono, que decide Pagar / Nao pagar
+     ("se o paciente nao compareceu, teoricamente perdeu o horario, e justo receber, mas
+     eu quero decidir");
+   - aviso: SO no sistema (sem WhatsApp/email);
+   - pacote: o paciente PERDE a sessao (o pacote anda), independente de pagar ou nao;
+   - local da fila: a secao "Aprovacoes" que ja existia (junto de reembolsos e
+     lancamentos manuais).
+   - Achado durante a conversa (provado no codigo): o "nao compareceu" ANTIGO so gravava
+     `status_consulta='nao_compareceu'` e o prontuario; NAO tirava a sessao de "Pendentes de
+     conclusao" (a lista olha so `status in agendada/pendente`) e NAO gerava comissao.
+2. **v1 implementada (TDD)**: modelo "zera comissao_valor na sessao e restaura ao aprovar".
+   Helper `lib/falta-comissao.ts` v1, rota de aprovacao, secao na tela de Aprovacoes,
+   badge no menu (soma reembolsos + faltas), migration v1 (20261025000000). Ainda antes de
+   aplicar no banco, a falta passou a ser criada ANTES de zerar a sessao (se a criacao
+   falhasse, a comissao ficaria zerada sem registro).
+3. **3 revisores adversariais em paralelo** (dinheiro / seguranca / casos de borda), antes
+   de tocar producao. Achados confirmados pelos 3:
+   - CRITICO: fechamento rodado antes da decisao varria a sessao zerada, marcava
+     `comissao_paga=true` por R$0, e a aprovacao depois nunca pagava (dinheiro perdido);
+   - CRITICO: tipos novos de prontuario (`falta_comissao_aprovada/negada`) fora da
+     allow-list de `ocorrencias_prontuario.tipo` (a migration v1 so tinha corrigido a do
+     `atividades_log`) - a nota falharia em silencio (23514, 5a vez no projeto);
+   - `anular` depois da falta: nao restaurava nem cancelava a falta; remarcar falta batia no
+     unique e perdia a comissao;
+   - falta aceitava sessao cancelada/reembolsada/futura;
+   - decisao Pagar/Nao pagar nao atomica (corrida, duplo clique);
+   - Pedro detectado por substring do nome;
+   - falta aparecia como "Entregue" verde com botao Anular (induzia o erro);
+   - `concluir`/`iniciar` individuais sem guarda de status;
+   - auth: senha checada antes do papel (oraculo de senha) e email do body nao amarrado a
+     identidade.
+   - Achado lateral: `nao_compareceu` NUNCA esteve na allow-list do `atividades_log` - o log
+     da falta antiga falhava em silencio desde sempre. Corrigido na migration v2.
+4. **Redesenho v2 aprovado pelo dono** ("trava" em vez de "zera") + plano escrito
+   (skill writing-plans): `docs/superpowers/plans/2026-10-26-falta-comissao-correcao.md`,
+   8 tasks. Dono escolheu execucao por subagentes com revisao a cada tarefa.
+5. **Execucao por subagentes** (skill subagent-driven-development; ledger em
+   `.superpowers/sdd/2026-10-26-falta-comissao-correcao/progress.md`, fora do git). Base v1
+   commitada como WIP (86e8c7f) pra servir de ponto de partida. Cada task: implementador
+   novo -> revisor novo (conformidade + qualidade) -> rodada de fix se Critico/Importante ->
+   re-revisao escopada.
+   - T1 migration v2 (55692cd; fix 79b8622 `drop constraint if exists`).
+   - T2 helpers v2 `planejarFalta`/`decisaoDaFalta` (195e28c; fix f549339: teste do socio COM
+     comissao pra matar mutante + `process.env.TZ='UTC'` no teste pra o fuso nao mascarar a
+     remocao do `timeZone`).
+   - T3+T6+T7 em lote (mesmo arquivo `sessoes/route.ts`): nao_compareceu v2 + guardas,
+     `lib/socio.ts` (ehPedroSocio, 3 testes), reabrir falta via UPDATE, anular destrava e
+     cancela, guardas concluir/iniciar (fd90732, 7fea2c1).
+   - T4 rota de aprovacao v2: auth admin antes da senha, email==identidade, update atomico
+     `.eq('status','pendente')` + linhas, Pagar destrava com guarda e reverte se falhar
+     (75a4252).
+   - T5 gate `lib/comissao-pagavel.ts` no fechamento e no dashboard (c4ebc71). Revisor achou
+     mais 2 telas mostrando travada como "a pagar" -> estendido (bc72daf):
+     `lib/entregues-desde-o-fechamento.ts` e `app/terapeutas/lista/page.tsx`.
+   - T8 UI: chip laranja "Nao compareceu", "Desfazer falta" (528bdd1); fix f8d5d13: modal de
+     detalhe da agenda + textos de confirmacao.
+6. **Review final do branch inteiro** (modelo mais capaz). Veredicto: pronto com ressalvas.
+   Invariantes de dinheiro confirmadas rastreando o ciclo inteiro (marcar falta -> fechamento
+   no meio -> aprovar/negar -> proximo fechamento). Rodada unica de fix (f6f8b3d): a TELA de
+   fechamento (onde o dono paga) ainda pintava a travada de verde "a pagar" - agora e uma
+   categoria propria azul "Falta - comissao travada, aguardando aprovacao", fora do "A pagar"
+   e do "Total", com linha "Aguardando aprovacao (fora do total)"; comentarios enganosos sobre
+   o socio corrigidos; `registrarAtividade` da aprovacao em try/catch. Re-revisao: limpo.
+7. **Migration v2 aplicada em producao** (26/10/2026, com autorizacao do dono) - ver 125.6.
+
+## 125.5. Rulings (decisoes tomadas no caminho, pro dono conferir)
+
+- Gate de "a pagar": o plano listou so dashboard + fechamento; os revisores acharam mais 3
+  telas (entregues-desde-o-fechamento, lista de terapeutas, tela de fechamento). Estendido
+  pra todas. Se estivesse errado: so a TELA mostraria valor inflado (o pagamento ja estava
+  certo).
+- Socio continua com a comissao travada (nao recebe por falta), aplicando a decisao do dono;
+  so o comentario foi corrigido. Nao foi re-perguntado (ja decidido).
+- `comissao_gerada` por terapeuta no dashboard: ja contava pagas + nao pagas; mantido assim,
+  so tirando as travadas (`comissaoPaga:false` no helper, comentado como intencional).
+- Duas re-revisoes de mudanca minima (1 palavra na migration; teste-only) conferidas pelo
+  controlador em vez de outro subagente.
+- Itens de robustez menores adiados pra depois do deploy (lista em 125.3) - o review final
+  confirmou um a um que nenhum causa pagamento errado, perda ou duplicacao.
+
+## 125.6. Migration v2 aplicada em producao (26/10/2026)
+
+- Como: `supabase db query --linked -f` com SO o arquivo
+  `20261026000000_falta_comissao_v2.sql`, embrulhado em `begin; ... commit;` (tudo ou nada).
+  NAO usar `supabase db push`: o historico remoto de migrations so registra ate 20260804; as
+  de 0806 em diante foram aplicadas a mao no editor do Supabase, e o push tentaria reaplicar
+  todas. (A v2 tambem nao ficou registrada no historico, como as anteriores.)
+- Conferido antes que o projeto do CLI (`jgpgvskrpjoplcocptdy`) e o mesmo do `.env.local`.
+- 1a tentativa: API de gerenciamento do Supabase devolveu 502 (fora do ar deles); nada foi
+  aplicado; repetido depois.
+- Checagem de seguranca antes (so leitura): nenhuma linha de `atividades_log` ou
+  `ocorrencias_prontuario` com tipo fora das listas novas; as regras em producao batiam
+  exatamente com a base usada (as novas so acrescentam).
+- Comprovado depois (consulta no banco): coluna `sessoes.comissao_bloqueada` boolean default
+  false not null; tabela `solicitacoes_falta_comissao` criada e vazia; check de status
+  (pendente/aprovado/negado/cancelado); unique por sessao; allow-lists do prontuario e do log
+  com os tipos novos e todos os antigos; 0 sessoes travadas (nada existente mudou).
+
+## 125.7. Proximos passos
+
+1. Dono testa a no 3 no localhost (que usa o banco de producao: marcar falta la e REAL).
+2. Deploy das tres juntas (123 concluir em lote, 124 continuidade do Diagnostico, 125 falta)
+   - branch `feat/concluir-em-lote`. O banco ja esta pronto.
+3. Rodada de robustez pos-deploy (lista em 125.3) + flag `eh_socio` antes de contratar outro
+   terapeuta com "Pedro" no nome.
