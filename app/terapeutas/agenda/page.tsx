@@ -7,6 +7,7 @@ import MobileNav from '@/components/MobileNav'
 import { getSupabaseClient } from '@/lib/supabase'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { continuidadeDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 
 // Dados ao vivo — sem isso a Vercel cacheia a página como estática e serve
 // versões antigas do CDN mesmo depois de um deploy novo.
@@ -49,6 +50,7 @@ export default function TerapeutasAgenda() {
   // quais sessões fazem parte de um pacote. Só existe pra quem comprou
   // Diagnóstico; sessão avulsa não entra aqui.
   const [formatoPorSale, setFormatoPorSale] = useState<Record<string, 1 | 2 | 3>>({})
+  const [continuidadePorSale, setContinuidadePorSale] = useState<Record<string, string | null>>({})
 
   useEffect(() => {
     async function load() {
@@ -83,15 +85,21 @@ export default function TerapeutasAgenda() {
       // sem erro nenhum (lição da Task 5: consulta que passa em tsc/build mas
       // fica muda contra o banco).
       const formatoPorSaleNovo: Record<string, 1 | 2 | 3> = {}
+      // Quem da continuidade ao Diagnostico (Denise/Leomir), pra marcar de quem
+      // e a venda nesta agenda tambem. Ver item 124 do spr-digital.md.
+      const continuidadePorSaleNovo: Record<string, string | null> = {}
       if (saleIds.length > 0) {
         const BATCH = 200
         for (let i = 0; i < saleIds.length; i += BATCH) {
           const batch = saleIds.slice(i, i + BATCH)
           const { data } = await client.from('sales').select('id,data_hora,order_id,oferta_nome,produto').in('id', batch)
-          for (const v of (data ?? []) as { id: string; data_hora: string; order_id?: string }[]) {
+          for (const v of (data ?? []) as { id: string; data_hora: string; order_id?: string; produto?: string }[]) {
             dataHoraPorSale[v.id] = v.data_hora
             const formato = formatoDaVenda(v)
-            if (formato) formatoPorSaleNovo[v.id] = formato.formato
+            if (formato) {
+              formatoPorSaleNovo[v.id] = formato.formato
+              continuidadePorSaleNovo[v.id] = continuidadeDoDiagnostico(v.produto ?? '', terapeutasData)
+            }
           }
         }
       }
@@ -105,6 +113,7 @@ export default function TerapeutasAgenda() {
       setSessoes(sessoesFiltradasPorCorte)
       setTerapeutas(terapeutasData)
       setFormatoPorSale(formatoPorSaleNovo)
+      setContinuidadePorSale(continuidadePorSaleNovo)
       setLoading(false)
     }
     load()
@@ -129,6 +138,10 @@ export default function TerapeutasAgenda() {
   const sessoesFiltradas = filtroTerapeuta
     ? sessoes.filter(s => s.terapeuta_id === filtroTerapeuta)
     : sessoes
+
+  // "continuidade: X" so nas sessoes do PEDRO (ele atende o diagnostico e
+  // precisa saber quem segue). Na sessao da propria Denise/Leomir e redundante.
+  const pedroId = terapeutas.find(t => t.nome.toLowerCase().includes('pedro'))?.id ?? null
 
   function sessoesNoDia(dia: number): Sessao[] {
     return sessoesFiltradas.filter(s => {
@@ -197,7 +210,7 @@ export default function TerapeutasAgenda() {
                             const formato = formatoPorSale[s.sale_id]
                             return (
                               <button key={s.id} onClick={() => setDetalhe(s)}
-                                title={formato ? rotuloDiagnostico({ formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes }) : undefined}
+                                title={formato ? rotuloDiagnostico({ formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes, continuidade: s.terapeuta_id === pedroId ? continuidadePorSale[s.sale_id] : null }) : undefined}
                                 className={`w-full text-left text-[10px] px-1.5 py-0.5 rounded truncate transition-colors ${
                                   formato
                                     ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40 hover:bg-violet-500/30'
@@ -236,6 +249,7 @@ export default function TerapeutasAgenda() {
                     formato: formatoPorSale[detalhe.sale_id],
                     numeroSessao: detalhe.numero_sessao,
                     totalSessoes: detalhe.total_sessoes,
+                    continuidade: detalhe.terapeuta_id === pedroId ? continuidadePorSale[detalhe.sale_id] : null,
                   })}
                 </span>
               )}

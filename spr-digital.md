@@ -7311,3 +7311,37 @@ a conta pelo proprio sistema (email leomirsantos@outlook.com) e funcionou.
   sempre grava prontuario + o paciente perde a sessao (pacote avanca) + sai dos
   pendentes; comissao: Pedro nunca (recebe como socio), Denise/Leomir vao pra uma fila
   "Faltas aguardando aprovacao" (so no sistema) onde o dono clica Pagar/Nao pagar.
+
+# 124. Marcar de quem e a continuidade do Diagnostico na tela do PEDRO (25/10/2026)
+
+Pedido do dono: o Pedro atende o Diagnostico Guiado tanto de paciente que a Denise
+vai continuar quanto do Leomir. Antes do Leomir existir, "Diagnostico Guiado" ja
+subentendia Denise; agora o Pedro precisa saber, batendo o olho no overview/agenda,
+quem da continuidade. Regra ja existente (item do diagnostico multi-terapeuta):
+quem continua vem do NOME DO PRODUTO (sem nome = Denise; com "Leomir" = Leomir).
+
+## 124.1. O que foi feito (TDD)
+
+- `lib/terapeuta-do-diagnostico.ts`: novo `continuidadeDoDiagnostico(produto,
+  terapeutas)` - primeiro nome de quem continua (Denise/Leomir), ou `null` quando
+  ambiguo/sem resolver. Reusa `terapeutaPrincipalDoDiagnostico`. 4 testes.
+- `lib/etiqueta-diagnostico.ts`: `rotuloDiagnostico` ganhou um param OPCIONAL
+  `continuidade`; quando passado, anexa " · continuidade: <nome>". 3 testes. O
+  WhatsApp do paciente (`lib/whatsapp-pendentes.ts`) NAO passa esse param -> o
+  lembrete do paciente continua identico (nao vaza "continuidade" pro paciente).
+- So nas sessoes do PEDRO: na tela da Denise/Leomir e redundante (ja e obvio que e
+  dela). Gate:
+  - `app/api/terapeutas/dashboard/route.ts` (overview): mapa de continuidade por
+    sale + `s.terapeuta_id === pedroId` (pedroId = terapeuta cujo nome tem "pedro").
+  - `app/terapeutas/[id]/page.tsx` (agenda/detalhe): `continuidadeDaSessao` so
+    retorna nome quando o terapeuta VISTO e o Pedro.
+  - `app/terapeutas/agenda/page.tsx` (agenda geral, cross-terapeuta): mapa por sale
+    + gate por `s.terapeuta_id === pedroId` nas duas telas (tooltip e modal).
+
+## 124.2. STATUS
+
+- FEITO na branch `feat/concluir-em-lote` (mesma leva). tsc 0, 1009 testes. Provado
+  contra o banco real: produto "...Individual" (31 vendas) -> Denise; "...- Leomir"
+  (4 vendas) -> Leomir. Dono aprovou em 25/10/2026 (inclusive o texto
+  "continuidade: <nome>"). Aguardando deploy junto com a nº 1.
+- Falta a nº 3 (falta -> aprovacao de comissao) - ver item 123.3.

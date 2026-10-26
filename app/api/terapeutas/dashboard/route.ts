@@ -5,6 +5,7 @@ import { ehDoTerapeuta, ehDiagnosticoGuiado, termosDeProduto } from '@/lib/venda
 import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { continuidadeDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { ehPendenteDeAgendamento, COLUNAS_DO_DASHBOARD } from '@/lib/vendas-por-situacao'
 import { lerIdentidade, terapeutaIdQueValeu } from '@/lib/identidade-da-chamada'
 
@@ -608,24 +609,35 @@ export async function GET(req: NextRequest) {
       ...((atrasadasData ?? []) as unknown as SessaoHojeRow[]),
     ].map(s => s.sale_id))]
     const formatoPorSaleQuadrante = new Map<string, 1 | 2 | 3>()
+    // Quem da continuidade ao Diagnostico (Denise/Leomir), pelo nome do produto.
+    // Marca na agenda/overview do Pedro de quem e a venda. Ver item 124.
+    const continuidadePorSaleQuadrante = new Map<string, string | null>()
     if (saleIdsQuadrantes.length > 0) {
       const BATCH = 200
       for (let i = 0; i < saleIdsQuadrantes.length; i += BATCH) {
         const batch = saleIdsQuadrantes.slice(i, i + BATCH)
         const { data } = await supabase.from('sales').select('id,order_id,oferta_nome,produto').in('id', batch)
-        for (const v of (data ?? []) as { id: string; order_id?: string }[]) {
+        for (const v of (data ?? []) as { id: string; order_id?: string; produto?: string }[]) {
           const formato = formatoDaVenda(v)
-          if (formato) formatoPorSaleQuadrante.set(v.id, formato.formato)
+          if (formato) {
+            formatoPorSaleQuadrante.set(v.id, formato.formato)
+            continuidadePorSaleQuadrante.set(v.id, continuidadeDoDiagnostico(v.produto ?? '', terapeutas))
+          }
         }
       }
     }
+
+    // A marca "continuidade: X" so vale pras sessoes do PEDRO: e ele quem atende
+    // o diagnostico e precisa saber quem (Denise/Leomir) segue depois. Na tela
+    // da propria Denise/Leomir isso seria redundante (ja e obvio que e dela).
+    const pedroId = terapeutas.find(t => t.nome.toLowerCase().includes('pedro'))?.id ?? null
 
     function mapSessaoHoje(s: SessaoHojeRow) {
       const formatoDiagnostico = formatoPorSaleQuadrante.get(s.sale_id)
       return {
         id: s.id,
         rotulo_diagnostico: formatoDiagnostico
-          ? rotuloDiagnostico({ formato: formatoDiagnostico, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })
+          ? rotuloDiagnostico({ formato: formatoDiagnostico, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes, continuidade: s.terapeuta_id === pedroId ? continuidadePorSaleQuadrante.get(s.sale_id) : null })
           : null,
         horario: s.data_agendada
           ? new Date(s.data_agendada).toLocaleTimeString('pt-BR', {

@@ -23,6 +23,7 @@ import { getSupabaseClient } from '@/lib/supabase'
 import { getSession } from '@/lib/auth'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
+import { continuidadeDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { ehPendenteDeAgendamento, ehVendaFilha } from '@/lib/vendas-por-situacao'
 import { resumoDoFechamento } from '@/lib/resumo-do-fechamento-terapeuta'
 
@@ -1272,6 +1273,18 @@ export default function PainelTerapeuta() {
         : new Set(ovPendentesConclusao.map(s => s.id)))
   }
 
+  // Quem da continuidade ao Diagnostico desta sessao (Denise/Leomir), pelo
+  // produto da venda. So pra MOSTRAR na agenda/overview do Pedro de quem e a
+  // venda; null quando nao da pra saber. Ver item 124 do spr-digital.md.
+  function continuidadeDaSessao(saleId: string): string | null {
+    // So aparece na tela do PEDRO: ele atende o diagnostico e precisa saber quem
+    // (Denise/Leomir) continua. Na tela da propria Denise/Leomir e redundante.
+    if (!(terapeuta?.nome ?? '').toLowerCase().includes('pedro')) return null
+    const venda = vendas[saleId]
+    if (!venda) return null
+    return continuidadeDoDiagnostico(venda.produto, outrasTerapeutas)
+  }
+
   async function handleConcluirLote(senha: string) {
     const ids = [...loteSelecionado]
     if (ids.length === 0) return
@@ -2433,7 +2446,7 @@ export default function PainelTerapeuta() {
                         status: s.status,
                         data_agendada: s.data_agendada as string,
                         rotulo_diagnostico: formatoSessao
-                          ? rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })
+                          ? rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes, continuidade: continuidadeDaSessao(s.sale_id) })
                           : null,
                       }
                     })}
@@ -2878,7 +2891,7 @@ export default function PainelTerapeuta() {
                           )}
                           {formatoSessao && (
                             <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold border bg-violet-500/20 text-violet-300 border-violet-500/40">
-                              {rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes })}
+                              {rotuloDiagnostico({ formato: formatoSessao.formato, numeroSessao: s.numero_sessao, totalSessoes: s.total_sessoes, continuidade: continuidadeDaSessao(s.sale_id) })}
                             </span>
                           )}
                         </div>
@@ -3550,6 +3563,7 @@ export default function PainelTerapeuta() {
                       formato: formatoAgendaDetalhe.formato,
                       numeroSessao: agendaDetalhe.numero_sessao,
                       totalSessoes: agendaDetalhe.total_sessoes,
+                      continuidade: continuidadeDaSessao(agendaDetalhe.sale_id),
                     })}
                   </span>
                 )

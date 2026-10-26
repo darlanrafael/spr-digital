@@ -37,3 +37,18 @@ export function terapeutaPrincipalDoDiagnostico(
   if (denises.length > 1) return { terapeuta: null, ambiguo: true }
   return { terapeuta: denises[0] ?? null, ambiguo: false }
 }
+
+/**
+ * O PRIMEIRO NOME de quem da continuidade ao Diagnostico (Denise ou Leomir),
+ * pra marcar na agenda/overview do Pedro de quem e a venda. `null` quando nao
+ * da pra saber com certeza (produto ambiguo, ou nenhum terapeuta resolvido) -
+ * nesse caso a tela nao marca nada, em vez de chutar.
+ */
+export function continuidadeDoDiagnostico(
+  produto: string,
+  terapeutas: TerapeutaDaLista[],
+): string | null {
+  const { terapeuta, ambiguo } = terapeutaPrincipalDoDiagnostico(produto, terapeutas)
+  if (ambiguo || !terapeuta) return null
+  return terapeuta.nome.trim().split(/\s+/)[0]
+}

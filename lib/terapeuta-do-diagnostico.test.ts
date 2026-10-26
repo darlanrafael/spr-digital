@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { terapeutaPrincipalDoDiagnostico } from './terapeuta-do-diagnostico'
+import { terapeutaPrincipalDoDiagnostico, continuidadeDoDiagnostico } from './terapeuta-do-diagnostico'
 
 const DENISE = { id: 'denise-id', nome: 'Denise Nascimento' }
 const LEOMIR = { id: 'leomir-id', nome: 'Leomir Santos' }
@@ -39,4 +39,23 @@ test('produto sem nome com DUAS Denise ativas -> ambiguo (preserva a guarda anti
   const OUTRA_DENISE = { id: 'denise-2', nome: 'Denise Souza' }
   const r = terapeutaPrincipalDoDiagnostico(PRODUTO_DENISE, [DENISE, OUTRA_DENISE, PEDRO])
   assert.deepEqual(r, { terapeuta: null, ambiguo: true })
+})
+
+// continuidadeDoDiagnostico: o PRIMEIRO NOME de quem continua, pra marcar na
+// agenda/overview do Pedro de quem e a venda (Leomir ou Denise). Null quando
+// nao da pra saber (ambiguo, ou sem terapeuta resolvido) - ai nao marca nada.
+test('continuidade: produto do Leomir -> "Leomir"', () => {
+  assert.equal(continuidadeDoDiagnostico(PRODUTO_LEOMIR, [DENISE, LEOMIR, PEDRO]), 'Leomir')
+})
+
+test('continuidade: produto sem nome -> "Denise" (default)', () => {
+  assert.equal(continuidadeDoDiagnostico(PRODUTO_DENISE, [DENISE, LEOMIR, PEDRO]), 'Denise')
+})
+
+test('continuidade: ambiguo -> null (nao marca)', () => {
+  assert.equal(continuidadeDoDiagnostico(PRODUTO_DENISE + ' - Leomir Joana', [DENISE, LEOMIR, JOANA, PEDRO]), null)
+})
+
+test('continuidade: sem terapeuta resolvido -> null', () => {
+  assert.equal(continuidadeDoDiagnostico(PRODUTO_DENISE, [LEOMIR, PEDRO]), null)
 })
