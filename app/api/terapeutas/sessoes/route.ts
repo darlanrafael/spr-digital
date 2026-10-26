@@ -221,7 +221,7 @@ export async function PATCH(req: NextRequest) {
       } else if (existente.status === 'cancelado' || existente.status === 'negado') {
         const { error: reabreErr } = await supabase
           .from('solicitacoes_falta_comissao')
-          .update({ ...dadosFalta, decidido_por: null, decidido_em: null, created_at: now })
+          .update({ ...dadosFalta, decidido_por_nome: null, decidido_por_email: null, decidido_em: null, created_at: now })
           .eq('id', existente.id)
           .in('status', ['cancelado', 'negado'])
         if (reabreErr) return NextResponse.json({ error: reabreErr.message }, { status: 500 })
