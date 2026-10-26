@@ -7252,6 +7252,8 @@ DRE/fechamentos/moeda/lembretes feitas em paralelo (mesmo conteudo, SHA diferent
 - O `git push origin main` (que dispara o build de producao na Vercel) foi BLOQUEADO
   pelo classificador de seguranca do Claude Code ("publicacao em producao"). Entao o
   PUSH fica a cargo do dono: rodar `git push origin main` no repo (ou autorizar).
+- ATUALIZACAO 25/10/2026: o dono rodou o push. Saida: `5d67a14..38c3bb7 main -> main`.
+  Conferido depois com `git fetch`: origin/main = local = 38c3bb7. Vercel publicou. Ver 126.1.
 - Checklist ja validado: coluna sales.produto_id existe em producao (select deu 4499);
   imposto do DRE sobe de proposito nos fechamentos em aberto (dono ciente).
 - Pos-deploy, pendencias do dono (nao bloqueiam): aviso da trava na tela, TTL de 5 min
@@ -7519,3 +7521,56 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
    - branch `feat/concluir-em-lote`. O banco ja esta pronto.
 3. Rodada de robustez pos-deploy (lista em 125.3) + flag `eh_socio` antes de contratar outro
    terapeuta com "Pedro" no nome.
+
+# 126. Registro da sessao 25-26/10/2026 (o que nao coube nos itens 123-125) e deploy
+
+## 126.1. Deploy do item 122 (dashboard de funis V2) confirmado
+
+- O `git push origin main` foi bloqueado pro Claude pelo classificador de seguranca; o dono
+  rodou no proprio terminal: `5d67a14..38c3bb7 main -> main`. Conferido com `git fetch`:
+  origin/main = local = 38c3bb7. A Vercel publica sozinha a partir da main.
+- Checagem pedida pelo dono ("ficou algo pra tras?"): pendencias nao bloqueantes que seguem
+  abertas - aviso da trava de data na tela e TTL de 5 min do status ativo/pausado (item
+  121.2), e a cobranca/cota do Supabase (aviso de "projetos restringidos a partir de 31/out").
+
+## 126.2. Limpeza da branch antiga
+
+- Branch local `feature/performance-funis-2a` APAGADA a pedido do dono (25/10/2026), com
+  `git branch -d` (o `-d` so apaga se ja estiver mergeada - conferido antes com
+  `git branch --merged main`). Era o 7c6ed8c; todo o conteudo ja estava na main.
+- As outras branches antigas (feat/*, fix/*, hotfix/*) NAO foram tocadas.
+
+## 126.3. Ruido "FunilEsteira" no log do dev server (nao era bug)
+
+- Durante as edicoes, o log do `next dev` mostrou
+  `[browser] Uncaught ReferenceError: Can't find variable: FunilEsteira`
+  (pagina do dashboard de funis). Investigado: `FunilEsteira` esta DEFINIDO
+  (app/performance-funis/dashboard/page.tsx, `function FunilEsteira`) e USADO no mesmo
+  arquivo; tsc limpo. Era ruido de hot-reload (HMR) durante a edicao, nao defeito. O build de
+  producao (Vercel) e limpo e nao passa por HMR.
+
+## 126.4. Iteracoes do visual do "concluir em lote" (item 123), pedidas pelo dono
+
+1. 1a versao: checkbox por linha + checkbox "selecionar todas" solto no cabecalho da tabela.
+   Dono abriu o site no ar (projeto.pedroroncada.com.br) e "nao apareceu nada" - a mudanca
+   so existia no localhost (localhost:3000), nao deployada. Explicado.
+2. Dono: "precisa ter alguma informacao dizendo que a pessoa consegue selecionar". Adicionada
+   uma linha "Dica: marque as caixinhas...".
+3. Dono: "nao ta claro... so tem um ponto abaixo, meio desconexo" (o checkbox do cabecalho
+   ficava solto, sem nome). Trocado por uma BARRA acima da lista com o checkbox COM rotulo; o
+   checkbox solto do cabecalho virou coluna vazia de alinhamento. Ao marcar, o rotulo vira
+   "N de M selecionada(s)" e o botao "Concluir selecionadas (N)" aparece na mesma linha.
+4. Dono pediu o texto final: "Selecione uma ou todas para concluir de uma vez". Aprovado.
+
+## 126.5. Avisos dados ao dono nesta sessao
+
+- O localhost usa o banco de PRODUCAO (.env.local). Clicar "Concluir selecionadas" ou "nao
+  compareceu" no localhost grava de verdade. Por isso nenhum agente clicou nesses botoes; a
+  verificacao foi tsc + testes + paginas respondendo 200 + consultas so de leitura.
+- Comunicacao: o dono pediu "fala minha lingua" - respostas em portugues simples, sem jargao.
+
+## 126.6. Deploy das features 123, 124 e 125 (26/10/2026)
+
+- Antes do deploy: tsc limpo, 1025 testes verdes, migration v2 ja aplicada em producao
+  (125.6). origin/main nao tinha andado desde a saida da branch (merge fast-forward).
+- Resultado do push: ver linha abaixo (preenchida apos o push).
