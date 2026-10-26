@@ -7394,7 +7394,7 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 
 ## 125.3. STATUS + o que falta
 
-- FEITO na branch feat/concluir-em-lote (commits 86e8c7f..f6f8b3d, v1 em 86e8c7f foi
+- [ATUALIZADO 26/10/2026: DEPLOYADO no 8f36e26 (126.6); branch apagada.] FEITO na branch feat/concluir-em-lote (commits 86e8c7f..f6f8b3d, v1 em 86e8c7f foi
   reescrita). tsc limpo, 1025 testes. Executado por subagentes (TDD, revisor por tarefa,
   review final opus). As invariantes de $ foram confirmadas: nada pago sem aprovacao,
   nada perdido, nada em dobro, falta negada nunca paga, furo do fechamento FECHADO.
