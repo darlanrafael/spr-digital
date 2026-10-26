@@ -8,6 +8,7 @@ import MobileNav from '@/components/MobileNav'
 import SenhaModal from '@/components/SenhaModal'
 import Pagination from '@/components/Pagination'
 import { getSession } from '@/lib/auth'
+import { ehComissaoPagavel } from '@/lib/comissao-pagavel'
 import { resumoDoFechamento } from '@/lib/resumo-do-fechamento-terapeuta'
 import { agruparPorProduto, totalDosGrupos } from '@/lib/sessoes-por-produto'
 
@@ -30,6 +31,8 @@ type SessaoPendente = {
   produto?: string | null
   /** So vem preenchido no bloco de ENTREGUES, que inclui as ja pagas. */
   comissao_paga?: boolean | null
+  /** Comissao travada (falta aguardando aprovacao): nao e a pagar nem paga. */
+  comissao_bloqueada?: boolean | null
 }
 
 const SESSOES_PAGE_SIZE = 12
@@ -42,6 +45,11 @@ type FechamentoHistorico = {
   valor_total: number
   quantidade_sessoes: number
   sessoes: SessaoPendente[]
+}
+
+// Mesma regra da lib entregues-desde-o-fechamento: travada e uma 3a categoria.
+function ehPagavel(s: SessaoPendente) {
+  return ehComissaoPagavel({ status: 'entregue', comissaoPaga: s.comissao_paga, comissaoBloqueada: s.comissao_bloqueada })
 }
 
 function fmtBRL(n: number) {
@@ -121,6 +129,7 @@ export default function FechamentosTerapeutasPage() {
   // de uma vez, e para terapeuta sem fechamento anterior nao ha corte: o Pedro
   // tem 357 entregues e sairiam 357 linhas numa tela so.
   const [desdeUltimoPage, setDesdeUltimoPage] = useState(1)
+  const travadas = desdeUltimo.sessoes.filter(s => !s.sessao.comissao_paga && s.sessao.comissao_bloqueada)
   const [futurasAberto, setFuturasAberto] = useState(false)
   const [futurasSelecionadas, setFuturasSelecionadas] = useState<Set<string>>(new Set())
   const [historico, setHistorico] = useState<FechamentoHistorico[]>([])
@@ -313,9 +322,12 @@ export default function FechamentosTerapeutasPage() {
                 {desdeUltimoAberto && (
                   <div className="border-t border-white/10">
                     <div className="px-4 py-2.5 flex flex-wrap gap-x-6 gap-y-1 bg-gray-800/30 border-b border-white/5 text-[11px]">
-                      <span className="text-gray-400">Total entregue: <strong className="text-white">{fmtBRL(desdeUltimo.total)}</strong> em {desdeUltimo.sessoes.length} sessão(ões)</span>
-                      <span className="text-gray-400">A pagar: <strong className="text-green-500">{fmtBRL(desdeUltimo.aPagar)}</strong> em {desdeUltimo.sessoes.filter(s => !s.pagoEm && !s.sessao.comissao_paga).length}</span>
+                      <span className="text-gray-400">Total entregue: <strong className="text-white">{fmtBRL(desdeUltimo.total)}</strong> em {desdeUltimo.sessoes.length - travadas.length} sessão(ões)</span>
+                      <span className="text-gray-400">A pagar: <strong className="text-green-500">{fmtBRL(desdeUltimo.aPagar)}</strong> em {desdeUltimo.sessoes.filter(s => ehPagavel(s.sessao)).length}</span>
                       <span className="text-gray-400">Já pago: <strong className="text-amber-400">{fmtBRL(desdeUltimo.jaPago)}</strong> em {desdeUltimo.sessoes.filter(s => s.sessao.comissao_paga).length}</span>
+                      {travadas.length > 0 && (
+                        <span className="text-gray-400">Aguardando aprovação (fora do total): <strong className="text-sky-400">{fmtBRL(travadas.reduce((a, s) => a + Number(s.sessao.comissao_valor ?? 0), 0))}</strong> em {travadas.length}</span>
+                      )}
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -334,10 +346,15 @@ export default function FechamentosTerapeutasPage() {
                               <td className="px-4 py-3 text-white">{l.sessao.paciente_nome}</td>
                               <td className="px-4 py-3 text-gray-300">{l.sessao.numero_sessao} de {l.sessao.total_sessoes}</td>
                               <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmtDt(l.sessao.data_entrega)}</td>
-                              <td className={`px-4 py-3 whitespace-nowrap ${l.sessao.comissao_paga ? 'text-gray-500' : 'text-green-500'}`}>
+                              <td className={`px-4 py-3 whitespace-nowrap ${l.sessao.comissao_paga ? 'text-gray-500' : ehPagavel(l.sessao) ? 'text-green-500' : 'text-sky-400'}`}>
                                 {fmtBRL(l.sessao.comissao_valor)}
                               </td>
                               <td className="px-4 py-3">
+                                {!l.sessao.comissao_paga && l.sessao.comissao_bloqueada && (
+                                  <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-sky-500/15 text-sky-400 border-sky-500/30 whitespace-nowrap">
+                                    Falta - comissão travada, aguardando aprovação
+                                  </span>
+                                )}
                                 {l.sessao.comissao_paga && (
                                   <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-500/15 text-amber-400 border-amber-500/30 whitespace-nowrap">
                                     {l.pagoEm ? `Pago no fechamento de ${fmtData(l.pagoEm)}` : 'Já pago'}

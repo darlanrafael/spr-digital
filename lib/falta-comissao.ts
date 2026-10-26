@@ -9,7 +9,8 @@
 //     prontuario. Isso vale pra TODOS os terapeutas.
 //   - A comissao NUNCA e zerada. A sessao e apenas TRAVADA
 //     (`comissao_bloqueada = true`) quando ha comissao em jogo:
-//       - Socio (Pedro): sempre trava; recebe no fechamento; nao cria aprovacao.
+//       - Socio (Pedro): sempre trava; NAO recebe comissao de sessao por este fluxo (fica travada);
+//         o acerto do socio e o lucro/divisao no DRE, outra conta; nao cria aprovacao.
 //       - Contratado COM comissao (Denise/Leomir): trava e cria uma "falta
 //         aguardando aprovacao". Pagar desbloqueia a sessao (comissao intacta);
 //         Nao pagar mantem a sessao travada.

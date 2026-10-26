@@ -11,8 +11,9 @@
 -- compareceu, registra no prontuario daquela sessao de forma imediata, e manda
 -- para aprovacao para eu decidir se eu aprovo a comissao deles ou nao. Porque
 -- se o paciente nao compareceu a sessao, teoricamente ele perdeu o horario. E
--- ai e justo ele receber. Mas eu quero decidir isso." O Pedro nao entra: recebe
--- como socio no fechamento. Ver itens 123.3 e 125 do spr-digital.md.
+-- ai e justo ele receber. Mas eu quero decidir isso." O Pedro nao entra: socio nao recebe
+-- comissao de sessao por este fluxo (a dele fica travada); o acerto do socio e o
+-- lucro/divisao no DRE, outra conta. Ver itens 123.3 e 125 do spr-digital.md.
 --
 -- Mesmo padrao das outras aprovacoes (solicitacoes_reembolso,
 -- solicitacoes_lancamento_manual): uma tabela por tipo, a tela de Aprovacoes

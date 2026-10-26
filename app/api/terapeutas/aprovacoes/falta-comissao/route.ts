@@ -176,16 +176,21 @@ export async function PATCH(req: NextRequest) {
     // Nao derruba a resposta (a decisao ja valeu), mas fica no log.
     if (notaErr) console.error('[ocorrencias_prontuario] nota da falta nao gravada:', notaErr)
 
-    await registrarAtividade({
-      usuario_nome: nome,
-      usuario_tipo: 'admin',
-      tipo_acao: aprovou ? 'falta_comissao_aprovada' : 'falta_comissao_negada',
-      sessao_id: f.sessao_id,
-      sale_id: f.sale_id ?? undefined,
-      descricao: aprovou
-        ? `Comissão de falta aprovada (${fmtBRL(f.comissao_valor)}) - ${f.terapeuta_nome ?? ''} - paciente: ${f.paciente_nome ?? ''}`
-        : `Comissão de falta negada - ${f.terapeuta_nome ?? ''} - paciente: ${f.paciente_nome ?? ''}`,
-    })
+    // Nao derruba a resposta: a decisao ja foi persistida; retry daria 409.
+    try {
+      await registrarAtividade({
+        usuario_nome: nome,
+        usuario_tipo: 'admin',
+        tipo_acao: aprovou ? 'falta_comissao_aprovada' : 'falta_comissao_negada',
+        sessao_id: f.sessao_id,
+        sale_id: f.sale_id ?? undefined,
+        descricao: aprovou
+          ? `Comissão de falta aprovada (${fmtBRL(f.comissao_valor)}) - ${f.terapeuta_nome ?? ''} - paciente: ${f.paciente_nome ?? ''}`
+          : `Comissão de falta negada - ${f.terapeuta_nome ?? ''} - paciente: ${f.paciente_nome ?? ''}`,
+      })
+    } catch (e) {
+      console.error('[aprovacoes/falta-comissao] atividade nao registrada:', e)
+    }
 
     return NextResponse.json({ success: true })
   } catch (err) {
