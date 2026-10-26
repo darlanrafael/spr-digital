@@ -1,5 +1,11 @@
--- "Nao compareceu" (falta) passa a mandar a COMISSAO da Denise/Leomir pra
--- aprovacao do dono, e a sessao a ser consumida (paciente perde, pacote anda).
+-- Falta ("nao compareceu") da Denise/Leomir passa a ir pra aprovacao do dono,
+-- mas a comissao NAO e mais zerada na sessao. A v1 (20261025000000, nunca
+-- aplicada em producao) zerava comissao_valor da sessao enquanto a falta
+-- esperava decisao, e restaurava depois. Isso era fonte de bug (valor
+-- sumia/voltava). Na v2 a sessao mantem a comissao e ganha uma trava
+-- booleana: comissao_bloqueada = true enquanto a falta estiver pendente.
+-- O fechamento le essa trava e nao paga a comissao bloqueada. Aprovar ou
+-- negar so muda a trava e o status da solicitacao, sem reescrever valores.
 --
 -- Decisao do dono (25/10/2026): "Se o Leomir ou a Denise clicar em nao
 -- compareceu, registra no prontuario daquela sessao de forma imediata, e manda
@@ -11,9 +17,12 @@
 -- Mesmo padrao das outras aprovacoes (solicitacoes_reembolso,
 -- solicitacoes_lancamento_manual): uma tabela por tipo, a tela de Aprovacoes
 -- junta todas. Os campos do paciente/sessao sao COPIADOS pra lista ser legivel
--- numa consulta so. A sessao ja foi consumida quando a falta e criada; o
--- `comissao_valor` guardado aqui e o que VOLTA pra sessao se o dono aprovar
--- (na sessao ela saiu zerada pra nao contar enquanto espera decisao).
+-- numa consulta so. comissao_valor aqui e so pra exibir na fila de aprovacao;
+-- a fonte da verdade do valor continua sendo a sessao.
+
+-- Trava da comissao: true = falta pendente (ou negada), nao entra no fechamento.
+alter table sessoes add column if not exists comissao_bloqueada boolean not null default false;
+
 create table if not exists solicitacoes_falta_comissao (
   id uuid primary key default gen_random_uuid(),
 
@@ -30,10 +39,11 @@ create table if not exists solicitacoes_falta_comissao (
   total_sessoes integer,
   data_sessao timestamptz,
 
-  -- A comissao que VOLTA pra sessao se for aprovada (na sessao ela esta 0).
+  -- Valor da comissao da sessao no momento da falta. So pra exibir na fila.
   comissao_valor numeric not null default 0,
 
-  status text not null default 'pendente' check (status in ('pendente', 'aprovado', 'negado')),
+  status text not null default 'pendente'
+    check (status in ('pendente', 'aprovado', 'negado', 'cancelado')),
 
   solicitado_por_nome text,
   solicitado_por_email text,
@@ -50,10 +60,31 @@ create table if not exists solicitacoes_falta_comissao (
 create index if not exists idx_solicitacoes_falta_status
   on solicitacoes_falta_comissao (status, created_at desc);
 
--- tipo_acao da auditoria: a allow-list nunca teve 'nao_compareceu' (o log da
--- falta falhava silencioso com 23514 - mesmo bug ja corrigido 3x antes, ver
+-- Tipos novos do prontuario: a falta registra 'nao_compareceu' (ja existente)
+-- e a decisao do dono vira ocorrencia 'falta_comissao_aprovada' ou
+-- 'falta_comissao_negada'. Lista = a anterior + os dois novos.
+alter table ocorrencias_prontuario
+  drop constraint ocorrencias_prontuario_tipo_check;
+
+alter table ocorrencias_prontuario
+  add constraint ocorrencias_prontuario_tipo_check
+  check (tipo = any (array[
+    'nota'::text,
+    'remarcacao'::text,
+    'confirmacao_entrega'::text,
+    'solicitacao_reembolso'::text,
+    'reembolso_aprovado'::text,
+    'reembolso_rejeitado'::text,
+    'orientacao_sessao'::text,
+    'nao_compareceu'::text,
+    'falta_comissao_aprovada'::text,
+    'falta_comissao_negada'::text
+  ]));
+
+-- tipo_acao da auditoria: 'nao_compareceu' nunca esteve na allow-list (o log
+-- da falta falhava silencioso com 23514, mesmo bug ja corrigido antes em
 -- 20260718010000/20260723000000/20260901000000). Corrige junto e adiciona os
--- tres tipos novos da aprovacao de falta. Lista = a anterior + os novos.
+-- tipos da solicitacao e da decisao. Lista = a anterior + os novos.
 alter table atividades_log drop constraint if exists atividades_log_tipo_acao_check;
 alter table atividades_log add constraint atividades_log_tipo_acao_check
   check (tipo_acao = any (array[
