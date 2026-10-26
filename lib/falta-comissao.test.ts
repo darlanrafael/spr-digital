@@ -1,3 +1,8 @@
+// Forca o fuso do processo em UTC: assim a hora do prontuario so vira 14:30
+// (Brasilia) se a implementacao pedir timeZone 'America/Sao_Paulo' de fato.
+// Sem isso, a maquina em BRT mascara a remocao do timeZone.
+process.env.TZ = 'UTC'
+
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { planejarFalta, decisaoDaFalta } from './falta-comissao'
@@ -30,6 +35,13 @@ test('socio: trava a comissao e NAO cria aprovacao', () => {
   const p = planejarFalta({ ehSocio: true, temComissao: false, numeroSessao: 3, usuarioNome: 'Pedro Roncada', agoraMs: AGORA })
   assert.equal(p.updateData.status, 'entregue')
   assert.equal(p.updateData.status_consulta, 'nao_compareceu')
+  assert.equal(p.updateData.comissao_bloqueada, true)
+  assert.equal(p.criarFalta, false)
+  assert.equal('comissao_valor' in p.updateData, false)
+})
+
+test('socio COM comissao (caso Pedro): trava, mas NAO cria aprovacao', () => {
+  const p = planejarFalta({ ehSocio: true, temComissao: true, numeroSessao: 2, usuarioNome: 'Pedro Roncada', agoraMs: AGORA })
   assert.equal(p.updateData.comissao_bloqueada, true)
   assert.equal(p.criarFalta, false)
   assert.equal('comissao_valor' in p.updateData, false)
