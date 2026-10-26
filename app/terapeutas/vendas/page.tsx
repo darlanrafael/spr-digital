@@ -1942,7 +1942,9 @@ export default function TerapeutasVendas() {
                   {prontuarioSessoes.length === 0 ? (
                     <p className="text-xs text-gray-600 text-center py-4">Nenhuma sessão criada ainda.</p>
                   ) : prontuarioSessoes.map(s => {
-                    const badge = STATUS_BADGE[s.status] ?? { label: s.status, cls: 'text-gray-400 bg-gray-400/10' }
+                    const badge = s.status_consulta === 'nao_compareceu'
+                      ? { label: 'Não compareceu', cls: 'text-orange-400 bg-orange-400/10' }
+                      : (STATUS_BADGE[s.status] ?? { label: s.status, cls: 'text-gray-400 bg-gray-400/10' })
                     const remarcacoes = pageData.remarcacoes_por_sessao[s.id] ?? []
                     return (
                       <div key={s.id} className="bg-gray-800/40 border border-white/5 rounded-xl p-4">
@@ -2016,7 +2018,7 @@ export default function TerapeutasVendas() {
                           {s.status === 'entregue' && (
                             <button onClick={() => { setScSessaoId(s.id); setScAcao('anular'); setAnularMotivo(''); setScErro('') }}
                               className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors">
-                              Anular sessão
+                              {s.status_consulta === 'nao_compareceu' ? 'Desfazer falta' : 'Anular sessão'}
                             </button>
                           )}
                           {(s.status === 'agendada' || s.status === 'pendente') && (

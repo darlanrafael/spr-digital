@@ -2039,7 +2039,7 @@ export default function PainelTerapeuta() {
                                           </button>
                                         )}
                                         {s.status === 'entregue' && (
-                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }} title="Anular sessão"
+                                          <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }} title={s.status_consulta === 'nao_compareceu' ? 'Desfazer falta' : 'Anular sessão'}
                                             className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors">
                                             <X className="w-3.5 h-3.5" />
                                           </button>
@@ -2094,9 +2094,13 @@ export default function PainelTerapeuta() {
                                     )}
                                   </td>
                                   <td className="px-4 py-3">
-                                    <span className="text-xs px-2 py-0.5 rounded-full text-green-500 bg-green-500/10">
-                                      {s.entregue_as ?? '—'}
-                                    </span>
+                                    {s.status_consulta === 'nao_compareceu' ? (
+                                      <span className="text-xs px-2 py-0.5 rounded-full text-orange-400 bg-orange-400/10">Não compareceu</span>
+                                    ) : (
+                                      <span className="text-xs px-2 py-0.5 rounded-full text-green-500 bg-green-500/10">
+                                        {s.entregue_as ?? '—'}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-4 py-3 text-gray-400 text-xs">{s.duracao ?? '—'}</td>
                                   <td className="px-4 py-3 text-gray-400 text-xs">{s.entregue_confirmado_por ?? '—'}</td>
@@ -2106,7 +2110,7 @@ export default function PainelTerapeuta() {
                                         className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
                                         <ClipboardList className="w-3.5 h-3.5" />
                                       </button>
-                                      <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }} title="Anular sessão"
+                                      <button onClick={() => { setStatusSessaoId(s.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro('') }} title={s.status_consulta === 'nao_compareceu' ? 'Desfazer falta' : 'Anular sessão'}
                                         className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors">
                                         <X className="w-3.5 h-3.5" />
                                       </button>
@@ -2875,7 +2879,9 @@ export default function PainelTerapeuta() {
                   {prontuarioSessoesOrdenadas.length === 0 ? (
                     <p className="text-xs text-gray-600 text-center py-4">Nenhuma sessão criada ainda.</p>
                   ) : prontuarioSessoesOrdenadas.map(s => {
-                    const badge = STATUS_LABEL[s.status] ?? { label: s.status, color: 'text-gray-400 bg-gray-400/10' }
+                    const badge = s.status_consulta === 'nao_compareceu'
+                      ? { label: 'Não compareceu', color: 'text-orange-400 bg-orange-400/10' }
+                      : (STATUS_LABEL[s.status] ?? { label: s.status, color: 'text-gray-400 bg-gray-400/10' })
                     const remarcacoesSessao = remarcacoes[s.id] ?? []
                     // Diagnóstico Guiado é um pacote dividido entre dois
                     // terapeutas - quem lê o prontuário precisa saber que essa
