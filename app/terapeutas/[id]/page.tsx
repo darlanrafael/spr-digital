@@ -2631,11 +2631,13 @@ export default function PainelTerapeuta() {
       </main>
 
       {/* Modal anular — precisa de motivo antes da senha */}
-      {statusSessaoId && statusAcao === 'anular' && (
+      {statusSessaoId && statusAcao === 'anular' && (() => {
+        const ehFalta = sessoes.find(x => x.id === statusSessaoId)?.status_consulta === 'nao_compareceu'
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
-            <h3 className="text-sm font-semibold text-white mb-1">Anular sessão concluída</h3>
-            <p className="text-xs text-gray-400 mb-4">Informe o motivo da anulação. A sessão voltará ao status &quot;Agendada&quot;.</p>
+            <h3 className="text-sm font-semibold text-white mb-1">{ehFalta ? 'Desfazer falta' : 'Anular sessão concluída'}</h3>
+            <p className="text-xs text-gray-400 mb-4">{ehFalta ? 'Informe o motivo. A falta será desfeita e a sessão volta para "Agendada".' : <>Informe o motivo da anulação. A sessão voltará ao status &quot;Agendada&quot;.</>}</p>
             <textarea value={anularMotivo} onChange={e => setAnularMotivo(e.target.value)} rows={3}
               placeholder="Motivo da anulação (mínimo 10 caracteres)..."
               className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500/50 resize-none mb-3" />
@@ -2653,7 +2655,8 @@ export default function PainelTerapeuta() {
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* Modal concluir — precisa da data de entrega antes da senha */}
       {statusSessaoId && statusAcao === 'concluir' && (
@@ -2688,6 +2691,7 @@ export default function PainelTerapeuta() {
           statusAcao === 'iniciar' ? 'Iniciar consulta'
           : statusAcao === 'concluir' ? 'Concluir consulta'
           : statusAcao === 'nao_compareceu' ? 'Registrar não comparecimento'
+          : sessoes.find(x => x.id === statusSessaoId)?.status_consulta === 'nao_compareceu' ? 'Desfazer falta'
           : 'Anular sessão'
         }
         descricao="Digite sua senha para confirmar"
@@ -3588,7 +3592,9 @@ export default function PainelTerapeuta() {
               </div>
               <div className="flex justify-between items-start gap-4">
                 <span className="text-gray-500 shrink-0">Status</span>
-                <span className="text-white text-right">{STATUS_LABEL[agendaDetalhe.status]?.label ?? agendaDetalhe.status}</span>
+                <span className="text-white text-right">{agendaDetalhe.status_consulta === 'nao_compareceu'
+                    ? <span className="text-xs px-2 py-0.5 rounded-full text-orange-400 bg-orange-400/10">Não compareceu</span>
+                    : (STATUS_LABEL[agendaDetalhe.status]?.label ?? agendaDetalhe.status)}</span>
               </div>
               <div className="flex justify-between items-start gap-4">
                 <span className="text-gray-500 shrink-0">Data/hora</span>
@@ -3621,7 +3627,7 @@ export default function PainelTerapeuta() {
               {agendaDetalhe.status === 'entregue' && (
                 <button onClick={() => { setStatusSessaoId(agendaDetalhe.id); setStatusAcao('anular'); setAnularMotivo(''); setStatusErro(''); setAgendaDetalhe(null) }}
                   className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors">
-                  Anular
+                  {agendaDetalhe.status_consulta === 'nao_compareceu' ? 'Desfazer falta' : 'Anular'}
                 </button>
               )}
               {(agendaDetalhe.status === 'agendada' || agendaDetalhe.status === 'pendente') && (

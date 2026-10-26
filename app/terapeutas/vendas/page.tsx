@@ -2383,11 +2383,13 @@ export default function TerapeutasVendas() {
       )}
 
       {/* Anular sessão — precisa de motivo antes da senha */}
-      {scSessaoId && scAcao === 'anular' && !scSenhaOpen && (
+      {scSessaoId && scAcao === 'anular' && !scSenhaOpen && (() => {
+        const ehFalta = prontuarioSessoes.find(x => x.id === scSessaoId)?.status_consulta === 'nao_compareceu'
+        return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-sm mx-4">
-            <h3 className="text-sm font-semibold text-white mb-1">Anular sessão concluída</h3>
-            <p className="text-xs text-gray-400 mb-4">Informe o motivo. A sessão voltará ao status &quot;Agendada&quot;.</p>
+            <h3 className="text-sm font-semibold text-white mb-1">{ehFalta ? 'Desfazer falta' : 'Anular sessão concluída'}</h3>
+            <p className="text-xs text-gray-400 mb-4">{ehFalta ? 'Informe o motivo. A falta será desfeita e a sessão volta para "Agendada".' : <>Informe o motivo. A sessão voltará ao status &quot;Agendada&quot;.</>}</p>
             <textarea value={anularMotivo} onChange={e => setAnularMotivo(e.target.value)} rows={3}
               placeholder="Motivo da anulação (mínimo 10 caracteres)..."
               className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500/50 resize-none mb-3" />
@@ -2404,7 +2406,8 @@ export default function TerapeutasVendas() {
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* Concluir sessão — precisa da data de entrega antes da senha */}
       {scSessaoId && scAcao === 'concluir' && !scSenhaOpen && (
@@ -2431,7 +2434,7 @@ export default function TerapeutasVendas() {
 
       <SenhaModal isOpen={scSenhaOpen} onClose={() => { setScSenhaOpen(false); setScErro('') }}
         onConfirm={handleStatusConsulta}
-        titulo={scAcao === 'iniciar' ? 'Iniciar consulta' : scAcao === 'concluir' ? 'Concluir consulta' : 'Anular sessão'}
+        titulo={scAcao === 'iniciar' ? 'Iniciar consulta' : scAcao === 'concluir' ? 'Concluir consulta' : prontuarioSessoes.find(x => x.id === scSessaoId)?.status_consulta === 'nao_compareceu' ? 'Desfazer falta' : 'Anular sessão'}
         descricao="Digite sua senha para confirmar" loading={scLoading} erro={scErro} />
 
       <SenhaModal isOpen={notaSenhaOpen} onClose={() => { setNotaSenhaOpen(false); setNotaErro('') }}
