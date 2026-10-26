@@ -7708,3 +7708,19 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   Vercel = success no commit (`gh api repos/darlanrafael/spr-digital/commits/<sha>/status`).
   Antes do push, rodar tambem `next build` (tsc + testes nao pegam erro de build).
 - Pra o Reinaldo ver: recarregar a pagina (o papel vem da sessao salva no navegador).
+
+# 132. Prototipo antigo dos funis APAGADO (26/10/2026)
+
+- Contexto: com o Reinaldo (socio, que nao pode ver a divisao entre socios) liberado na aba
+  Funis (129), conferi se a aba mostra algo de socio. A aba real
+  (app/performance-funis/dashboard) NAO mostra divisao/repasse de socio. Mas ainda existia o
+  PROTOTIPO VISUAL antigo (app/performance-funis/page.tsx, item 100), fora do menu mas
+  acessivel digitando /performance-funis, com DADOS FICTICIOS fixos no codigo - incluindo uma
+  linha "Repasse socio (Pedro): R$ 45.000" (inventado, nao era dado real).
+- Decisao do dono: apagar. Arquivo removido (`git rm`). Nenhuma tela apontava pra ele
+  (conferido por busca). /performance-funis agora da 404; /performance-funis/dashboard segue 200.
+- A trava do socio continua: `deveEsconderDivisaoDeSocios` + `semDivisaoDeSocios` em
+  app/api/closings/route.ts tiram a divisao entre socios dos fechamentos pro papel socio.
+- Verificado: tsc limpo, 1035 testes, `next build` de producao passou (rota sumiu da lista).
+  O tsc acusou de inicio um erro em `.next/types/validator.ts` - arquivo GERADO pelo dev server
+  que ainda citava a pagina apagada; sumiu quando o localhost se atualizou (nao era codigo).
