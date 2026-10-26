@@ -7631,7 +7631,7 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 - A mesma janela explicita vai pra Meta e pras vendas (ROAS compara o mesmo periodo). A trava
   de data (item 120, corte 23/10) continua aplicada depois da janela.
 - Verificado: tsc limpo, 1033 testes, pagina `?datePreset=yesterday` responde 200 no localhost.
-- STATUS: no localhost, aguardando o dono aprovar o visual pra deploy.
+- STATUS: dono aprovou. DEPLOYADO em 26/10/2026: `c6db5ea..9e0421a main -> main`.
 
 # 129. Reinaldo nao ve a aba Funis (investigacao 26/10/2026)
 
