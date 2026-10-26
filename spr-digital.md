@@ -7667,3 +7667,25 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 - Verificado: tsc limpo, 1035 testes; o role 'socio' vem de usuarios_dashboard.role e vira o
   papel da identidade no middleware sem conversao. NAO testado logado como o Reinaldo (nao
   temos a senha dele) - a prova e pelos testes da regra.
+- STATUS: dono mandou subir. DEPLOYADO em 26/10/2026 (ver hash no commit seguinte / 130).
+
+# 130. Seletor de periodo da aba Funis "nao vai" (investigacao aberta, 26/10/2026)
+
+- Relato do dono: clicando em "Ontem" e "30 dias" no seletor, "nao esta indo".
+- Investigado (systematic-debugging), SEM reproduzir (nao temos login pra testar logado):
+  - O site no ar TEM a versao com "Ontem": os 3 ultimos commits (c6db5ea, 9e0421a, 89d2187)
+    estao com status "Vercel | success | Deployment has completed" (gh api .../status).
+  - O codigo do clique esta certo: `trocarPreset` faz `router.push` com o `datePreset` novo; a
+    busca dos dados roda de novo porque depende de `query` (efeitos em
+    app/performance-funis/dashboard/page.tsx). Mudar so o periodo NAO limpa a tela: mantem os
+    numeros e troca quando a resposta chega.
+  - O log do localhost nao tinha nenhum clique recente -> o dono estava no site no ar.
+- HIPOTESE PRINCIPAL (nao confirmada): a TRAVA DE DATA do item 120 (funil so conta a partir
+  de 23/10/2026). Com ela, "7 dias" e "30 dias" comecam os dois em 23/10 -> mostram
+  EXATAMENTE os mesmos numeros, e parece que o botao "nao foi". "Ontem" (25/10) deveria
+  mudar os numeros.
+- Pergunta feita ao dono (sem resposta ainda): ao clicar, (1) o botao fica destacado mas os
+  numeros nao mudam? (2) nada acontece? (3) fica carregando/da erro? Se (1) = trava, nao e
+  bug (melhoria possivel: avisar na tela que o funil conta desde 23/10 - ja era pendencia do
+  item 121.2). Se (2)/(3) = bug, continuar investigando.
+- STATUS: ABERTO, aguardando o detalhe do dono.
