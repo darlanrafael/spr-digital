@@ -7614,3 +7614,37 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 - SO o rotulo mudou. Os valores e o calculo (imposto por funil e acrescimo de 13,85% no
   trafego) continuam iguais. tsc limpo; pagina responde 200 no localhost.
 - STATUS: dono aprovou. DEPLOYADO em 26/10/2026: `feb48e8..3053179 main -> main` (tsc limpo, 1025 testes antes do push; origin/main = local = 3053179). Junto subiram as correcoes da auditoria do MD (126.7, 126.8).
+
+# 128. Tela de funis: preset "Ontem" no seletor de periodo (26/10/2026)
+
+- Pedido do dono: seletor tinha Hoje / 7 dias / 30 dias / periodo escolhido; ficou
+  Hoje / ONTEM / 7 dias / 30 dias / periodo escolhido (`PRESETS` em
+  app/performance-funis/dashboard/page.tsx, valor `yesterday`).
+- Armadilha evitada: a conta de datas (`janela()` dentro de app/api/funis/performance/route.ts)
+  mandava QUALQUER preset desconhecido pra 7 dias. So adicionar o botao faria "Ontem" mostrar
+  7 dias sem aviso. A conta foi extraida pra `lib/funis/janela-do-periodo.ts`
+  (`janelaDoPeriodo(preset, dateStart, dateEnd, agoraMs)`) com o caso `yesterday` = so o dia
+  anterior inteiro (de = ate = ontem em Brasilia, UTC-3 fixo).
+- TDD: `lib/funis/janela-do-periodo.test.ts`, 8 testes (vistos falhando antes): hoje, ontem,
+  ontem as 22h BRT (ja e dia seguinte em UTC), ontem na virada de mes (01/11 -> 31/10), 7 e
+  30 dias, periodo manual vence o preset, preset desconhecido continua 7 dias.
+- A mesma janela explicita vai pra Meta e pras vendas (ROAS compara o mesmo periodo). A trava
+  de data (item 120, corte 23/10) continua aplicada depois da janela.
+- Verificado: tsc limpo, 1033 testes, pagina `?datePreset=yesterday` responde 200 no localhost.
+- STATUS: no localhost, aguardando o dono aprovar o visual pra deploy.
+
+# 129. Reinaldo nao ve a aba Funis (investigacao 26/10/2026)
+
+- Causa (provada no banco): Reinaldo Lourenco (hirosereinaldo@gmail.com) tem conta ATIVA em
+  `usuarios_dashboard` com role `socio`. A aba Funis (link no menu, `components/Header.tsx`
+  FUNIS_NAV so pra `role==='admin'`) e as APIs (`ehAdminDoDre` em app/api/funis/route.ts e
+  app/api/funis/performance/route.ts) so liberam ADMIN do DRE. Pra ele o link nem aparece.
+- Erro de interpretacao meu no item 121: o dono disse que o acesso e "pra quem esta
+  cadastrado como usuario no dashboard"; foi implementado como "so admin do dashboard"
+  (o teste de identidade-da-chamada diz socio NAO).
+- Usuarios ativos do dashboard hoje: 2 admin, 1 socio (Reinaldo). Ele nao tem conta em
+  `usuarios_sistema` (modulo de terapeutas).
+- Ponto de seguranca levado ao dono: a aba mostra a lista de vendas com nome/email/telefone
+  dos clientes + faturamento.
+- STATUS: aguardando decisao do dono - liberar pra todo usuario do dashboard, ou so
+  socio + admin. Nada alterado ainda.

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { lerIdentidade, ehAdminDoDre } from '@/lib/identidade-da-chamada'
+// Janela [de, ate] do preset (hoje/ontem/7/30 dias) em dia de Brasilia; a mesma vai pra Meta e pras vendas.
+import { janelaDoPeriodo } from '@/lib/funis/janela-do-periodo'
 import {
   getAccountIds, getCampanhaInsights, getCampanhaInsightsDiario,
   getAdInsightsPorTermos, getAdsCreativeDetails,
@@ -26,18 +28,6 @@ export const dynamic = 'force-dynamic'
 // o dado daquele momento (ver item 118 do spr-digital.md).
 const cacheCurto = criarCacheCurto(120_000)
 
-// Data de hoje em BRT (UTC-3), e a janela [de, ate] de um preset. Usamos UMA
-// janela explícita de datas para a Meta E para as vendas, pra os dois lados
-// baterem exatamente o mesmo período (senão o ROAS compara janelas diferentes).
-const ymdBRT = (ms: number) => new Date(ms - 3 * 3600_000).toISOString().slice(0, 10)
-function janela(datePreset: string, dateStart: string, dateEnd: string): { de: string; ate: string } {
-  if (dateStart && dateEnd) return { de: dateStart, ate: dateEnd }
-  const hoje = ymdBRT(Date.now())
-  const dias = datePreset === 'today' ? 1 : datePreset === 'last_30d' ? 30 : 7
-  const de = ymdBRT(Date.now() - (dias - 1) * 86400_000)
-  return { de, ate: hoje }
-}
-
 export async function GET(req: NextRequest) {
   const quem = lerIdentidade(req)
   if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
@@ -45,7 +35,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const sp = req.nextUrl.searchParams
-    const janelaBruta = janela(sp.get('datePreset') ?? '', sp.get('dateStart') ?? '', sp.get('dateEnd') ?? '')
+    const janelaBruta = janelaDoPeriodo(sp.get('datePreset') ?? '', sp.get('dateStart') ?? '', sp.get('dateEnd') ?? '')
     // TRAVA de data (item 120): contabiliza so a partir de DATA_CORTE_FUNIS. O inicio
     // e clampado no corte; periodo todo antes do corte -> semMeta (pula a Meta; as
     // vendas ja vem vazias porque de > ate).

@@ -85,6 +85,7 @@ const VENDAS_POR_PAGINA = 15
 
 const PRESETS = [
   { value: 'today', label: 'Hoje' },
+  { value: 'yesterday', label: 'Ontem' },
   { value: 'last_7d', label: '7 dias' },
   { value: 'last_30d', label: '30 dias' },
 ] as const
