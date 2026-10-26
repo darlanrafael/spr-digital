@@ -7613,4 +7613,4 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   - "− Investimento em tráfego (+13,85%)" -> "− Investimento em tráfego".
 - SO o rotulo mudou. Os valores e o calculo (imposto por funil e acrescimo de 13,85% no
   trafego) continuam iguais. tsc limpo; pagina responde 200 no localhost.
-- STATUS: no localhost, aguardando o dono aprovar o visual pra deploy.
+- STATUS: dono aprovou. DEPLOYADO em 26/10/2026: `feb48e8..3053179 main -> main` (tsc limpo, 1025 testes antes do push; origin/main = local = 3053179). Junto subiram as correcoes da auditoria do MD (126.7, 126.8).
