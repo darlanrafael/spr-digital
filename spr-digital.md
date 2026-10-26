@@ -7689,3 +7689,22 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   bug (melhoria possivel: avisar na tela que o funil conta desde 23/10 - ja era pendencia do
   item 121.2). Se (2)/(3) = bug, continuar investigando.
 - STATUS: ABERTO, aguardando o detalhe do dono.
+
+# 131. Deploy do 129 (Reinaldo) FALHOU na Vercel e foi refeito (26/10/2026)
+
+- Sintoma: dono avisou que o Reinaldo ainda nao via a aba Funis depois do "deploy".
+- Causa: o deploy de 95393c1 (que levou o c9b07d1 = liberacao do socio) ficou com status
+  "Vercel | failure | Deployment has failed" no GitHub. O site no ar continuou na versao
+  anterior (89d2187). ERRO DE PROCESSO MEU: eu disse "subiu" olhando so o `git push`, sem
+  conferir o status da Vercel.
+- Investigacao: `next build` de producao rodado localmente no mesmo commit PASSOU sem erro; os
+  deploys anteriores (9e0421a, 89d2187) foram success. Sem login da Vercel neste computador
+  (sem `auth.json`), nao deu pra ler o log da falha -> causa provavel: falha passageira da
+  Vercel (nao confirmada).
+- Remedio: commit vazio aa05632 + push -> status "success | Deployment has completed".
+  Conferido NO SITE NO AR: o JS servido em spr-digital.vercel.app tem
+  `role==="admin"||role==="socio"` -> link Funis (regra nova publicada).
+- REGRA DAQUI PRA FRENTE: deploy so e dado como feito depois de (1) `git push` E (2) status da
+  Vercel = success no commit (`gh api repos/darlanrafael/spr-digital/commits/<sha>/status`).
+  Antes do push, rodar tambem `next build` (tsc + testes nao pegam erro de build).
+- Pra o Reinaldo ver: recarregar a pagina (o papel vem da sessao salva no navegador).
