@@ -7345,3 +7345,65 @@ quem continua vem do NOME DO PRODUTO (sem nome = Denise; com "Leomir" = Leomir).
   (4 vendas) -> Leomir. Dono aprovou em 25/10/2026 (inclusive o texto
   "continuidade: <nome>"). Aguardando deploy junto com a nº 1.
 - Falta a nº 3 (falta -> aprovacao de comissao) - ver item 123.3.
+
+# 125. Falta (nao compareceu) -> aprovacao de comissao - v2 (26/10/2026)
+
+Pedido do dono (ver 123.3): marcar "nao compareceu" CONSOME a sessao (paciente
+perde, pacote anda, prontuario) pra todos; a comissao do contratado (Denise/Leomir)
+vai pra aprovacao do dono (Pagar/Nao pagar). Pedro (socio) nao recebe por aqui.
+
+## 125.1. Por que v2 (a v1 tinha furo de dinheiro)
+
+A 1a versao ZERAVA a comissao da sessao e "restaurava" na aprovacao. 3 revisores
+adversariais + 1 review final pegaram o furo: se o FECHAMENTO rodasse antes da
+decisao, a sessao zerada era varrida e marcada `comissao_paga=true` por R$0, e a
+aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
+
+## 125.2. Desenho v2 (trava `comissao_bloqueada`)
+
+- Nova coluna `sessoes.comissao_bloqueada boolean default false`. A comissao fica
+  INTACTA; a sessao e so TRAVADA. Travada = fora do "a pagar" do dashboard E do sweep
+  do fechamento (helper puro `lib/comissao-pagavel.ts` `ehComissaoPagavel` =
+  `status==='entregue' && !comissao_paga && !comissao_bloqueada`, usado em todos os
+  sites de "a pagar": dashboard, fechamentos buscarPendentes, entregues-desde-o-fechamento,
+  lista de terapeutas, e a TELA de fechamento).
+- `lib/falta-comissao.ts` (v2): `planejarFalta({ehSocio,temComissao,...})` ->
+  updateData com `comissao_bloqueada = ehSocio || temComissao` (SEM zerar comissao) +
+  `criarFalta = !ehSocio && temComissao`. `decisaoDaFalta(acao)` -> `{novoStatusFalta, desbloquear}`.
+- Acao `nao_compareceu` (app/api/terapeutas/sessoes/route.ts): guardas (so agendada/pendente;
+  nao futura); socio detectado por `lib/socio.ts` ehPedroSocio (TODO: flag `eh_socio`);
+  cria/REABRE a falta ANTES de consumir a sessao (unique(sessao_id) -> reabre 'cancelado'/
+  'negado' via UPDATE, nao insert cego - senao perde comissao numa remarcacao pos-anular).
+- Aprovacao (app/api/terapeutas/aprovacoes/falta-comissao/route.ts): auth na ordem
+  (admin ANTES da senha; usuario_email==quem.email); decisao ATOMICA (update .eq('status','pendente')
+  + confere linhas -> 409 se ja decidida); Pagar DESTRAVA a sessao (comissao_bloqueada=false,
+  guarda status/status_consulta, reverte+500 se 0 linhas); Nao pagar mantem travada. comissao_valor
+  NUNCA e escrito aqui.
+- `anular` de uma falta: destrava + cancela a falta ('cancelado').
+- `concluir`/`iniciar` individuais ganharam guarda (sessaoConcluivel / !entregue).
+- UI: chip laranja "Nao compareceu" (nao verde "Entregue") no overview/agenda/prontuario;
+  "Anular" vira "Desfazer falta"; secao "Faltas aguardando aprovacao" na tela de Aprovacoes
+  (Pagar/Nao pagar) + badge no menu (reembolsos + faltas). Tela de fechamento mostra a
+  travada como categoria propria ("aguardando aprovacao", azul), fora do "a pagar".
+- Migration `supabase/migrations/20261026000000_falta_comissao_v2.sql`: coluna +
+  tabela `solicitacoes_falta_comissao` (status pendente/aprovado/negado/cancelado,
+  unique(sessao_id)) + allow-lists de `ocorrencias_prontuario.tipo` e
+  `atividades_log.tipo_acao` com os tipos novos (e `nao_compareceu`, que faltava).
+
+## 125.3. STATUS + o que falta
+
+- FEITO na branch feat/concluir-em-lote (commits 86e8c7f..f6f8b3d, v1 em 86e8c7f foi
+  reescrita). tsc limpo, 1025 testes. Executado por subagentes (TDD, revisor por tarefa,
+  review final opus). As invariantes de $ foram confirmadas: nada pago sem aprovacao,
+  nada perdido, nada em dobro, falta negada nunca paga, furo do fechamento FECHADO.
+- DEPLOY: a migration v2 PRECISA ser aplicada em producao ANTES do codigo subir - senao o
+  "nao compareceu" da 500 (coluna/tabela nao existem). Decisao de contagem (dono): a falta
+  CONTA como sessao entregue (pacote avanca, entra em "entregues"/ticket medio/desconto de
+  reembolso parcial) - intencional.
+- Robustez PÓS-DEPLOY (review final confirmou que NENHUM bloqueia; sem perda/dobra de $):
+  anular cancelar falta por sessao_id SEMPRE (nao gated em status_consulta) + orfã em retry;
+  no-show com falta pendente existente -> idempotente em vez de 409; guarda usa inicio (nao
+  fim) + data_agendada null; iniciar aceitar cancelada; terapeuta nao resolvido + comissao>0
+  trava sem falta; sócio por nome (flag eh_socio antes de contratar outro "Pedro"); decisao
+  nao-transacional (RPC/txn); nome do decisor vem do body; placeholder "Motivo da anulacao"
+  no "Desfazer falta"; titulo vs resumo de contagem na tela de fechamento.
