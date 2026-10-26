@@ -7646,5 +7646,24 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   `usuarios_sistema` (modulo de terapeutas).
 - Ponto de seguranca levado ao dono: a aba mostra a lista de vendas com nome/email/telefone
   dos clientes + faturamento.
-- STATUS: aguardando decisao do dono - liberar pra todo usuario do dashboard, ou so
-  socio + admin. Nada alterado ainda.
+- DECISAO DO DONO (26/10/2026): "so quero incluir o Reinaldo... o Reinaldo e o Pedro;
+  a trava do Reinaldo pra nao ver os repasses entre socios se mantem". Conferido no banco: o
+  Pedro (pedroroncadapr@outlook.com) ja e ADMIN do dashboard, entao ja via a aba. So faltava
+  o Reinaldo.
+- FIX (TDD): nova regra `podeVerFunis(id)` em lib/identidade-da-chamada.ts =
+  `ehDoDre && (admin || socio)`. Testes novos (vistos falhando antes): admin e socio do DRE
+  sim; admin do modulo de terapeutas, financeiro, comercial e terapeuta NAO; papel socio fora
+  da area dashboard NAO.
+  - app/api/funis/route.ts e app/api/funis/performance/route.ts: `ehAdminDoDre` ->
+    `podeVerFunis` (mensagem 403: "Só administradores e sócios do DRE podem ver os funis.").
+  - components/Header.tsx: link "Funis" aparece pra role admin OU socio.
+  - `ehAdminDoDre` continua existindo e testado, mas nao e mais usado no app.
+- Por que liberar o papel socio e nao o e-mail do Reinaldo: ele e o UNICO socio ativo. ATENCAO:
+  um socio novo cadastrado no futuro tambem passa a ver a aba Funis (com PII de clientes).
+- A aba Funis e so leitura (cadastro de funil e config no codigo; POST da 405), entao nada de
+  escrita foi liberado.
+- A TRAVA do socio continua: `deveEsconderDivisaoDeSocios` (fechamentos sem a divisao entre
+  socios) nao foi tocada; a aba Funis nao mostra divisao entre socios.
+- Verificado: tsc limpo, 1035 testes; o role 'socio' vem de usuarios_dashboard.role e vira o
+  papel da identidade no middleware sem conversao. NAO testado logado como o Reinaldo (nao
+  temos a senha dele) - a prova e pelos testes da regra.

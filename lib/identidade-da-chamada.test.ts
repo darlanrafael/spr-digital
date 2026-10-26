@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  lerIdentidade, terapeutaIdQueValeu, podeAdministrar, ehAdminDoDre, deveEsconderDivisaoDeSocios,
+  lerIdentidade, terapeutaIdQueValeu, podeAdministrar, ehAdminDoDre, podeVerFunis, deveEsconderDivisaoDeSocios,
   semDivisaoDeSocios,
   podeEditarFechamento, podeEditarCaixa, podeEditarCustos,
   podeMexerEmVenda,
@@ -155,6 +155,23 @@ test('ehAdminDoDre: so admin da area dashboard; admin do sistema (terapeutas) NA
   assert.equal(ehAdminDoDre(financeiro), false)
   assert.equal(ehAdminDoDre(comercial), false)
   assert.equal(ehAdminDoDre(terapeuta(ID_DENISE)), false)
+})
+
+// Aba Funis (so LEITURA): admin do DRE + SOCIO do DRE. Decisao do dono 26/10/2026:
+// incluir o Reinaldo (unico socio). Admin do modulo de terapeutas, financeiro,
+// comercial e terapeuta continuam fora (tem PII do cliente). Ver item 129.
+test('podeVerFunis: admin e socio do DRE; ninguem mais', () => {
+  assert.equal(podeVerFunis(adminDre), true)
+  assert.equal(podeVerFunis(socio), true)
+  assert.equal(podeVerFunis(adminSistema), false)
+  assert.equal(podeVerFunis(financeiro), false)
+  assert.equal(podeVerFunis(comercial), false)
+  assert.equal(podeVerFunis(terapeuta(ID_DENISE)), false)
+})
+
+// Um papel "socio" que viesse da area de terapeutas NAO entra: a area manda.
+test('podeVerFunis: socio fora da area dashboard NAO', () => {
+  assert.equal(podeVerFunis({ ...socio, area: 'sistema' }), false)
 })
 
 test('a divisao entre socios some SO para o socio', () => {

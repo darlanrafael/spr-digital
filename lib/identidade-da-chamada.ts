@@ -108,6 +108,19 @@ export function ehAdminDoDre(id: Identidade): boolean {
   return ehDoDre(id) && id.papel === 'admin'
 }
 
+/**
+ * Ver a aba Funis (SO leitura: o cadastro de funis e config no codigo, a rota de
+ * gravacao responde 405). Admin OU socio DO DRE. Decisao do dono em 26/10/2026:
+ * incluir o Reinaldo (unico socio do dashboard). Continua fora quem nao e do DRE
+ * (admin do modulo de terapeutas, terapeuta, comercial) e o financeiro - a aba tem
+ * PII do cliente. A trava do socio (nao ver a divisao entre socios) e OUTRA regra
+ * (deveEsconderDivisaoDeSocios) e segue valendo; a aba Funis nao mostra divisao.
+ * Ver item 129 do spr-digital.md.
+ */
+export function podeVerFunis(id: Identidade): boolean {
+  return ehDoDre(id) && (id.papel === 'admin' || id.papel === 'socio')
+}
+
 /** Confirmar fechamento. So admin - copia app/fechamentos/page.tsx:237. */
 export function podeEditarFechamento(id: Identidade): boolean {
   return ehDoDre(id) && id.papel === 'admin'

@@ -19,7 +19,8 @@ const NAV_LINKS: NavLink[] = [
   { href: '/caixa', label: 'Caixa' },
 ]
 
-// Telas de Funis: as APIs exigem admin, então o link só aparece para admin.
+// Telas de Funis: as APIs liberam admin e sócio do DRE (podeVerFunis), então o
+// link aparece para os dois. Ver item 129 do spr-digital.md.
 const FUNIS_NAV: NavLink[] = [
   { href: '/performance-funis/dashboard', label: 'Funis' },
 ]
@@ -158,7 +159,7 @@ export default function Header() {
               ] : []),
             ] : [
               ...NAV_LINKS,
-              ...(user?.role === 'admin' ? FUNIS_NAV : []),
+              ...(user?.role === 'admin' || user?.role === 'socio' ? FUNIS_NAV : []),
             ]).map(link => {
               const active = isTerapeutas
                 ? (link.href === '/terapeutas' ? pathname === '/terapeutas' : pathname.startsWith(link.href))

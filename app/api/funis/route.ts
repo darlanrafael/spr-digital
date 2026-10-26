@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { lerIdentidade, ehAdminDoDre } from '@/lib/identidade-da-chamada'
+import { lerIdentidade, podeVerFunis } from '@/lib/identidade-da-chamada'
 import { FUNIS } from '@/lib/funis/funis-config'
 
 export const dynamic = 'force-dynamic'
@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 function guard(req: NextRequest) {
   const quem = lerIdentidade(req)
   if (!quem) return { status: 401 as const, error: 'Você precisa entrar no sistema.' }
-  if (!ehAdminDoDre(quem)) return { status: 403 as const, error: 'Só um administrador do DRE pode fazer isso.' }
+  if (!podeVerFunis(quem)) return { status: 403 as const, error: 'Só administradores e sócios do DRE podem ver os funis.' }
   return null
 }
 

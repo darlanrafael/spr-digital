@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { lerIdentidade, ehAdminDoDre } from '@/lib/identidade-da-chamada'
+import { lerIdentidade, podeVerFunis } from '@/lib/identidade-da-chamada'
 // Janela [de, ate] do preset (hoje/ontem/7/30 dias) em dia de Brasilia; a mesma vai pra Meta e pras vendas.
 import { janelaDoPeriodo } from '@/lib/funis/janela-do-periodo'
 import {
@@ -31,7 +31,7 @@ const cacheCurto = criarCacheCurto(120_000)
 export async function GET(req: NextRequest) {
   const quem = lerIdentidade(req)
   if (!quem) return NextResponse.json({ error: 'Você precisa entrar no sistema.' }, { status: 401 })
-  if (!ehAdminDoDre(quem)) return NextResponse.json({ error: 'Só um administrador do DRE pode fazer isso.' }, { status: 403 })
+  if (!podeVerFunis(quem)) return NextResponse.json({ error: 'Só administradores e sócios do DRE podem ver os funis.' }, { status: 403 })
 
   try {
     const sp = req.nextUrl.searchParams
