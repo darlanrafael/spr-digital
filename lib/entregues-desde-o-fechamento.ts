@@ -19,10 +19,14 @@
 // que e "antes da entrega" mas nao e antecipacao no sentido da tela), e diz
 // onde procurar quando o numero nao bater.
 
+import { ehComissaoPagavel } from './comissao-pagavel'
+
 export type SessaoEntregue = {
   id: string
   comissao_valor: number
   comissao_paga?: boolean | null
+  /** Comissao travada (falta nao aprovada): nao e a pagar nem ja paga. */
+  comissao_bloqueada?: boolean | null
   data_entrega?: string | null
 }
 
@@ -106,7 +110,8 @@ export function entreguesDesdeOFechamento<T extends SessaoEntregue>(params: {
     // A marca autoritativa e `comissao_paga`, nao a presenca no snapshot: o
     // snapshot e historico e pode nao existir para pagamento feito por fora.
     if (s.comissao_paga) jaPago += valor
-    else aPagar += valor
+    else if (ehComissaoPagavel({ status: 'entregue', comissaoPaga: s.comissao_paga, comissaoBloqueada: s.comissao_bloqueada })) aPagar += valor
+    // bloqueada: terceira categoria, fora de aPagar e de jaPago
     return {
       sessao: s,
       pagoEm: s.comissao_paga ? (f?.data_confirmacao ?? null) : null,

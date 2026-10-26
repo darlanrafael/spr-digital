@@ -152,3 +152,16 @@ test('data invalida no fechamento nao vira corte', () => {
   assert.equal(r.corte, null, 'fechamento com data invalida e ignorado')
   assert.equal(r.sessoes.length, 1)
 })
+
+test('comissao bloqueada nao entra em aPagar nem em jaPago', () => {
+  const r = entreguesDesdeOFechamento({
+    sessoes: [
+      { id: 'a', comissao_valor: 100, comissao_paga: false, data_entrega: '2026-09-01T10:00:00+00:00' },
+      { id: 'b', comissao_valor: 50, comissao_paga: false, comissao_bloqueada: true, data_entrega: '2026-09-02T10:00:00+00:00' },
+    ],
+    fechamentos: [],
+  })
+  assert.equal(r.aPagar, 100)
+  assert.equal(r.jaPago, 0)
+  assert.equal(r.sessoes.length, 2)
+})

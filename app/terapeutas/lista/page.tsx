@@ -1,5 +1,6 @@
 'use client'
 
+import { ehComissaoPagavel } from '@/lib/comissao-pagavel'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { User, ChevronRight } from 'lucide-react'
@@ -28,6 +29,7 @@ type Sessao = {
   status: string
   comissao_valor: number
   comissao_paga: boolean
+  comissao_bloqueada?: boolean | null
 }
 
 function fmtBRL(n: number) {
@@ -69,7 +71,7 @@ export default function TerapeutasLista() {
       if (!client) return
       const [tResp, sResp] = await Promise.all([
         client.from('terapeutas').select('id,nome,email,percentual_comissao,ativo,vendas_a_partir_de').order('nome'),
-        client.from('sessoes').select('sale_id,terapeuta_id,status,comissao_valor,comissao_paga'),
+        client.from('sessoes').select('sale_id,terapeuta_id,status,comissao_valor,comissao_paga,comissao_bloqueada'),
       ])
       const terapeutasData = (tResp.data ?? []) as Terapeuta[]
       const sessoesData = (sResp.data ?? []) as Sessao[]
@@ -107,7 +109,7 @@ export default function TerapeutasLista() {
       })
     }
     const ativas = ts.filter(s => s.status === 'agendada' || s.status === 'pendente').length
-    const receita = ts.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + s.comissao_valor, 0)
+    const receita = ts.filter(s => ehComissaoPagavel({ status: s.status, comissaoPaga: s.comissao_paga, comissaoBloqueada: s.comissao_bloqueada })).reduce((a, s) => a + s.comissao_valor, 0)
     return { ativas, receita }
   }
 

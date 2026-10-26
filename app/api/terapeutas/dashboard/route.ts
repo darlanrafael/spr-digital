@@ -482,6 +482,7 @@ export async function GET(req: NextRequest) {
           sessoes_entregues: ts.filter(s => s.status === 'entregue').length,
           sessoes_futuras: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesT.sessoes,
           faturamento_bruto: fat_bruto_t,
+          // comissaoPaga:false e intencional: preserva o numero antigo (nao excluia pagas); so adiciona o gate das bloqueadas.
           comissao_gerada: ts.filter(s => ehComissaoPagavel({ status: s.status, comissaoPaga: false, comissaoBloqueada: s.comissao_bloqueada })).reduce((a, s) => a + (s.comissao_valor || 0), 0),
           comissao_futura: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesT.comissao,
           proxima_consulta: proximas[0]?.data_agendada ?? null,
