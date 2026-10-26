@@ -7573,4 +7573,5 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 
 - Antes do deploy: tsc limpo, 1025 testes verdes, migration v2 ja aplicada em producao
   (125.6). origin/main nao tinha andado desde a saida da branch (merge fast-forward).
-- Resultado do push: ver linha abaixo (preenchida apos o push).
+- Push feito pelo Claude em 26/10/2026: `38c3bb7..8f36e26 main -> main`. Conferido com `git fetch`: origin/main = local = 8f36e26. Vercel publica a partir da main.
+- Branch `feat/concluir-em-lote` apagada depois do merge (`git branch -d`, ja estava na main). Workspace do subagent-driven (`.superpowers/sdd/...`, fora do git) removido - o ledger dele foi resumido em 125.4 e 125.5.
