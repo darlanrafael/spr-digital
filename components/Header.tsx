@@ -61,10 +61,15 @@ export default function Header() {
 
   useEffect(() => {
     if (!isTerapeutas || user?.role !== 'admin') { setAprovacoesPendentes(0); return }
-    fetch('/api/terapeutas/aprovacoes?count=true')
+    // Soma reembolsos + faltas aguardando decisao, pros dois aparecerem no badge.
+    const conta = (url: string) => fetch(url)
       .then(r => r.ok ? r.json() : { pendentes_count: 0 })
-      .then(d => setAprovacoesPendentes(d.pendentes_count ?? 0))
-      .catch(() => {})
+      .then(d => Number(d.pendentes_count ?? 0))
+      .catch(() => 0)
+    Promise.all([
+      conta('/api/terapeutas/aprovacoes?count=true'),
+      conta('/api/terapeutas/aprovacoes/falta-comissao?count=true'),
+    ]).then(([reembolsos, faltas]) => setAprovacoesPendentes(reembolsos + faltas))
   }, [isTerapeutas, user?.role, pathname])
 
   const canSeeAllProjects = user?.role === 'admin' || user?.role === 'financeiro'

@@ -92,6 +92,11 @@ export default function TerapeutasAprovacoes() {
   const [lancErro, setLancErro] = useState('')
   const [lancSenhaOpen, setLancSenhaOpen] = useState(false)
   const [lancPendente, setLancPendente] = useState<{ id: string; acao: 'aprovar' | 'rejeitar' } | null>(null)
+  // Faltas (nao compareceu) da Denise/Leomir aguardando o dono decidir se paga a comissao.
+  const [faltas, setFaltas] = useState<Record<string, unknown>[]>([])
+  const [faltaErro, setFaltaErro] = useState('')
+  const [faltaSenhaOpen, setFaltaSenhaOpen] = useState(false)
+  const [faltaPendente, setFaltaPendente] = useState<{ id: string; acao: 'pagar' | 'nao_pagar' } | null>(null)
   const [aprovarSenhaOpen, setAprovarSenhaOpen] = useState(false)
   const [aprovarLoading, setAprovarLoading] = useState(false)
   const [aprovarErro, setAprovarErro] = useState('')
@@ -143,6 +148,13 @@ export default function TerapeutasAprovacoes() {
       const r5 = await fetch(`/api/terapeutas/aprovacoes/edicao-paciente?usuario_email=${encodeURIComponent(adminEmail)}`, { cache: 'no-store' })
       const j5 = await r5.json()
       if (r5.ok) setEdicoes(j5.pendentes ?? [])
+    } catch { /* secao fica vazia */ }
+
+    // Faltas (nao compareceu) da Denise/Leomir esperando decisao de comissao.
+    try {
+      const r6 = await fetch('/api/terapeutas/aprovacoes/falta-comissao', { cache: 'no-store' })
+      const j6 = await r6.json()
+      if (r6.ok) setFaltas(j6.pendentes ?? [])
     } catch { /* secao fica vazia */ }
 
     // Estorno na plataforma com sessao futura. Mesmo tratamento da conferencia
@@ -241,6 +253,34 @@ export default function TerapeutasAprovacoes() {
       loadData()
     } catch (e) {
       setLancErro(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // Falta: Pagar (libera a comissao) ou Nao pagar (fica sem). Sem justificativa:
+  // e so uma decisao sim/nao, diferente da recusa de reembolso/lancamento.
+  function decidirFalta(id: string, acao: 'pagar' | 'nao_pagar') {
+    setFaltaPendente({ id, acao })
+    setFaltaErro('')
+    setFaltaSenhaOpen(true)
+  }
+
+  async function confirmarFalta(senhaAcao: string) {
+    if (!faltaPendente) return
+    const { id, acao } = faltaPendente
+    setFaltaErro('')
+    try {
+      const res = await fetch('/api/terapeutas/aprovacoes/falta-comissao', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, acao, usuario_nome: sessionNome, usuario_email: adminEmail, senha: senhaAcao }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setFaltaErro(json.error ?? `Erro ${res.status}`); return }
+      setFaltaSenhaOpen(false); setFaltaPendente(null)
+      showToast(acao === 'pagar' ? '✓ Comissão da falta aprovada!' : '✓ Falta registrada sem comissão.')
+      loadData()
+    } catch (e) {
+      setFaltaErro(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -455,6 +495,42 @@ export default function TerapeutasAprovacoes() {
                 acao mais sensivel da tela: foi ela que, em 04/08/2026,
                 sobrescreveu uma paciente inteira pela outra. Enquanto espera,
                 os dados ANTIGOS continuam valendo. */}
+            {faltas.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xs font-semibold text-amber-300 uppercase tracking-wide mb-1">Faltas aguardando aprovação de comissão</h2>
+                <p className="text-[11px] text-gray-600 mb-3">
+                  O paciente não compareceu. A sessão já foi consumida; falta decidir se a comissão do terapeuta é paga.
+                </p>
+                <div className="bg-gray-900 border border-amber-500/30 rounded-xl divide-y divide-white/5">
+                  {faltas.map(f => {
+                    const id = String(f.id)
+                    return (
+                      <div key={id} className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm text-gray-200">{String(f.paciente_nome ?? '(sem nome)')}</p>
+                            <p className="text-[11px] text-gray-500">
+                              {String(f.terapeuta_nome ?? '-')} · sessão {String(f.numero_sessao ?? '?')} de {String(f.total_sessoes ?? '?')}
+                              {f.data_sessao ? ` · ${fmtDt(String(f.data_sessao))}` : ''}
+                            </p>
+                          </div>
+                          <span className="text-sm font-semibold text-amber-300 shrink-0">{fmtBRL(Number(f.comissao_valor ?? 0))}</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-gray-600">Registrada por {String(f.solicitado_por_nome ?? '-')} · {fmtDt(String(f.created_at))}</p>
+                        {faltaPendente?.id === id && faltaErro && <p className="mt-2 text-[11px] text-red-400">{faltaErro}</p>}
+                        <div className="mt-3 flex gap-2">
+                          <button onClick={() => decidirFalta(id, 'nao_pagar')}
+                            className="flex-1 py-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg hover:bg-red-500/20">Não pagar</button>
+                          <button onClick={() => decidirFalta(id, 'pagar')}
+                            className="flex-1 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg">Pagar comissão</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {edicoes.length > 0 && (
               <div className="mb-8">
                 <h2 className="text-xs font-semibold text-rose-300 uppercase tracking-wide mb-1">Troca de paciente aguardando você</h2>
@@ -805,6 +881,15 @@ export default function TerapeutasAprovacoes() {
           ? 'Ao confirmar, o sistema cria a venda, as sessões, o link do Meet e a comissão, e libera os horários reservados.'
           : 'Nada foi criado, então recusar só libera os horários que estavam reservados na agenda.'}
         loading={false} erro={lancErro} />
+
+      <SenhaModal isOpen={faltaSenhaOpen}
+        onClose={() => { setFaltaSenhaOpen(false); setFaltaPendente(null); setFaltaErro('') }}
+        onConfirm={confirmarFalta}
+        titulo={faltaPendente?.acao === 'pagar' ? 'Pagar comissão da falta' : 'Não pagar a falta'}
+        descricao={faltaPendente?.acao === 'pagar'
+          ? 'A comissão desta sessão volta a contar para o terapeuta. Digite sua senha para confirmar.'
+          : 'A falta fica registrada e o terapeuta não recebe por esta sessão. Digite sua senha para confirmar.'}
+        loading={false} erro={faltaErro} />
 
       <SenhaModal isOpen={aprovarSenhaOpen} onClose={() => { setAprovarSenhaOpen(false); setAprovarErro('') }}
         onConfirm={handleAprovar} titulo="Confirmar aprovação de reembolso"

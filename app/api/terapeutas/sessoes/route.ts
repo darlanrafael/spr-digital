@@ -4,6 +4,7 @@ import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeuta
 import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { montarConclusaoDaSessao } from '@/lib/conclusao-da-sessao'
+import { planejarFalta } from '@/lib/falta-comissao'
 
 // Sessões de UMA venda, lidas na hora.
 //
@@ -73,7 +74,7 @@ export async function PATCH(req: NextRequest) {
 
     const { data: sessao } = await supabase
       .from('sessoes')
-      .select('id,sale_id,status,status_consulta,paciente_nome,numero_sessao,terapeuta_id')
+      .select('id,sale_id,status,status_consulta,paciente_nome,paciente_email,numero_sessao,total_sessoes,data_agendada,terapeuta_id,comissao_valor,terapeutas(nome)')
       .eq('id', sessao_id)
       .single()
     if (!sessao) return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
@@ -92,6 +93,9 @@ export async function PATCH(req: NextRequest) {
     let ocorrenciaTitulo = ''
     let ocorrenciaDesc = ''
     let logAcao: string = acao
+    // Preenchido so no "nao compareceu" de Denise/Leomir: a comissao a mandar
+    // pra aprovacao do dono. Inserida depois das escritas comuns.
+    let faltaParaCriar: { comissaoValor: number } | null = null
 
     if (acao === 'iniciar') {
       updateData = { status_consulta: 'em_atendimento', iniciado_em: now }
@@ -124,13 +128,60 @@ export async function PATCH(req: NextRequest) {
       ocorrenciaDesc = `Sessão anulada por ${usuario_nome}. Motivo: ${motivo}`
       logAcao = 'cancelamento'
     } else if (acao === 'nao_compareceu') {
-      updateData = { status_consulta: 'nao_compareceu' }
+      const s = sessao as unknown as { status: string; comissao_valor: number | null; terapeutas: { nome: string } | null }
+      // Guarda com dinheiro: uma sessao ja finalizada nao pode ser remarcada
+      // como falta - senao zeraria de novo a comissao (inclusive uma ja
+      // aprovada) e tentaria criar uma segunda falta.
+      if (s.status === 'entregue') {
+        return NextResponse.json({ error: 'Esta sessão já foi finalizada; não dá pra marcar falta.' }, { status: 409 })
+      }
+      const ehPedro = (s.terapeutas?.nome ?? '').toLowerCase().includes('pedro')
+      const p = planejarFalta({
+        ehPedro,
+        comissaoValorSessao: Number(s.comissao_valor ?? 0),
+        numeroSessao: sessao.numero_sessao,
+        usuarioNome: usuario_nome,
+        agoraMs,
+      })
+      updateData = p.updateData
       ocorrenciaTipo = 'nao_compareceu'
-      ocorrenciaTitulo = `Paciente Não Compareceu — Sessão ${sessao.numero_sessao}`
-      ocorrenciaDesc = `Paciente não compareceu à sessão. Registrado por ${usuario_nome} às ${horaLocal}`
+      ocorrenciaTitulo = p.ocorrenciaTitulo
+      ocorrenciaDesc = p.ocorrenciaDesc
       logAcao = 'nao_compareceu'
+      if (p.criarFalta) faltaParaCriar = { comissaoValor: p.faltaComissaoValor }
     } else {
       return NextResponse.json({ error: 'Ação inválida' }, { status: 400 })
+    }
+
+    // Falta da Denise/Leomir: cria a aprovacao ANTES de consumir a sessao. Com
+    // dinheiro, a ordem importa: se a criacao da falta falhar (ex.: migration
+    // nao aplicada), nada e alterado - a comissao NUNCA fica zerada sem um
+    // registro pra restaurar. O valor original fica guardado na falta e volta
+    // pra sessao se o dono aprovar. `ignoreDuplicates` + unique(sessao_id): se
+    // ja existe falta pra esta sessao, nao recria (e o guarda de status entregue
+    // acima ja barra remarcar falta).
+    if (faltaParaCriar) {
+      const s = sessao as unknown as {
+        sale_id: string; terapeuta_id: string | null; terapeutas: { nome: string } | null
+        paciente_nome: string; paciente_email: string | null
+        numero_sessao: number; total_sessoes: number; data_agendada: string | null
+      }
+      const { error: faltaErr } = await supabase.from('solicitacoes_falta_comissao').upsert({
+        sessao_id,
+        sale_id: s.sale_id,
+        terapeuta_id: s.terapeuta_id,
+        terapeuta_nome: s.terapeutas?.nome ?? null,
+        paciente_nome: s.paciente_nome,
+        paciente_email: s.paciente_email,
+        numero_sessao: s.numero_sessao,
+        total_sessoes: s.total_sessoes,
+        data_sessao: s.data_agendada,
+        comissao_valor: faltaParaCriar.comissaoValor,
+        status: 'pendente',
+        solicitado_por_nome: usuario_nome,
+        solicitado_por_email: usuario_email,
+      }, { onConflict: 'sessao_id', ignoreDuplicates: true })
+      if (faltaErr) return NextResponse.json({ error: faltaErr.message }, { status: 500 })
     }
 
     const { error: updateErr } = await supabase.from('sessoes').update(updateData).eq('id', sessao_id)
@@ -156,6 +207,18 @@ export async function PATCH(req: NextRequest) {
       sale_id: sessao.sale_id,
       descricao: ocorrenciaDesc,
     })
+
+    // A falta ja foi criada acima (antes de consumir a sessao); aqui so o log.
+    if (faltaParaCriar) {
+      await registrarAtividade({
+        usuario_nome,
+        usuario_tipo,
+        tipo_acao: 'solicitacao_falta_comissao',
+        sessao_id,
+        sale_id: sessao.sale_id,
+        descricao: `Falta enviada para aprovação de comissão (R$ ${faltaParaCriar.comissaoValor.toFixed(2)})`,
+      })
+    }
 
     return NextResponse.json({ success: true })
   } catch (err) {
