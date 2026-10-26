@@ -64,7 +64,7 @@ create index if not exists idx_solicitacoes_falta_status
 -- e a decisao do dono vira ocorrencia 'falta_comissao_aprovada' ou
 -- 'falta_comissao_negada'. Lista = a anterior + os dois novos.
 alter table ocorrencias_prontuario
-  drop constraint ocorrencias_prontuario_tipo_check;
+  drop constraint if exists ocorrencias_prontuario_tipo_check;
 
 alter table ocorrencias_prontuario
   add constraint ocorrencias_prontuario_tipo_check
