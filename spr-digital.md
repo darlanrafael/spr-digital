@@ -7257,3 +7257,57 @@ DRE/fechamentos/moeda/lembretes feitas em paralelo (mesmo conteudo, SHA diferent
 - Pos-deploy, pendencias do dono (nao bloqueiam): aviso da trava na tela, TTL de 5 min
   do status ativo/pausado (ver item 121.2). E a cobranca/cota do Supabase (banner de
   "projetos restringidos a partir de 31/out" - resolver pra nao derrubar o banco).
+
+# 123. Concluir varias sessoes de uma vez ("concluir em lote") (25/10/2026)
+
+Pedido do dono: na tela do terapeuta, a secao "Pendentes de conclusao" acumula e o
+terapeuta tinha que fechar UMA POR UMA (clicar o ✓ verde em cada linha). Ele quis
+poder marcar varias (ou todas) e concluir de uma vez. Brainstorming: ele escolheu
+"selecionar quais" (checkbox por linha + selecionar todas), nao um botao unico que
+conclui tudo - pra poder deixar de fora alguma que precise ser anulada.
+
+## 123.1. O que foi feito (TDD)
+
+- `lib/conclusao-da-sessao.ts` (NOVO): dois helpers PUROS, com 8 testes
+  (`lib/conclusao-da-sessao.test.ts`):
+  - `montarConclusaoDaSessao({numeroSessao, usuarioNome, dataEntregaManual?, agoraMs})`
+    - monta o `updateData` (status_consulta=concluida, status=entregue, data_entrega,
+    concluido_em, entregue_confirmado_por) + ocorrencia do prontuario + log. Extraido
+    do bloco inline que vivia no PATCH; agora o ✓ VERDE INDIVIDUAL e o LOTE usam a
+    MESMA regra (senao divergem - mesma classe do bug do oferta_nome).
+  - `sessaoConcluivel(status)` - so `agendada`/`pendente`. Impede reconcluir uma ja
+    `entregue` (reescreveria data_entrega e duplicaria prontuario/comissao).
+- `app/api/terapeutas/sessoes/route.ts`: o PATCH `acao=concluir` agora chama o helper
+  (comportamento preservado; `now`/`horaLocal` passam a vir de um unico `agoraMs`).
+- `app/api/terapeutas/sessoes/concluir-lote/route.ts` (NOVO): POST, recebe
+  `sessao_ids[]`. Mesma autorizacao do PATCH individual (senha OU token +
+  `podeAgirNaSessao` por sessao), dedup dos ids, pula silenciosamente os que nao
+  cabem, e devolve `{concluidas, falhas:[{sessao_id,motivo}]}` - uma falha numa sessao
+  nao derruba as outras. data_entrega = AGORA (lote nao oferece data manual).
+- `app/terapeutas/[id]/page.tsx`: barra acima da lista com texto
+  "Selecione uma ou todas para concluir de uma vez" + checkbox "selecionar todas"
+  (vira "N de M selecionada(s)" quando ha selecao) + botao "Concluir selecionadas (N)"
+  + confirmacao (SenhaModal, "marca todas como entregues e gera a comissao") + linha de
+  aviso do resultado. Checkbox tambem em cada linha. O ✓ verde individual continua.
+
+## 123.2. Login do Leomir que nao funcionava (investigacao, 25/10/2026)
+
+Leomir nao conseguia entrar; dono ja tinha "redefinido a senha" sem efeito. Causa
+provada no banco: ele EXISTE na tabela `terapeutas` (ativo), mas NAO tinha conta de
+acesso em `usuarios_sistema` (so Denise e Pedro tinham). O login busca email+senha+ativo
+nessa tabela - sem linha, qualquer senha da "Email ou senha invalidos", e "redefinir
+senha" nao tinha o que redefinir. NAO foi bug de codigo, so dado faltando. O dono criou
+a conta pelo proprio sistema (email leomirsantos@outlook.com) e funcionou.
+
+## 123.3. STATUS + proximos
+
+- 123 FEITO na branch `feat/concluir-em-lote`. Verificado: tsc 0, 1002 testes, pagina
+  do terapeuta compila e serve 200 no dev. Happy-path (clicar e concluir) NAO dirigido
+  de proposito: o localhost aponta pro banco de PRODUCAO, concluir ali concluiria
+  sessoes reais. Dono aprovou o visual em 25/10/2026. Aguardando deploy (so com ordem
+  do dono).
+- Proximos (mesma leva, um de cada vez): (nº2) marcar quando o Diagnostico Guiado e do
+  LEOMIR no preview/overview/agenda da tela do Pedro; (nº3) falta "nao compareceu" ->
+  sempre grava prontuario + o paciente perde a sessao (pacote avanca) + sai dos
+  pendentes; comissao: Pedro nunca (recebe como socio), Denise/Leomir vao pra uma fila
+  "Faltas aguardando aprovacao" (so no sistema) onde o dono clica Pagar/Nao pagar.

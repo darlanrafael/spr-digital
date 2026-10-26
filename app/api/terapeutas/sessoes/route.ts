@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verificarAcesso, erroAcesso, registrarAtividade, brasiliaLocalToISO } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
 import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
+import { montarConclusaoDaSessao } from '@/lib/conclusao-da-sessao'
 
 // Sessões de UMA venda, lidas na hora.
 //
@@ -83,8 +84,9 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Esta sessão não é sua.' }, { status: 403 })
     }
 
-    const now = new Date().toISOString()
-    const horaLocal = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
+    const agoraMs = Date.now()
+    const now = new Date(agoraMs).toISOString()
+    const horaLocal = new Date(agoraMs).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
     let updateData: Record<string, unknown> = {}
     let ocorrenciaTipo = 'nota'
     let ocorrenciaTitulo = ''
@@ -96,20 +98,17 @@ export async function PATCH(req: NextRequest) {
       ocorrenciaTitulo = `Consulta Iniciada — Sessão ${sessao.numero_sessao}`
       ocorrenciaDesc = `Consulta iniciada por ${usuario_nome} às ${horaLocal}`
     } else if (acao === 'concluir') {
-      const dataEntregaFinal = data_entrega ? brasiliaLocalToISO(data_entrega) : now
-      updateData = {
-        status_consulta: 'concluida',
-        status: 'entregue',
-        data_entrega: dataEntregaFinal,
-        concluido_em: now,
-        entregue_confirmado_por: usuario_nome,
-      }
-      ocorrenciaTipo = 'confirmacao_entrega'
-      ocorrenciaTitulo = `Consulta Concluída — Sessão ${sessao.numero_sessao}`
-      ocorrenciaDesc = data_entrega
-        ? `Consulta concluída por ${usuario_nome} (data de entrega informada manualmente: ${new Date(dataEntregaFinal).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`
-        : `Consulta concluída por ${usuario_nome} às ${horaLocal}`
-      logAcao = 'confirmacao_entrega'
+      const c = montarConclusaoDaSessao({
+        numeroSessao: sessao.numero_sessao,
+        usuarioNome: usuario_nome,
+        dataEntregaManual: data_entrega,
+        agoraMs,
+      })
+      updateData = c.updateData
+      ocorrenciaTipo = c.ocorrenciaTipo
+      ocorrenciaTitulo = c.ocorrenciaTitulo
+      ocorrenciaDesc = c.ocorrenciaDesc
+      logAcao = c.logAcao
     } else if (acao === 'anular') {
       if (!motivo || motivo.trim().length < 10) {
         return NextResponse.json({ error: 'Motivo obrigatório (mínimo 10 caracteres)' }, { status: 400 })

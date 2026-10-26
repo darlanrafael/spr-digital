@@ -465,6 +465,15 @@ export default function PainelTerapeuta() {
   const [anularMotivo, setAnularMotivo] = useState('')
   const [concluirData, setConcluirData] = useState('')
 
+  // Concluir várias de uma vez — seleção na lista de "Pendentes de conclusão".
+  // A pilha de pendentes às vezes acumula e o terapeuta tinha que fechar uma
+  // por uma; aqui ele marca o que quiser (ou todas) e conclui num clique só.
+  const [loteSelecionado, setLoteSelecionado] = useState<Set<string>>(new Set())
+  const [loteModalAberto, setLoteModalAberto] = useState(false)
+  const [loteLoading, setLoteLoading] = useState(false)
+  const [loteErro, setLoteErro] = useState('')
+  const [loteAviso, setLoteAviso] = useState('')
+
   // Modal remarcar — visão admin
   const [remarcarSessaoId, setRemarcarSessaoId] = useState<string | null>(null)
   const [remarcarData, setRemarcarData] = useState('')
@@ -1248,6 +1257,52 @@ export default function PainelTerapeuta() {
     loadOverview()
   }
 
+  // ─── Concluir em lote ───
+  function alternarSelecao(id: string) {
+    setLoteSelecionado(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  function alternarTodas() {
+    setLoteSelecionado(prev =>
+      prev.size === ovPendentesConclusao.length
+        ? new Set()
+        : new Set(ovPendentesConclusao.map(s => s.id)))
+  }
+
+  async function handleConcluirLote(senha: string) {
+    const ids = [...loteSelecionado]
+    if (ids.length === 0) return
+    setLoteLoading(true); setLoteErro('')
+    const res = await fetch('/api/terapeutas/sessoes/concluir-lote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessao_ids: ids,
+        usuario_nome: sessionNome || adminEmail.split('@')[0],
+        usuario_tipo: isTerapeutaSession ? 'terapeuta' : 'admin',
+        usuario_email: adminEmail,
+        senha,
+        token: sessionToken,
+      }),
+    })
+    const json = await res.json()
+    setLoteLoading(false)
+    if (!res.ok) { setLoteErro(json.error ?? 'Erro'); return }
+    setLoteModalAberto(false)
+    setLoteSelecionado(new Set())
+    const nConcluidas = json.concluidas?.length ?? 0
+    const nFalhas = json.falhas?.length ?? 0
+    setLoteAviso(
+      nFalhas > 0
+        ? `${nConcluidas} concluída(s). ${nFalhas} não pôde(ram) ser concluída(s) e continuam na lista.`
+        : `${nConcluidas} consulta(s) concluída(s).`)
+    loadData()
+    loadOverview()
+  }
+
   async function handleRemarcar(senha: string) {
     if (!remarcarSessaoId || !remarcarData) return
     setRemarcarLoading(true)
@@ -1816,11 +1871,34 @@ export default function PainelTerapeuta() {
                           <p className="text-[11px] text-amber-200/60 mt-1">
                             O horário já passou e ninguém marcou como concluída ou anulada. Enquanto ficar assim, o pacote do paciente não avança e a comissão não é gerada.
                           </p>
+                          {loteAviso && (
+                            <p className="text-[11px] text-amber-100/80 mt-2 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">{loteAviso}</p>
+                          )}
+                        </div>
+                        {/* Barra de conclusão em lote: marcar várias (ou todas) e concluir de uma vez. */}
+                        <div className="px-4 py-2.5 border-b border-amber-500/15 flex items-center justify-between gap-3 flex-wrap">
+                          <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-amber-200/80">
+                            <input type="checkbox" aria-label="Selecionar todas"
+                              checked={ovPendentesConclusao.length > 0 && loteSelecionado.size === ovPendentesConclusao.length}
+                              ref={el => { if (el) el.indeterminate = loteSelecionado.size > 0 && loteSelecionado.size < ovPendentesConclusao.length }}
+                              onChange={alternarTodas}
+                              className="w-4 h-4 rounded border-amber-500/40 bg-transparent accent-green-500 cursor-pointer" />
+                            {loteSelecionado.size > 0
+                              ? `${loteSelecionado.size} de ${ovPendentesConclusao.length} selecionada(s)`
+                              : 'Selecione uma ou todas para concluir de uma vez'}
+                          </label>
+                          {loteSelecionado.size > 0 && (
+                            <button onClick={() => { setLoteErro(''); setLoteModalAberto(true) }}
+                              className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-green-500 text-[#07210f] hover:bg-green-400 transition-colors">
+                              <CheckCircle className="w-3.5 h-3.5" /> Concluir selecionadas ({loteSelecionado.size})
+                            </button>
+                          )}
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead>
                               <tr className="border-b border-amber-500/15">
+                                <th className="px-4 py-3 w-8" aria-hidden="true"></th>
                                 {['Data', 'Horário', 'Paciente', 'Em atraso', 'Ações'].map(h => (
                                   <th key={h} className="px-4 py-3 text-left text-xs text-amber-200/50 font-medium">{h}</th>
                                 ))}
@@ -1828,7 +1906,13 @@ export default function PainelTerapeuta() {
                             </thead>
                             <tbody>
                               {ovPendentesConclusao.map(s => (
-                                <tr key={s.id} className="border-b border-amber-500/10 hover:bg-amber-500/[0.04]">
+                                <tr key={s.id} className={`border-b border-amber-500/10 hover:bg-amber-500/[0.04] ${loteSelecionado.has(s.id) ? 'bg-amber-500/[0.06]' : ''}`}>
+                                  <td className="px-4 py-3 w-8">
+                                    <input type="checkbox" aria-label={`Selecionar ${s.paciente_nome}`}
+                                      checked={loteSelecionado.has(s.id)}
+                                      onChange={() => alternarSelecao(s.id)}
+                                      className="w-4 h-4 rounded border-amber-500/40 bg-transparent accent-green-500 cursor-pointer" />
+                                  </td>
                                   <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{s.data}</td>
                                   <td className="px-4 py-3 text-amber-300 font-medium">{s.horario}</td>
                                   <td className="px-4 py-3 text-white">
@@ -2592,6 +2676,18 @@ export default function PainelTerapeuta() {
         descricao="Digite sua senha para confirmar"
         loading={statusLoading}
         erro={statusErro}
+      />
+
+      {/* Confirmação do "concluir em lote" — mesma senha/token do botão individual */}
+      <SenhaModal
+        dispensarSenha={dispensaSenha}
+        isOpen={loteModalAberto}
+        onClose={() => { setLoteModalAberto(false); setLoteErro('') }}
+        onConfirm={handleConcluirLote}
+        titulo={`Concluir ${loteSelecionado.size} consulta(s)`}
+        descricao="Marca todas como entregues e gera a comissão. Digite sua senha para confirmar."
+        loading={loteLoading}
+        erro={loteErro}
       />
 
       {/* Modal remarcar — data primeiro (visão admin) */}
