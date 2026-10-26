@@ -356,8 +356,8 @@ function Conteudo() {
               <div className="mt-5 space-y-1.5">
                 <WaterRow label="Faturamento bruto" value={brl(d.faturamentoBruto)} strong />
                 <WaterRow label="− Taxas da plataforma" value={`− ${brl(d.taxas)}`} deduz />
-                <WaterRow label="− Investimento em tráfego (+13,85%)" value={`− ${brl(d.resultado.trafegoComAcrescimo)}`} deduz />
-                <WaterRow label={`− Impostos (${(d.funil.impostoRate * 100).toFixed(2).replace('.', ',')}%)`} value={`− ${brl(d.resultado.impostos)}`} deduz />
+                <WaterRow label="− Investimento em tráfego" value={`− ${brl(d.resultado.trafegoComAcrescimo)}`} deduz />
+                <WaterRow label="− Impostos" value={`− ${brl(d.resultado.impostos)}`} deduz />
                 <div className="my-2 h-px bg-white/10" />
                 <WaterRow label="= Total líquido após todas as deduções" value={brl(d.resultado.resultadoLiquido)} strong />
               </div>

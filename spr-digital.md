@@ -6967,7 +6967,7 @@ extraído para `lib/funis/cache-curto.ts`:
 - NÃO verificado no navegador logado: o clique do botão trazendo número novo na tela
   real depende da sessão de admin do dono (o endpoint é admin-only). Falta o dono
   clicar na aba logada pra fechar a prova de ponta a ponta.
-- NÃO deployado (vai junto com o funil + item 114.5).
+- NÃO deployado (vai junto com o funil + item 114.5). [ATUALIZADO 26/10/2026: deployado em 25/10 no 38c3bb7, ver 122.3.]
 
 
 ---
@@ -6976,7 +6976,7 @@ extraído para `lib/funis/cache-curto.ts`:
 
 Rodada com o dono em 23/10. Duas frentes: (A) mudancas na tela do dashboard de
 funis (seletor, aba Vendas, funil de produtos/esteira) e (B) atacar a lentidao em
-periodos grandes. Tudo na branch feature/performance-funis-2a, NAO deployado.
+periodos grandes. Tudo na branch feature/performance-funis-2a, NAO deployado. [ATUALIZADO 26/10/2026: deployado em 25/10 no 38c3bb7; branch apagada, ver 126.2.]
 Skills usadas: superpowers:systematic-debugging (achar a causa da lentidao),
 superpowers:brainstorming (desenhar o caminho), superpowers:test-driven-development
 (implementar as otimizacoes). Regra reforcada pelo dono (ver
@@ -7248,7 +7248,7 @@ DRE/fechamentos/moeda/lembretes feitas em paralelo (mesmo conteudo, SHA diferent
 
 ## 122.3. STATUS DO DEPLOY
 
-- PRONTO pra subir: main local = origin/main + feature do funil, fast-forward.
+- [ATUALIZADO 26/10/2026: JA PUBLICADO, `5d67a14..38c3bb7`, ver a linha ATUALIZACAO abaixo e 126.1.] Texto original: PRONTO pra subir: main local = origin/main + feature do funil, fast-forward.
 - O `git push origin main` (que dispara o build de producao na Vercel) foi BLOQUEADO
   pelo classificador de seguranca do Claude Code ("publicacao em producao"). Entao o
   PUSH fica a cargo do dono: rodar `git push origin main` no repo (ou autorizar).
@@ -7303,12 +7303,12 @@ a conta pelo proprio sistema (email leomirsantos@outlook.com) e funcionou.
 
 ## 123.3. STATUS + proximos
 
-- 123 FEITO na branch `feat/concluir-em-lote`. Verificado: tsc 0, 1002 testes, pagina
+- [ATUALIZADO 26/10/2026: DEPLOYADO no 8f36e26 (126.6); a branch foi apagada.] 123 FEITO na branch `feat/concluir-em-lote`. Verificado: tsc 0, 1002 testes, pagina
   do terapeuta compila e serve 200 no dev. Happy-path (clicar e concluir) NAO dirigido
   de proposito: o localhost aponta pro banco de PRODUCAO, concluir ali concluiria
   sessoes reais. Dono aprovou o visual em 25/10/2026. Aguardando deploy (so com ordem
   do dono).
-- Proximos (mesma leva, um de cada vez): (nº2) marcar quando o Diagnostico Guiado e do
+- [ATUALIZADO 26/10/2026: nº2 e nº3 ja feitas e deployadas = itens 124 e 125.] Proximos (mesma leva, um de cada vez): (nº2) marcar quando o Diagnostico Guiado e do
   LEOMIR no preview/overview/agenda da tela do Pedro; (nº3) falta "nao compareceu" ->
   sempre grava prontuario + o paciente perde a sessao (pacote avanca) + sai dos
   pendentes; comissao: Pedro nunca (recebe como socio), Denise/Leomir vao pra uma fila
@@ -7342,11 +7342,11 @@ quem continua vem do NOME DO PRODUTO (sem nome = Denise; com "Leomir" = Leomir).
 
 ## 124.2. STATUS
 
-- FEITO na branch `feat/concluir-em-lote` (mesma leva). tsc 0, 1009 testes. Provado
+- [ATUALIZADO 26/10/2026: DEPLOYADO no 8f36e26 (126.6).] FEITO na branch `feat/concluir-em-lote` (mesma leva). tsc 0, 1009 testes. Provado
   contra o banco real: produto "...Individual" (31 vendas) -> Denise; "...- Leomir"
   (4 vendas) -> Leomir. Dono aprovou em 25/10/2026 (inclusive o texto
   "continuidade: <nome>"). Aguardando deploy junto com a nº 1.
-- Falta a nº 3 (falta -> aprovacao de comissao) - ver item 123.3.
+- Falta a nº 3 (falta -> aprovacao de comissao) - ver item 123.3. [ATUALIZADO 26/10/2026: feita e deployada, item 125.]
 
 # 125. Falta (nao compareceu) -> aprovacao de comissao - v2 (26/10/2026)
 
@@ -7398,12 +7398,12 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   reescrita). tsc limpo, 1025 testes. Executado por subagentes (TDD, revisor por tarefa,
   review final opus). As invariantes de $ foram confirmadas: nada pago sem aprovacao,
   nada perdido, nada em dobro, falta negada nunca paga, furo do fechamento FECHADO.
-- MIGRATION v2 JA APLICADA EM PRODUCAO em 26/10/2026 (ver 125.6). O codigo ainda NAO foi
-  deployado. Ordem obrigatoria respeitada: banco antes do codigo (sem a coluna/tabela, o
+- MIGRATION v2 JA APLICADA EM PRODUCAO em 26/10/2026 (ver 125.6). O codigo foi DEPLOYADO no
+  8f36e26 em 26/10/2026 (ver 126.6). Ordem obrigatoria respeitada: banco antes do codigo (sem a coluna/tabela, o
   "nao compareceu" daria 500). Decisao de contagem (dono): a falta
   CONTA como sessao entregue (pacote avanca, entra em "entregues"/ticket medio/desconto de
   reembolso parcial) - intencional.
-- Robustez PÓS-DEPLOY (review final confirmou que NENHUM bloqueia; sem perda/dobra de $):
+- Robustez PENDENTE (o deploy ja aconteceu, entao isto e pendencia ABERTA agora; review final confirmou que NENHUM bloqueia; sem perda/dobra de $):
   anular cancelar falta por sessao_id SEMPRE (nao gated em status_consulta) + orfã em retry;
   no-show com falta pendente existente -> idempotente em vez de 409; guarda usa inicio (nao
   fim) + data_agendada null; iniciar aceitar cancelada; terapeuta nao resolvido + comissao>0
@@ -7516,8 +7516,8 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 
 ## 125.7. Proximos passos
 
-1. Dono testa a no 3 no localhost (que usa o banco de producao: marcar falta la e REAL).
-2. Deploy das tres juntas (123 concluir em lote, 124 continuidade do Diagnostico, 125 falta)
+1. Dono testa a no 3 no localhost (que usa o banco de producao: marcar falta la e REAL). [ATUALIZADO 26/10/2026: o deploy foi feito por decisao do dono SEM ele ter testado a nº 3 no localhost; o teste fica pra producao. Verificacao do Claude foi so tsc + 1025 testes + paginas 200 + consultas de leitura.]
+2. [ATUALIZADO 26/10/2026: FEITO no 8f36e26, ver 126.6.] Deploy das tres juntas (123 concluir em lote, 124 continuidade do Diagnostico, 125 falta)
    - branch `feat/concluir-em-lote`. O banco ja esta pronto.
 3. Rodada de robustez pos-deploy (lista em 125.3) + flag `eh_socio` antes de contratar outro
    terapeuta com "Pedro" no nome.
@@ -7575,3 +7575,42 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   (125.6). origin/main nao tinha andado desde a saida da branch (merge fast-forward).
 - Push feito pelo Claude em 26/10/2026: `38c3bb7..8f36e26 main -> main`. Conferido com `git fetch`: origin/main = local = 8f36e26. Vercel publica a partir da main.
 - Branch `feat/concluir-em-lote` apagada depois do merge (`git branch -d`, ja estava na main). Workspace do subagent-driven (`.superpowers/sdd/...`, fora do git) removido - o ledger dele foi resumido em 125.4 e 125.5.
+- Depois do deploy de codigo (8f36e26) subiu tambem o feb48e8 (SO documentacao: registra este
+  deploy). O 8f36e26 ja levou junto os commits de doc 8aa816b e e649dc1. Estado final:
+  origin/main = feb48e8.
+
+## 126.7. Duas formas diferentes de reconhecer o Pedro no codigo (atencao)
+
+- `lib/socio.ts` `ehPedroSocio(nome)`: normaliza acento/caixa e casa "pedro" como PALAVRA
+  INTEIRA (regex). Usado na falta (item 125) pra decidir se e o socio.
+- `pedroId` em `app/api/terapeutas/dashboard/route.ts`, `app/terapeutas/agenda/page.tsx` e
+  `app/terapeutas/[id]/page.tsx` (marca "continuidade" do item 124): usa
+  `nome.toLowerCase().includes('pedro')` - SUBSTRING, outro criterio (casaria "Alpedrosa").
+- Hoje da o mesmo resultado (so existe um Pedro). Antes de cadastrar outro terapeuta com
+  "Pedro"/"pedro" no nome: criar a flag `eh_socio` em `terapeutas` e trocar os dois.
+
+## 126.8. Auditoria independente do MD (26/10/2026)
+
+- Dono pediu garantia de que tudo esta documentado e que se use skill. Usado
+  `verification-before-completion` + um subagente auditor que NAO sabia o que tinha sido
+  escrito: cruzou `git diff 38c3bb7..origin/main` (19 commits) e os eventos fora do git
+  (login do Leomir, migration em producao, deploys, branches apagadas, decisoes do dono) com
+  os itens 122-126.
+- Resultado: nenhuma lacuna de codigo/comportamento. Achou 2 detalhes faltando (feb48e8 e as
+  duas formas de reconhecer o Pedro - registrados acima) e 11 status desatualizados
+  ("aguardando deploy", "na branch", "codigo nao deployado", "proximos passos" ja feitos).
+  Corrigidos marcando cada um com "[ATUALIZADO 26/10/2026: ...]" em vez de apagar o texto
+  original (o historico fica).
+- Registrado tambem: o deploy das 123/124/125 foi feito SEM o dono ter testado a nº 3 no
+  localhost (decisao dele); o teste fica em producao.
+
+# 127. Tela de funis: tirar o percentual escrito de Impostos e do trafego (26/10/2026)
+
+- Pedido do dono: "acho desnecessario falar o quanto de impostos e... somente a parte
+  escrita". Em `app/performance-funis/dashboard/page.tsx` (cascata de resultado):
+  - "− Impostos (12,85%)" -> "− Impostos" (o percentual vinha de `d.funil.impostoRate`;
+    na Imersao aparecia 3,85%).
+  - "− Investimento em tráfego (+13,85%)" -> "− Investimento em tráfego".
+- SO o rotulo mudou. Os valores e o calculo (imposto por funil e acrescimo de 13,85% no
+  trafego) continuam iguais. tsc limpo; pagina responde 200 no localhost.
+- STATUS: no localhost, aguardando o dono aprovar o visual pra deploy.
