@@ -3,8 +3,9 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeutas-auth'
 import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
-import { montarConclusaoDaSessao } from '@/lib/conclusao-da-sessao'
+import { montarConclusaoDaSessao, sessaoConcluivel } from '@/lib/conclusao-da-sessao'
 import { planejarFalta } from '@/lib/falta-comissao'
+import { ehPedroSocio } from '@/lib/socio'
 
 // Sessões de UMA venda, lidas na hora.
 //
@@ -93,15 +94,23 @@ export async function PATCH(req: NextRequest) {
     let ocorrenciaTitulo = ''
     let ocorrenciaDesc = ''
     let logAcao: string = acao
-    // Preenchido so no "nao compareceu" de Denise/Leomir: a comissao a mandar
-    // pra aprovacao do dono. Inserida depois das escritas comuns.
+    let desfazendoFalta = false
+    // Preenchido so no "nao compareceu" de contratado COM comissao: a comissao
+    // a mandar pra aprovacao do dono. Gravada ANTES de consumir a sessao.
     let faltaParaCriar: { comissaoValor: number } | null = null
 
     if (acao === 'iniciar') {
+      if (sessao.status === 'entregue') {
+        return NextResponse.json({ error: 'Sessão já finalizada.' }, { status: 409 })
+      }
       updateData = { status_consulta: 'em_atendimento', iniciado_em: now }
       ocorrenciaTitulo = `Consulta Iniciada — Sessão ${sessao.numero_sessao}`
       ocorrenciaDesc = `Consulta iniciada por ${usuario_nome} às ${horaLocal}`
     } else if (acao === 'concluir') {
+      // Igual ao lote: nao reconcluir uma sessao ja entregue/falta/cancelada.
+      if (!sessaoConcluivel(sessao.status)) {
+        return NextResponse.json({ error: 'Sessão já finalizada.' }, { status: 409 })
+      }
       const c = montarConclusaoDaSessao({
         numeroSessao: sessao.numero_sessao,
         usuarioNome: usuario_nome,
@@ -124,21 +133,36 @@ export async function PATCH(req: NextRequest) {
         entregue_confirmado_por: null,
         concluido_em: null,
       }
+      // Desfazendo uma falta: destrava a comissao (a falta pendente e
+      // cancelada depois da escrita da sessao).
+      if (sessao.status_consulta === 'nao_compareceu') {
+        updateData.comissao_bloqueada = false
+        desfazendoFalta = true
+      }
       ocorrenciaTitulo = `Sessão Anulada — Sessão ${sessao.numero_sessao}`
       ocorrenciaDesc = `Sessão anulada por ${usuario_nome}. Motivo: ${motivo}`
       logAcao = 'cancelamento'
     } else if (acao === 'nao_compareceu') {
-      const s = sessao as unknown as { status: string; comissao_valor: number | null; terapeutas: { nome: string } | null }
-      // Guarda com dinheiro: uma sessao ja finalizada nao pode ser remarcada
-      // como falta - senao zeraria de novo a comissao (inclusive uma ja
-      // aprovada) e tentaria criar uma segunda falta.
-      if (s.status === 'entregue') {
-        return NextResponse.json({ error: 'Esta sessão já foi finalizada; não dá pra marcar falta.' }, { status: 409 })
+      const s = sessao as unknown as {
+        status: string; comissao_valor: number | null; terapeuta_id: string | null
+        terapeutas: { nome: string } | null; data_agendada: string | null
       }
-      const ehPedro = (s.terapeutas?.nome ?? '').toLowerCase().includes('pedro')
+      // Guarda 1: so agendada/pendente. Cobre cancelada, reembolsada e ja
+      // entregue (senao travaria/duplicaria comissao ja resolvida).
+      if (!sessaoConcluivel(s.status)) {
+        return NextResponse.json({ error: 'Esta sessão não pode receber falta (já finalizada ou cancelada).' }, { status: 409 })
+      }
+      // Guarda 2: a sessao precisa ja ter acontecido. (fimEfetivoSessao pede
+      // duracao/grade que nao estao neste select; usa o inicio agendado.)
+      if (s.data_agendada && new Date(s.data_agendada).getTime() > agoraMs) {
+        return NextResponse.json({ error: 'A sessão ainda não aconteceu.' }, { status: 409 })
+      }
+      const terapeutaResolvido = !!(s.terapeuta_id && s.terapeutas?.nome)
+      const ehSocio = ehPedroSocio(s.terapeutas?.nome ?? '')
+      const comissaoValor = Number(s.comissao_valor ?? 0)
       const p = planejarFalta({
-        ehPedro,
-        comissaoValorSessao: Number(s.comissao_valor ?? 0),
+        ehSocio,
+        temComissao: comissaoValor > 0,
         numeroSessao: sessao.numero_sessao,
         usuarioNome: usuario_nome,
         agoraMs,
@@ -148,26 +172,31 @@ export async function PATCH(req: NextRequest) {
       ocorrenciaTitulo = p.ocorrenciaTitulo
       ocorrenciaDesc = p.ocorrenciaDesc
       logAcao = 'nao_compareceu'
-      if (p.criarFalta) faltaParaCriar = { comissaoValor: p.faltaComissaoValor }
+      // Sem terapeuta resolvido: consome e trava, mas nao manda aprovacao fantasma.
+      if (p.criarFalta && terapeutaResolvido) faltaParaCriar = { comissaoValor }
     } else {
       return NextResponse.json({ error: 'Ação inválida' }, { status: 400 })
     }
 
-    // Falta da Denise/Leomir: cria a aprovacao ANTES de consumir a sessao. Com
-    // dinheiro, a ordem importa: se a criacao da falta falhar (ex.: migration
-    // nao aplicada), nada e alterado - a comissao NUNCA fica zerada sem um
-    // registro pra restaurar. O valor original fica guardado na falta e volta
-    // pra sessao se o dono aprovar. `ignoreDuplicates` + unique(sessao_id): se
-    // ja existe falta pra esta sessao, nao recria (e o guarda de status entregue
-    // acima ja barra remarcar falta).
+    // Falta de contratado com comissao: grava/reabre a aprovacao ANTES de
+    // consumir a sessao. Com dinheiro, a ordem importa: se a escrita da falta
+    // falhar, a sessao NAO e alterada (a comissao nunca fica travada sem o
+    // registro). unique(sessao_id): se ja ha falta cancelada/negada (sessao
+    // anulada e remarcada), reabre como pendente; pendente/aprovada aborta.
     if (faltaParaCriar) {
       const s = sessao as unknown as {
         sale_id: string; terapeuta_id: string | null; terapeutas: { nome: string } | null
         paciente_nome: string; paciente_email: string | null
         numero_sessao: number; total_sessoes: number; data_agendada: string | null
       }
-      const { error: faltaErr } = await supabase.from('solicitacoes_falta_comissao').upsert({
-        sessao_id,
+      const { data: existente, error: buscaErr } = await supabase
+        .from('solicitacoes_falta_comissao')
+        .select('id,status')
+        .eq('sessao_id', sessao_id)
+        .maybeSingle()
+      if (buscaErr) return NextResponse.json({ error: buscaErr.message }, { status: 500 })
+
+      const dadosFalta = {
         sale_id: s.sale_id,
         terapeuta_id: s.terapeuta_id,
         terapeuta_nome: s.terapeutas?.nome ?? null,
@@ -180,12 +209,38 @@ export async function PATCH(req: NextRequest) {
         status: 'pendente',
         solicitado_por_nome: usuario_nome,
         solicitado_por_email: usuario_email,
-      }, { onConflict: 'sessao_id', ignoreDuplicates: true })
-      if (faltaErr) return NextResponse.json({ error: faltaErr.message }, { status: 500 })
+      }
+      if (!existente) {
+        const { error: insErr } = await supabase
+          .from('solicitacoes_falta_comissao')
+          .insert({ sessao_id, ...dadosFalta })
+        if (insErr) {
+          const conflito = (insErr as { code?: string }).code === '23505'
+          return NextResponse.json({ error: conflito ? 'Já existe uma falta registrada para esta sessão.' : insErr.message }, { status: conflito ? 409 : 500 })
+        }
+      } else if (existente.status === 'cancelado' || existente.status === 'negado') {
+        const { error: reabreErr } = await supabase
+          .from('solicitacoes_falta_comissao')
+          .update({ ...dadosFalta, decidido_por: null, decidido_em: null, created_at: now })
+          .eq('id', existente.id)
+          .in('status', ['cancelado', 'negado'])
+        if (reabreErr) return NextResponse.json({ error: reabreErr.message }, { status: 500 })
+      } else {
+        return NextResponse.json({ error: 'Já existe uma falta registrada para esta sessão.' }, { status: 409 })
+      }
     }
 
     const { error: updateErr } = await supabase.from('sessoes').update(updateData).eq('id', sessao_id)
     if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
+
+    if (desfazendoFalta) {
+      const { error: cancelaErr } = await supabase
+        .from('solicitacoes_falta_comissao')
+        .update({ status: 'cancelado' })
+        .eq('sessao_id', sessao_id)
+        .eq('status', 'pendente')
+      if (cancelaErr) return NextResponse.json({ error: cancelaErr.message }, { status: 500 })
+    }
 
     await supabase.from('ocorrencias_prontuario').insert({
       sale_id: sessao.sale_id,
@@ -208,7 +263,7 @@ export async function PATCH(req: NextRequest) {
       descricao: ocorrenciaDesc,
     })
 
-    // A falta ja foi criada acima (antes de consumir a sessao); aqui so o log.
+    // A falta ja foi gravada acima (antes de consumir a sessao); aqui so o log.
     if (faltaParaCriar) {
       await registrarAtividade({
         usuario_nome,
