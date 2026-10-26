@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarSenhaUsuario, registrarAtividade } from '@/lib/terapeutas-auth'
 import { entreguesDesdeOFechamento } from '@/lib/entregues-desde-o-fechamento'
+import { ehComissaoPagavel } from '@/lib/comissao-pagavel'
 import { lerIdentidade, terapeutaIdQueValeu } from '@/lib/identidade-da-chamada'
 
 type SessaoPendente = {
@@ -18,6 +19,7 @@ type SessaoPendente = {
   produto?: string | null
   /** So vem preenchido na busca de ENTREGUES, que inclui as ja pagas. */
   comissao_paga?: boolean | null
+  comissao_bloqueada?: boolean | null
 }
 
 // O produto nao esta em `sessoes` - ele vive em `sales`. A tela agrupa as
@@ -35,7 +37,7 @@ async function todasAsSessoes(
   aplicar: (q: ReturnType<ReturnType<typeof getSupabaseAdmin>['from']>['select']) => unknown,
 ): Promise<SessaoPendente[]> {
   const supabase = getSupabaseAdmin()
-  const COLUNAS = 'id,sale_id,numero_sessao,total_sessoes,comissao_valor,comissao_paga,data_entrega,data_agendada,paciente_nome'
+  const COLUNAS = 'id,sale_id,numero_sessao,total_sessoes,comissao_valor,comissao_paga,comissao_bloqueada,data_entrega,data_agendada,paciente_nome'
   const acc: SessaoPendente[] = []
   let cursor = ''
   for (;;) {
@@ -68,7 +70,7 @@ async function buscarPendentes(terapeutaId: string): Promise<{ sessoes: SessaoPe
   const cruas = await todasAsSessoes(terapeutaId, q =>
     (q as never as { eq: (c: string, v: unknown) => unknown }).eq('status', 'entregue'))
   const sessoes = await comProduto(
-    cruas.filter(s => !s.comissao_paga)
+    cruas.filter(s => ehComissaoPagavel({ status: 'entregue', comissaoPaga: s.comissao_paga, comissaoBloqueada: s.comissao_bloqueada }))
       .sort((a, b) => String(a.data_entrega ?? '').localeCompare(String(b.data_entrega ?? ''))))
   const total = sessoes.reduce((a, s) => a + (s.comissao_valor || 0), 0)
   return { sessoes, total }

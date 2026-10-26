@@ -6,6 +6,7 @@ import { sessoesDoNomeDaOferta } from '@/lib/sessoes-da-oferta'
 import { formatoDaVenda } from '@/lib/diagnostico-guiado'
 import { rotuloDiagnostico } from '@/lib/etiqueta-diagnostico'
 import { continuidadeDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
+import { ehComissaoPagavel } from '@/lib/comissao-pagavel'
 import { ehPendenteDeAgendamento, COLUNAS_DO_DASHBOARD } from '@/lib/vendas-por-situacao'
 import { lerIdentidade, terapeutaIdQueValeu } from '@/lib/identidade-da-chamada'
 
@@ -36,6 +37,7 @@ type SessaoRow = {
   status: string
   comissao_valor: number
   comissao_paga: boolean
+  comissao_bloqueada?: boolean | null
   data_agendada: string | null
   paciente_nome: string
   link_meet: string | null
@@ -284,7 +286,7 @@ export async function GET(req: NextRequest) {
         const batch = saleIds.slice(i, i + BATCH)
         const { data } = await supabase
           .from('sessoes')
-          .select('id,sale_id,terapeuta_id,status,comissao_valor,comissao_paga,data_agendada,paciente_nome,link_meet,total_sessoes')
+          .select('id,sale_id,terapeuta_id,status,comissao_valor,comissao_paga,comissao_bloqueada,data_agendada,paciente_nome,link_meet,total_sessoes')
           .in('sale_id', batch)
         if (data) sessoes.push(...(data as SessaoRow[]))
       }
@@ -404,7 +406,7 @@ export async function GET(req: NextRequest) {
     // Denominador também sem manual: dividir a receita real por um total de
     // vendas que inclui as manuais derrubaria o ticket médio artificialmente.
     const ticket_medio = vendasFaturamentoEscopo.length > 0 ? faturamento_bruto / vendasFaturamentoEscopo.length : 0
-    const comissao_gerada = sessoesFiltradas.filter(s => s.status === 'entregue' && !s.comissao_paga).reduce((a, s) => a + (s.comissao_valor || 0), 0)
+    const comissao_gerada = sessoesFiltradas.filter(s => ehComissaoPagavel({ status: s.status, comissaoPaga: s.comissao_paga, comissaoBloqueada: s.comissao_bloqueada })).reduce((a, s) => a + (s.comissao_valor || 0), 0)
     const comissao_futura = sessoesFiltradas.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesFiltrado.comissao
     // Comissão total sobre todas as sessões vendidas no período (entregues + futuras + ainda sem sessão criada), independente de já ter sido paga —
     // usado no card "Faturamento Líquido" da visão do próprio terapeuta.
@@ -480,7 +482,7 @@ export async function GET(req: NextRequest) {
           sessoes_entregues: ts.filter(s => s.status === 'entregue').length,
           sessoes_futuras: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').length + pendentesT.sessoes,
           faturamento_bruto: fat_bruto_t,
-          comissao_gerada: ts.filter(s => s.status === 'entregue').reduce((a, s) => a + (s.comissao_valor || 0), 0),
+          comissao_gerada: ts.filter(s => ehComissaoPagavel({ status: s.status, comissaoPaga: false, comissaoBloqueada: s.comissao_bloqueada })).reduce((a, s) => a + (s.comissao_valor || 0), 0),
           comissao_futura: ts.filter(s => s.status === 'pendente' || s.status === 'agendada').reduce((a, s) => a + (s.comissao_valor || 0), 0) + pendentesT.comissao,
           proxima_consulta: proximas[0]?.data_agendada ?? null,
         }
