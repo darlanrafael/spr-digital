@@ -7813,4 +7813,8 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   caixinha, liberado depois, e o POST sai com `confirmou_sessoes_proximas: true`. Print em
   scratchpad/pw/proximas-2.png. O bloco do Diagnostico usa o mesmo componente, mas nao foi
   fotografado (simular o formato exige mais dado falso).
-- Falta: aprovacao visual do dono, `next build`, deploy.
+- **No ar em 29/10/2026**: aprovado pelo dono, `next build` passou, commit `1f114e0` em main,
+  Vercel = success, e o texto "Confirmo que o paciente quer essas sessoes proximas" conferido no
+  JS de producao. O push foi feito por mim depois que o dono mandou o comando (o `!` dele no
+  terminal zsh nao executa nada - `!` e expansao de historico no zsh, so funciona no chat do
+  Claude Code).
