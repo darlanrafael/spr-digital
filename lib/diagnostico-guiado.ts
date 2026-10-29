@@ -237,6 +237,11 @@ export type AvisosDasDatas = {
    * perto demais para caber uma consulta.
    */
   duplicadas: number[]
+  /**
+   * Sessoes no mesmo dia ou a menos de 7 dias de outra do pacote. A tela avisa
+   * e pede confirmacao (29/10/2026); confirmado, agenda.
+   */
+  proximas: number[]
 }
 
 /**
@@ -305,7 +310,17 @@ export function avisosDasDatas(datas: (string | null | undefined)[]): AvisosDasD
     if (colide) duplicadas.push(x.numero)
   }
 
-  return { foraDaRegua, foraDeOrdem, invalidas, duplicadas }
+  // Sessoes proximas: mesmo dia ou menos de 7 dias de outra sessao do pacote.
+  // Entrou em 29/10/2026 no lugar da trava de 1 hora: o dono liberou sessoes
+  // coladas, mas quer que a tela avise e peca confirmacao. Conta por DIA, como
+  // o aviso da regua, para 7 dias com outro horario nao virar ruido.
+  const proximas: number[] = []
+  for (const x of validas) {
+    const perto = validas.some(y => y.numero < x.numero && Math.round(Math.abs(x.t - y.t) / (24 * 60 * 60 * 1000)) < 7)
+    if (perto) proximas.push(x.numero)
+  }
+
+  return { foraDaRegua, foraDeOrdem, invalidas, duplicadas, proximas }
 }
 
 /**

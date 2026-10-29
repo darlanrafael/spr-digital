@@ -24,9 +24,12 @@ const UM_ANO_MS = 366 * 24 * 60 * 60 * 1000
 export function validarDatasDoPacote({
   datasISO,
   ehDiagnostico,
+  confirmouProximas = false,
 }: {
   datasISO: string[]
   ehDiagnostico: boolean
+  /** O comercial marcou na tela que o paciente quer sessoes coladas (29/10/2026). */
+  confirmouProximas?: boolean
 }): ProblemaDatas | null {
   const ms = datasISO.map(iso => new Date(iso).getTime())
 
@@ -49,7 +52,12 @@ export function validarDatasDoPacote({
   const sobrepostas = ms
     .map((t, i) => ({ t, numero: i + 1 }))
     .filter((x, i, arr) => arr.some((y, j) => j < i && Math.abs(x.t - y.t) < minimoMs))
-  if (sobrepostas.length > 0) return { tipo: 'sobrepostas', sessoes: sobrepostas.map(x => x.numero) }
+  //
+  // Desde 29/10/2026 deixou de ser trava fixa: o dono liberou sessoes seguidas
+  // ("a paciente quer duas, uma na seguida da outra"), desde que quem agenda
+  // confirme na tela. Sem a confirmacao continua recusando - e o que garante
+  // que ninguem agenda colado sem ter visto o aviso.
+  if (sobrepostas.length > 0 && !confirmouProximas) return { tipo: 'sobrepostas', sessoes: sobrepostas.map(x => x.numero) }
 
   if (!ehDiagnostico) return null
 
@@ -91,7 +99,7 @@ export function mensagemDoProblema(p: ProblemaDatas): { texto: string; status: 4
       return { texto: `Data inválida na sessão ${lista}. Confira o ano e preencha todos os campos.`, status: 400 }
     case 'sobrepostas':
       return {
-        texto: `${plural ? 'As sessões' : 'A sessão'} ${lista} ${plural ? 'ficam' : 'fica'} em cima de outra sessão deste pacote (menos de ${MINUTOS_MINIMOS_ENTRE_SESSOES} minutos de diferença).`,
+        texto: `${plural ? 'As sessões' : 'A sessão'} ${lista} ${plural ? 'ficam' : 'fica'} em cima de outra sessão deste pacote (menos de ${MINUTOS_MINIMOS_ENTRE_SESSOES} minutos de diferença). Se o paciente quer assim, marque a confirmação de sessões próximas e agende de novo.`,
         status: 409,
       }
     case 'fora_de_ordem':

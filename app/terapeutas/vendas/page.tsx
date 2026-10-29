@@ -375,6 +375,9 @@ export default function TerapeutasVendas() {
   const [agendarDataPrimeira, setAgendarDataPrimeira] = useState('')
   const [agendarNumSessoesInput, setAgendarNumSessoesInput] = useState('')
   const [agendarDatasEditadas, setAgendarDatasEditadas] = useState<string[]>([])
+  // Confirmacao de sessoes proximas (mesmo dia ou < 7 dias). Liberado pelo dono
+  // em 29/10/2026 no lugar da trava de 1 hora: avisa, pede a caixinha, agenda.
+  const [agendarConfirmouProximas, setAgendarConfirmouProximas] = useState(false)
   const [agendarSenhaOpen, setAgendarSenhaOpen] = useState(false)
   const [agendarLoading, setAgendarLoading] = useState(false)
   const [agendarErro, setAgendarErro] = useState('')
@@ -629,7 +632,38 @@ export default function TerapeutasVendas() {
   // mais usado, não o outro.
   const agendarAvisosDatas = agendarDatasEditadas.length > 1
     ? avisosDasDatas(agendarDatasEditadas)
-    : { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] }
+    : { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [], proximas: [] }
+  // Cada sessao proxima com a sessao anterior de quem ela esta perto, pra
+  // mensagem dizer "sessao 2 no mesmo dia da sessao 1". As datas vem do campo
+  // datetime-local ("2026-10-29T12:40"), entao o dia e o comeco da string.
+  const agendarParesProximos = agendarAvisosDatas.proximas.map(n => {
+    const atual = agendarDatasEditadas[n - 1] ?? ''
+    const tAtual = new Date(atual).getTime()
+    const m = agendarDatasEditadas.findIndex((d, i) => i < n - 1 && !!d
+      && Math.round(Math.abs(new Date(d).getTime() - tAtual) / 86_400_000) < 7) + 1
+    const anterior = agendarDatasEditadas[m - 1] ?? ''
+    const mesmoDia = atual.slice(0, 10) === anterior.slice(0, 10)
+    const dias = Math.round(Math.abs(tAtual - new Date(anterior).getTime()) / 86_400_000)
+    return { n, m, quando: mesmoDia ? 'no mesmo dia da' : `a ${dias} dia${dias === 1 ? '' : 's'} da` }
+  })
+  const chaveProximas = agendarAvisosDatas.proximas.join(',')
+  // Mudou quais sessoes estao proximas (ou trocou de venda): a confirmacao
+  // anterior nao vale pro cenario novo.
+  useEffect(() => { setAgendarConfirmouProximas(false) }, [chaveProximas, agendarVendaId])
+  const blocoProximas = agendarAvisosDatas.proximas.length > 0 ? (
+    <div className="mt-2 rounded-lg border border-amber-400/30 bg-amber-400/10 p-2.5">
+      <p className="text-[11px] text-amber-300">
+        Sessões próximas: {agendarParesProximos.map(p => `sessão ${p.n} ${p.quando} sessão ${p.m}`).join('; ')}. Confirme se é isso mesmo.
+      </p>
+      <label className="mt-2 flex items-center gap-2 text-[11px] text-amber-200 cursor-pointer">
+        <input type="checkbox" checked={agendarConfirmouProximas}
+          onChange={e => setAgendarConfirmouProximas(e.target.checked)}
+          className="accent-amber-400" />
+        Confirmo que o paciente quer essas sessões próximas
+      </label>
+    </div>
+  ) : null
+  const proximasPendentes = agendarAvisosDatas.proximas.length > 0 && !agendarConfirmouProximas
 
   // Calculado antes do resumo: quantas sessões o pacote novo vai ter decide se
   // a numeração 1..N colide com sessão que sobrevive ao delete (cancelada, por
@@ -913,6 +947,8 @@ export default function TerapeutasVendas() {
         // pode ser usado. A rota só aceita quando TODOS os conflitos são
         // compromissos: consulta de outro paciente continua recusada.
         ignorar_compromissos: ignorarCompromissos || undefined,
+        // Sessoes coladas so passam na rota com esta confirmacao (29/10/2026).
+        confirmou_sessoes_proximas: agendarConfirmouProximas || undefined,
         usuario_email: adminEmail, senha,
       }),
     })
@@ -1637,11 +1673,7 @@ export default function TerapeutasVendas() {
                         Preencha a data {agendarAvisosDatas.invalidas.length === 1 ? 'da sessão' : 'das sessões'} {agendarAvisosDatas.invalidas.join(', ')} para poder confirmar.
                       </p>
                     )}
-                    {agendarAvisosDatas.duplicadas.length > 0 && (
-                      <p className="text-[11px] text-red-400 mt-2">
-                        {agendarAvisosDatas.duplicadas.length === 1 ? `A sessão ${agendarAvisosDatas.duplicadas[0]} está` : `As sessões ${agendarAvisosDatas.duplicadas.join(', ')} estão`} em cima de outra sessão deste pacote (menos de 1 hora de diferença). O paciente receberia dois convites sobrepostos.
-                      </p>
-                    )}
+                    {blocoProximas}
                     {agendarAvisosDatas.foraDeOrdem.length > 0 && (
                       <p className="text-[11px] text-amber-400 mt-2">
                         Fora de ordem: {agendarAvisosDatas.foraDeOrdem.length === 1
@@ -1681,11 +1713,7 @@ export default function TerapeutasVendas() {
                         Preencha a data {agendarAvisosDatas.invalidas.length === 1 ? 'da sessão' : 'das sessões'} {agendarAvisosDatas.invalidas.join(', ')} para poder confirmar.
                       </p>
                     )}
-                    {agendarAvisosDatas.duplicadas.length > 0 && (
-                      <p className="text-[11px] text-red-400 mt-2">
-                        {agendarAvisosDatas.duplicadas.length === 1 ? `A sessão ${agendarAvisosDatas.duplicadas[0]} fica` : `As sessões ${agendarAvisosDatas.duplicadas.join(', ')} ficam`} em cima de outra sessão deste pacote (menos de 1 hora de diferença).
-                      </p>
-                    )}
+                    {blocoProximas}
                   </div>
                 )
               )}
@@ -1807,7 +1835,7 @@ export default function TerapeutasVendas() {
               {/* Travado enquanto a releitura das sessões não volta: confirmar
                   antes disso é decidir com o dado do carregamento da página,
                   que é exatamente o que essa releitura existe pra evitar. */}
-              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || agendarAvisosDatas.duplicadas.length > 0 || decisaoPacote.travado} onClick={() => {
+              <button disabled={agendarResumo.bloqueado || agendarSessoesCarregando || agendarAvisosDatas.invalidas.length > 0 || proximasPendentes || decisaoPacote.travado} onClick={() => {
                 if (agendarDiagnostico && !pedroTerapeuta) {
                   setAgendarErro('Pedro precisa estar cadastrado como terapeuta ativo para montar o pacote do Diagnóstico Guiado.')
                   return
@@ -1827,8 +1855,8 @@ export default function TerapeutasVendas() {
                   setAgendarErro(`Preencha a data ${agendarAvisosDatas.invalidas.length === 1 ? 'da sessão' : 'das sessões'} ${agendarAvisosDatas.invalidas.join(', ')}.`)
                   return
                 }
-                if (agendarAvisosDatas.duplicadas.length > 0) {
-                  setAgendarErro(`As sessões ${agendarAvisosDatas.duplicadas.join(', ')} ficam em cima de outra sessão deste pacote, com menos de 1 hora de diferença. Ajuste antes de confirmar.`)
+                if (proximasPendentes) {
+                  setAgendarErro('Marque a confirmação das sessões próximas para agendar.')
                   return
                 }
                 // A rota recusa esse caso com 400; a tela para antes pra

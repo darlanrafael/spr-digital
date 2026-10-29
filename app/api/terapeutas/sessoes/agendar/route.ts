@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, datas_sessoes, ignorar_compromissos, usuario_email, senha, token } = body as {
+  const { sale_id, terapeuta_id, data_primeira_sessao, numero_sessoes, datas_sessoes, ignorar_compromissos, confirmou_sessoes_proximas, usuario_email, senha, token } = body as {
     sale_id: string
     terapeuta_id: string
     data_primeira_sessao: string
@@ -36,6 +36,8 @@ export async function POST(req: NextRequest) {
     datas_sessoes?: string[]
     /** Confirmação explícita de que o horário bloqueado pela própria equipe pode ser usado. */
     ignorar_compromissos?: boolean
+    /** O comercial marcou na tela que o paciente quer sessoes coladas (29/10/2026). */
+    confirmou_sessoes_proximas?: boolean
     usuario_email: string
     senha?: string
     token?: string
@@ -231,7 +233,7 @@ export async function POST(req: NextRequest) {
   // dentro do handler e regra sem teste - e foi assim que passou o defeito em
   // que limpar um campo de data derrubava a tela inteira.
   if (datasExplicitas) {
-    const problema = validarDatasDoPacote({ datasISO: datasExplicitas, ehDiagnostico: !!diagnostico })
+    const problema = validarDatasDoPacote({ datasISO: datasExplicitas, ehDiagnostico: !!diagnostico, confirmouProximas: confirmou_sessoes_proximas === true })
     if (problema) {
       const { texto, status } = mensagemDoProblema(problema)
       return NextResponse.json({ error: texto }, { status })

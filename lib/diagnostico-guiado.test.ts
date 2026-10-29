@@ -281,7 +281,7 @@ test('MENOR: mudar so o horario nao dispara o aviso de intervalo', () => {
 
 test('pacote inteiro na regua nao gera aviso nenhum', () => {
   const a = avisosDasDatas(['2026-09-02T14:20', '2026-09-09T14:20', '2026-09-16T14:20'])
-  assert.deepEqual(a, { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] })
+  assert.deepEqual(a, { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [], proximas: [] })
 })
 
 test('intervalo de dias diferente de 7 e apontado', () => {
@@ -296,7 +296,7 @@ test('data invalida no meio nao impede o aviso das demais', () => {
 })
 
 test('lista vazia e lista de um item nao quebram', () => {
-  assert.deepEqual(avisosDasDatas([]), { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [] })
+  assert.deepEqual(avisosDasDatas([]), { foraDaRegua: [], foraDeOrdem: [], invalidas: [], duplicadas: [], proximas: [] })
   assert.deepEqual(avisosDasDatas(['2026-09-02T14:20']).foraDaRegua, [])
 })
 
@@ -328,6 +328,40 @@ test('sobreposicao continua valendo com as datas fora de ordem', () => {
   const a = avisosDasDatas(['2026-09-02T14:00', '2026-09-20T14:30', '2026-09-20T14:00'])
   assert.deepEqual(a.duplicadas, [3])
   assert.deepEqual(a.foraDeOrdem, [3])
+})
+
+// ── Sessoes proximas (29/10/2026) ───────────────────────────────────────────
+// O dono liberou sessoes coladas ("a paciente quer duas seguidas"): no lugar
+// da trava de 1 hora, a tela AVISA quando duas sessoes caem no mesmo dia ou a
+// menos de 7 dias e pede confirmacao. `proximas` diz quais sessoes avisar.
+test('CASO REAL: duas sessoes seguidas no mesmo dia (12:40 e 13:30) sao proximas', () => {
+  const a = avisosDasDatas(['2026-10-29T12:40', '2026-10-29T13:30', '2026-11-06T17:30'])
+  assert.deepEqual(a.proximas, [2])
+})
+
+test('3 dias de diferenca e proxima', () => {
+  const a = avisosDasDatas(['2026-10-29T12:40', '2026-11-01T12:40'])
+  assert.deepEqual(a.proximas, [2])
+})
+
+test('exatamente 7 dias NAO e proxima', () => {
+  const a = avisosDasDatas(['2026-10-29T12:40', '2026-11-05T12:40'])
+  assert.deepEqual(a.proximas, [])
+})
+
+test('7 dias com horario diferente NAO e proxima (conta por dia)', () => {
+  const a = avisosDasDatas(['2026-10-29T12:40', '2026-11-05T10:00', '2026-11-12T15:00'])
+  assert.deepEqual(a.proximas, [])
+})
+
+test('proxima vale mesmo com a data fora de ordem na lista', () => {
+  const a = avisosDasDatas(['2026-10-29T12:40', '2026-11-20T12:40', '2026-11-18T12:40'])
+  assert.deepEqual(a.proximas, [3])
+})
+
+test('campo vazio nao vira sessao proxima', () => {
+  const a = avisosDasDatas(['2026-10-29T12:40', '', '2026-10-30T12:40'])
+  assert.deepEqual(a.proximas, [3])
 })
 
 // ── O formato pelo NOME da oferta (Kiwify) ──────────────────────────────────

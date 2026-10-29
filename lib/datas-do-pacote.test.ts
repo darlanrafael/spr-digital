@@ -42,6 +42,27 @@ test('SOBREPOSICAO: 14:00 e 14:30 no mesmo dia sao recusadas', () => {
   assert.equal(mensagemDoProblema(p!).status, 409)
 })
 
+test('SOBREPOSICAO CONFIRMADA: com a confirmacao do comercial, passa (29/10/2026)', () => {
+  // O dono liberou sessoes coladas, desde que quem agenda confirme na tela.
+  const datasISO = [iso('2026-10-29T15:40Z'), iso('2026-10-29T16:30Z'), iso('2026-11-06T20:30Z')]
+  assert.equal(validarDatasDoPacote({ datasISO, ehDiagnostico: true, confirmouProximas: true }), null)
+  assert.equal(validarDatasDoPacote({ datasISO, ehDiagnostico: false, confirmouProximas: true }), null)
+})
+
+test('SOBREPOSICAO SEM confirmacao continua recusada, e a mensagem pede a confirmacao', () => {
+  const datasISO = [iso('2026-10-29T15:40Z'), iso('2026-10-29T16:30Z')]
+  const p = validarDatasDoPacote({ datasISO, ehDiagnostico: true, confirmouProximas: false })
+  assert.equal(p?.tipo, 'sobrepostas')
+  assert.match(mensagemDoProblema(p!).texto, /confirm/i)
+})
+
+test('a confirmacao NAO libera data fora de ordem no Diagnostico', () => {
+  const datasISO = [iso('2026-10-29T15:40Z'), iso('2026-10-29T16:30Z'), iso('2026-12-27T20:30Z'), iso('2026-12-04T20:30Z')]
+  const p = validarDatasDoPacote({ datasISO, ehDiagnostico: true, confirmouProximas: true })
+  assert.equal(p?.tipo, 'fora_de_ordem')
+  assert.deepEqual(p?.sessoes, [4])
+})
+
 test('exatamente 60 minutos passa', () => {
   assert.equal(ok([iso('2026-11-10T14:00Z'), iso('2026-11-10T15:00Z')]), null)
 })

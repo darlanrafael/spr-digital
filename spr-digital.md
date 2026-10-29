@@ -7724,3 +7724,93 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 - Verificado: tsc limpo, 1035 testes, `next build` de producao passou (rota sumiu da lista).
   O tsc acusou de inicio um erro em `.next/types/validator.ts` - arquivo GERADO pelo dev server
   que ainda citava a pagina apagada; sumiu quando o localhost se atualizou (nao era codigo).
+
+# 133. Venda de encaixe da Priscilla (Pedro) sem aviso no grupo - investigado (26/10/2026)
+
+- Queixa do dono: o Felipe fez uma venda de encaixe hoje pro Pedro e nao foi mensagem no grupo.
+- O que o banco mostra (so leitura): venda `2a511db3-6553-48de-86a0-bf1e68c52535`, "Mentoria -
+  Individual Pedro Roncada", paciente Priscilla, agendada pelo Felipe Vieira as 10:22 BRT com
+  **2 sessoes**: 26/10 12:40 BRT (hoje) e 02/11 12:40 BRT.
+- Causa: o aviso imediato de encaixe (`notificarEncaixe` em
+  app/api/terapeutas/sessoes/agendar/route.ts) so dispara quando o agendamento cria
+  **exatamente 1 sessao** (`totalCriado === 1`) com data de hoje. Como foram 2, nao disparou.
+  Nao e falha de n8n/Z-API: a regra foi feita assim de proposito (item 0.1.16), porque
+  agendar pacote inteiro com datas de hoje (refazer historico) mandava alarme falso.
+- O grupo recebeu o lembrete NORMAL de 30 min: `lembrete_grupo_30min_enviado_em` =
+  12:10 BRT e `lembrete_paciente_30min_enviado_em` = 12:10 BRT. So faltou o aviso na hora da venda.
+- Status: aguardando decisao do dono se o encaixe deve avisar tambem em pacote (venda nova,
+  sem sessao anterior, com a 1a sessao hoje). Nada alterado no codigo.
+
+# 134. "Paciente nao compareceu" dava erro pra todo terapeuta - causa achada (27/10/2026)
+
+- Queixa: terapeuta clica em "nao compareceu", digita a senha e da erro.
+- Causa (provada no banco, numa transacao desfeita com rollback): o PATCH
+  /api/terapeutas/sessoes grava `status_consulta = 'nao_compareceu'` (lib/falta-comissao.ts),
+  mas o check constraint `sessoes_status_consulta_check` so aceita
+  aguardando/em_atendimento/concluida/cancelada/remarcada. O update bate em **23514** e a tela
+  mostra o erro. A migracao 20261026 (falta v2) atualizou os checks de `atividades_log` e
+  `ocorrencias_prontuario`, mas esqueceu o de `sessoes.status_consulta`. Nenhuma falta foi
+  gravada no banco ate hoje (0 sessoes com nao_compareceu, 0 solicitacoes de falta).
+- Por que os testes nao pegaram: os testes sao de funcao pura; check constraint so aparece
+  gravando no banco de verdade. Na entrega da v2 nao houve teste ponta a ponta de escrita
+  (regra de nao clicar acoes que gravam no banco de producao pelo localhost).
+- Sem estrago: a solicitacao de falta (Denise/Leomir) e gravada ANTES do update da sessao; se
+  ela tivesse entrado e o update falhado, ficaria uma pendente orfa em Aprovacoes. Conferido:
+  tabela vazia, nenhuma orfa. Ponto de robustez anotado: desfazer a solicitacao se o update da
+  sessao falhar.
+- Correcao: migracao `supabase/migrations/20261027000000_status_consulta_nao_compareceu.sql`
+  (acrescenta 'nao_compareceu' ao check). Aplicacao no banco de producao BLOQUEADA pela trava
+  de seguranca do Claude Code - aguardando autorizacao do dono.
+- **APLICADA em 29/10/2026 pelo dono**, no SQL Editor do Supabase (a trava do Claude Code
+  bloqueia escrita no banco de producao). Conferido: o check agora lista 'nao_compareceu', e a
+  mesma gravacao que dava 23514 passou numa transacao desfeita com rollback (sessao intacta
+  depois: agendada/aguardando).
+
+# 135. 28/10/2026 - nenhuma mensagem de WhatsApp: assinatura da Z-API venceu
+
+- Sintoma: nada no grupo nem no privado na manha de 28/10.
+- Nao e o sistema nem o n8n: `healthz` 200, workflow "Lembrete 30 Minutos" rodando a cada
+  5 min com status success, achando as sessoes certas (ex.: Mauro Marcheluzzo 09:00 com a
+  Denise, Eduardo Miranda 09:40 com o Pedro). O no "Enviar Z-API" volta **400:
+  "To continue sending a message, you must subscribe to this instance again"** - a
+  instancia da Z-API esta sem assinatura.
+- Ultimo envio com sucesso gravado no banco: 27/10 18:50 BRT. 10 sessoes marcadas pra 28/10.
+- Como o envio falha, o lembrete NAO e marcado como enviado. Mas os crons so olham a frente
+  (30 min: as proximas; vespera: amanha), entao o que ja passou nao e reenviado sozinho
+  depois de renovar.
+- Mesmo ponto cego do item 33: o "Alerta Admin" tambem manda pela Z-API, entao nao avisou.
+- Resolucao: renovar a assinatura da instancia no painel da Z-API (acao do dono).
+- **Resolvido 28/10 ~09:50 BRT**: dono pagou a Z-API. Status da instancia `connected: true`,
+  primeiro envio OK na execucao de 09:50 BRT (Samile 10:00, grupo + paciente).
+- Perdas: as 10 sessoes de 28/10 ficaram SEM lembrete de vespera. Sem o de 30 min: Mauro
+  Marcheluzzo (09:00, Denise) e Eduardo Miranda (09:40, Pedro). Da 10:30 em diante o 30 min
+  sai normal pelo cron.
+
+# 136. Sessoes proximas no agendamento: trava de 1 hora virou aviso com confirmacao (29/10/2026) - EM APROVACAO NO LOCALHOST
+
+- Pedido do dono (print do Felipe, Diagnostico Formato 8): paciente quer duas sessoes
+  seguidas (29/10 12:40 e 13:30) e a tela bloqueava ("fica em cima de outra sessao deste
+  pacote, menos de 1 hora"). Decisao: tirar a trava; avisar quando duas sessoes caem no mesmo
+  dia ou a menos de 7 dias e pedir confirmacao; confirmado, agenda e vai pra agenda.
+- O que mudou:
+  - `lib/diagnostico-guiado.ts` `avisosDasDatas`: campo novo `proximas` (sessoes no mesmo dia
+    ou a < 7 dias de outra do pacote, contando por DIA, como o aviso da regua).
+    `duplicadas` (< 60 min) continua calculado, mas a tela nao bloqueia mais por ele.
+  - `lib/datas-do-pacote.ts` `validarDatasDoPacote`: parametro `confirmouProximas`. Sobreposicao
+    (< 60 min) so e recusada SEM a confirmacao; a mensagem agora diz pra marcar a confirmacao.
+    Fora de ordem no Diagnostico CONTINUA recusado mesmo confirmado (teste cobre).
+  - `app/api/terapeutas/sessoes/agendar/route.ts`: le `confirmou_sessoes_proximas` do corpo.
+  - `app/terapeutas/vendas/page.tsx`: o aviso vermelho virou bloco amarelo "Sessoes proximas:
+    sessao 2 no mesmo dia da sessao 1..." com a caixinha "Confirmo que o paciente quer essas
+    sessoes proximas". Botao "Confirmar agendamento" travado ate marcar. A caixinha desmarca
+    sozinha se mudar quais sessoes estao proximas ou trocar de venda. Vale pro Diagnostico e
+    pros demais produtos (os dois blocos de datas).
+- Atencao no print do dono: sessao 6 = 27/12 e sessao 7 = 04/12 (fora de ordem, deve ser
+  27/11). No Diagnostico isso continua recusado pelo servidor. A tela mostra so aviso amarelo
+  ("Fora de ordem... confira") - inconsistencia antiga, nao mexida.
+- Verificado: 9 testes novos (falharam antes, passam depois), `npm test` 1044 passando,
+  `tsc` limpo. No navegador (Chromium, API toda simulada, nada gravado): botao travado antes da
+  caixinha, liberado depois, e o POST sai com `confirmou_sessoes_proximas: true`. Print em
+  scratchpad/pw/proximas-2.png. O bloco do Diagnostico usa o mesmo componente, mas nao foi
+  fotografado (simular o formato exige mais dado falso).
+- Falta: aprovacao visual do dono, `next build`, deploy.
