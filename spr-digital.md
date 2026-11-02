@@ -7891,3 +7891,10 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
 
 - **Deploy de 137 + 139 (01/11/2026):** dono aprovou deploy unico. `tsc` limpo, 1055 testes,
   `next build` ok antes do push.
+
+# 140. Item 130 (seletor de periodo da aba Funis no Safari) - FECHADO (01/11/2026)
+
+- O dono informou em 01/11/2026: "sobre o safari ja foi resolvido". Nenhuma correcao de codigo foi
+  feita por mim para isso; o teste no motor do Safari (WebKit) nao chegou a rodar (download
+  interrompido quando a sessao reiniciou). No Chrome o seletor ja funcionava (Ontem, 30 dias,
+  Hoje, 7 dias trocando URL e refazendo a busca). Causa no Safari nao identificada por mim.
