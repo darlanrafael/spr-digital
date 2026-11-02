@@ -4,7 +4,7 @@ import { verificarAcesso, erroAcesso, registrarAtividade } from '@/lib/terapeuta
 import { lerIdentidade, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { montarConclusaoDaSessao, sessaoConcluivel } from '@/lib/conclusao-da-sessao'
-import { planejarFalta } from '@/lib/falta-comissao'
+import { planejarFalta, comoDesfazerSolicitacaoDeFalta } from '@/lib/falta-comissao'
 import { ehPedroSocio } from '@/lib/socio'
 
 // Sessões de UMA venda, lidas na hora.
@@ -98,6 +98,9 @@ export async function PATCH(req: NextRequest) {
     // Preenchido so no "nao compareceu" de contratado COM comissao: a comissao
     // a mandar pra aprovacao do dono. Gravada ANTES de consumir a sessao.
     let faltaParaCriar: { comissaoValor: number } | null = null
+    // O que havia antes de gravar a solicitacao: pra desfazer se a sessao falhar.
+    let faltaAnterior: { id: string; status: string } | null = null
+    let faltaGravada = false
 
     if (acao === 'iniciar') {
       if (sessao.status === 'entregue') {
@@ -210,6 +213,7 @@ export async function PATCH(req: NextRequest) {
         solicitado_por_nome: usuario_nome,
         solicitado_por_email: usuario_email,
       }
+      faltaAnterior = existente ? { id: existente.id as string, status: existente.status as string } : null
       if (!existente) {
         const { error: insErr } = await supabase
           .from('solicitacoes_falta_comissao')
@@ -228,10 +232,22 @@ export async function PATCH(req: NextRequest) {
       } else {
         return NextResponse.json({ error: 'Já existe uma falta registrada para esta sessão.' }, { status: 409 })
       }
+      faltaGravada = true
     }
 
     const { error: updateErr } = await supabase.from('sessoes').update(updateData).eq('id', sessao_id)
-    if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
+    if (updateErr) {
+      // A sessao nao virou falta: a solicitacao gravada acima nao pode ficar
+      // pendente em Aprovacoes sozinha. Desfaz e devolve o erro original.
+      if (faltaGravada) {
+        const desfazer = comoDesfazerSolicitacaoDeFalta(faltaAnterior)
+        const r = desfazer.acao === 'apagar'
+          ? await supabase.from('solicitacoes_falta_comissao').delete().eq('sessao_id', sessao_id).eq('status', 'pendente')
+          : await supabase.from('solicitacoes_falta_comissao').update({ status: desfazer.status }).eq('id', faltaAnterior!.id)
+        if (r.error) console.error('[sessoes PATCH] falha ao desfazer a solicitacao de falta:', r.error)
+      }
+      return NextResponse.json({ error: updateErr.message }, { status: 500 })
+    }
 
     if (desfazendoFalta) {
       const { error: cancelaErr } = await supabase

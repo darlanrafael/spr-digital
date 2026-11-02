@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { liquidoDoPacote, type VendaComValor } from '@/lib/dinheiro-do-pacote'
 import { paraWhatsApp } from '@/lib/telefone'
-import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, isHojeBrasilia, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
+import { verificarAcesso, erroAcesso, registrarAtividade, inferirNumeroSessoes, calcularComissao, brasiliaLocalToISO, normalizarTelefoneBR } from '@/lib/terapeutas-auth'
 import { lerIdentidade } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { buscarConflitosAgenda, buscarConflitosMultiTerapeuta, mensagemConflito, soCompromissos } from '@/lib/agenda-conflitos'
 import { criarEventoComMeet, cancelarEvento, integracaoCalendarAtiva } from '@/lib/google-meet'
 import { notificarEncaixe } from '@/lib/notificar-encaixe'
+import { sessaoDeEncaixe } from '@/lib/sessao-de-encaixe'
 import { formatoDaVenda, montarPacote, valorSessaoDoDiagnostico } from '@/lib/diagnostico-guiado'
 import { terapeutaPrincipalDoDiagnostico } from '@/lib/terapeuta-do-diagnostico'
 import { validarDatasDoPacote, mensagemDoProblema } from '@/lib/datas-do-pacote'
@@ -481,26 +482,31 @@ export async function POST(req: NextRequest) {
   // Sessão marcada pro mesmo dia, a "venda de encaixe": o fluxo normal de
   // véspera (só olha "amanhã") nunca ia pegar essa. Avisa na hora, fora do
   // cron, com o link do Meet já embutido (evento acabou de ser criado acima).
-  // Só dispara quando é agendamento de sessão avulsa (totalCriado === 1) -
-  // agendar um pacote inteiro (totalCriado > 1) é reorganização de agenda,
-  // não "última hora": se algumas datas do lote caírem em hoje (comum ao
-  // recriar histórico ou preencher datas retroativas), isso já disparava
-  // um "Venda de Encaixe" por sessão, alarme falso pra paciente que já
-  // existia - confundiu o terapeuta. Usa totalCriado (não numSessoes) pra
-  // valer também pro Diagnóstico: o pacote nunca tem 1 sessão só (mínimo é
-  // 2), então esse gate corretamente nunca dispara pra ele.
+  // Qual sessão avisa (se alguma) é decidido em lib/sessao-de-encaixe.ts:
+  // avulsa de hoje sempre; venda NOVA com sessão hoje também (desde
+  // 29/10/2026, caso Priscilla); refazer pacote que já existia nunca - era o
+  // alarme falso que tinha levado ao corte antigo de "só 1 sessão".
   //
-  // Fora do laço dos convites desde que ele virou paralelo: como a condição é
-  // "exatamente uma sessão", ali dentro ele nunca teve mais de uma volta - o
-  // comportamento é o mesmo de quando estava junto.
-  if (totalCriado === 1 && isHojeBrasilia(sessoes[0].data_agendada)) {
-    const s = sessoes[0]
+  // Fora do laço dos convites desde que ele virou paralelo: é o único trecho
+  // daqui com efeito externo (WhatsApp de verdade).
+  const vendaNova = (sessoesDaVenda ?? []).length === 0
+  const encaixe = sessaoDeEncaixe(sessoes, vendaNova)
+  if (encaixe) {
+    const s = encaixe
     const { data: sessaoCriada } = await client.from('sessoes')
       .select('id,link_meet').eq('sale_id', sale_id).eq('numero_sessao', s.numero_sessao).single()
+    // No Diagnóstico cada sessão tem o seu terapeuta (Pedro nas primeiras,
+    // Denise/Leomir nas demais): o aviso vai pro grupo de quem atende ESTA.
+    let grupoDoEncaixe = terapeuta.grupo_whatsapp_id as string | null
+    if (s.terapeuta_id !== terapeuta_id) {
+      const { data: outro } = await client.from('terapeutas')
+        .select('grupo_whatsapp_id').eq('id', s.terapeuta_id).maybeSingle()
+      grupoDoEncaixe = (outro?.grupo_whatsapp_id as string | null) ?? null
+    }
     await notificarEncaixe({
       sessao_id: sessaoCriada?.id ?? '',
-      terapeuta_id,
-      grupo_whatsapp_id: terapeuta.grupo_whatsapp_id as string | null,
+      terapeuta_id: s.terapeuta_id,
+      grupo_whatsapp_id: grupoDoEncaixe,
       paciente_nome: s.paciente_nome,
       // Forma que o WhatsApp usa, nao a que o paciente disca - ver paraWhatsApp
       // em lib/telefone.ts.

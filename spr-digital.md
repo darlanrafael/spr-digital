@@ -7818,3 +7818,76 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   JS de producao. O push foi feito por mim depois que o dono mandou o comando (o `!` dele no
   terminal zsh nao executa nada - `!` e expansao de historico no zsh, so funciona no chat do
   Claude Code).
+
+# 137. Aviso de "VENDA DE ENCAIXE" passa a valer pra pacote de venda nova + nao cancela mais o lembrete de 30 min (29/10/2026)
+
+- Origem: item 133 (Priscilla, Pedro, 26/10): pacote de 2 sessoes com a 1a no mesmo dia, o
+  grupo nao recebeu o aviso de encaixe. Decisao do dono: tinha que ter avisado a venda de
+  encaixe E seguir a cadencia normal do lembrete de 30 min.
+- **Sistema** (codigo): regra extraida pra `lib/sessao-de-encaixe.ts` (`sessaoDeEncaixe`, 8
+  testes, falharam antes de existir):
+  - sessao avulsa de hoje -> avisa (como antes);
+  - venda NOVA (nenhuma sessao antes nessa venda) com sessao hoje -> avisa a mais cedo de hoje,
+    mesmo com mais sessoes no pacote; um aviso so por agendamento;
+  - refazer pacote que ja existia -> nao avisa (o alarme falso de antes continua fechado).
+  - `app/api/terapeutas/sessoes/agendar/route.ts` usa a funcao; "venda nova" =
+    `sessoesDaVenda` vazio (consulta que a rota ja fazia antes de apagar qualquer coisa). O aviso
+    vai pro grupo do terapeuta DA SESSAO avisada (no Diagnostico cada sessao tem o seu).
+  - `remarcar` nao mudou (remarcar pra hoje ja avisava).
+- **n8n** (fluxo "SPR Digital - Venda de Encaixe", id `Y75ek4m5YIX3KnJl`): hoje, quando o aviso
+  sai, o fluxo chama /api/whatsapp/marcar-enviado com `grupo_30min`/`paciente_30min`, e o cron de
+  30 min PULA a sessao. Mudanca combinada: desligar a ligacao "Sucesso?" (saida verdadeira) ->
+  "Expandir Para Marcar" (e os nos "Expandir Para Marcar"/"Marcar Enviado" podem sair). A busca
+  dos 30 min (`lib/whatsapp-pendentes.ts`) so olha a coluna de enviado, entao sem a marcacao o
+  lembrete sai normal. Backup do fluxo antes da mudanca:
+  `.superpowers/n8n-backup/venda-de-encaixe-2026-10-29-antes.json`. A 1a tentativa pela API foi
+  bloqueada pela trava do Claude Code; em 01/11/2026 o dono autorizou ("voce faz o ajuste, voce
+  tem a chave de acesso do N8N") e foi feito pela API: nos "Expandir Para Marcar" e "Marcar
+  Enviado" removidos, saida verdadeira do "Sucesso?" vazia, "Alertar Falha" intacto. Conferido
+  na resposta da API: fluxo ativo, 6 nos, updatedAt 2026-11-02T00:33Z (01/11 21:33 BRT).
+- Consequencia esperada: venda de encaixe a menos de 30 min da sessao manda 2 mensagens quase
+  juntas no grupo (o "VENDA DE ENCAIXE" e o "Em 30 min"). E o que o dono pediu.
+- Verificado: `npm test` 1052 passando, `tsc` limpo, `next build` ok. NAO exercitado de ponta a
+  ponta: disparar o encaixe manda WhatsApp real (risco 12 da secao 0).
+
+# 138. Fechamento da Denise (29/10/2026): relatorio dela 35 sessoes, sistema 36 - conferido
+
+- Periodo: desde o ultimo fechamento (14/10 22:18 BRT). No banco, 36 sessoes entregues da
+  Denise ainda nao pagas (15/10 a 28/10). Conferido nome a nome contra a lista dela: as 35 dela
+  batem exatamente (inclusive Targino 2/8 e 5/9 em 21/10, Nuno 3/9 e 4/9 em 23/10).
+- A 36a: **Samile Francis Araujo, 28/10 10:00, sessao 1/2**, venda Hubla de 23/10 20:35 de
+  "Mentoria Particular - Denise Nascimento" com **valor pago R$ 0** (cortesia/bonus), agendada
+  por Darlan Rafael e concluida pela propria Denise. **Comissao R$ 0** - nao muda o valor do
+  fechamento, so a contagem. A sessao 2/2 esta marcada pra 04/11 10:00 (tambem R$ 0).
+- Provavel motivo de nao estar na lista dela: sessao sem valor. Nada a corrigir no sistema.
+- **Atualizacao (29/10/2026):** a venda R$ 0 da Samile e um LANCAMENTO MANUAL pedido pelo
+  Guilherme Vargas em 23/10 20:36 BRT e aprovado pelo Darlan em 25/10 16:06 BRT
+  (`solicitacoes_lancamento_manual` id `1432452a-6564-4f1f-abbe-1acd20c96994`, sale
+  `manual_1792955163977_ubuo64`, 2 sessoes, 0 entregues). Motivo dado pelo dono: as sessoes do
+  pacote antigo da Samile (Kiwify, 17/06, 4 sessoes) ja tinham sido PAGAS em fechamentos
+  anteriores - a Denise concluiu no sistema mas nao tinha entregue de fato; agora esta
+  entregando. Decisao do dono: desconsiderar essas 2 sessoes no fechamento.
+- Como: marcar `comissao_paga = true` nas 2 sessoes da venda manual (ids
+  `5f01bd56-7e5d-49a7-b0b5-f3ab06f90308` = 1/2 e `196cb135-a88b-4c94-b82c-72a389f04ca6` = 2/2).
+  Sai de "a pagar" (36 -> 35) e a 2/2 nao aparece como futura no proximo fechamento. Valor nao
+  muda (comissao R$ 0). Escrita em producao bloqueada pra mim; SQL entregue ao dono.
+- **Aplicado pelo dono em 29/10/2026** no SQL Editor. Conferido: as 2 sessoes da Samile com `comissao_paga = true`; Denise com 35 sessoes a pagar.
+
+# 139. "Nao compareceu": solicitacao de falta e desfeita se a sessao nao gravar (29/10/2026)
+
+- Ponto de robustez anotado no item 134. A solicitacao de falta (Denise/Leomir com comissao) e
+  gravada ANTES da sessao, de proposito. Se a escrita da sessao falhar, a solicitacao ficava
+  pendente em Aprovacoes de uma falta que nao aconteceu (e uma nova tentativa dava 409 "Ja existe
+  uma falta registrada").
+- Agora: `comoDesfazerSolicitacaoDeFalta` em `lib/falta-comissao.ts` (3 testes, falharam antes)
+  decide: solicitacao criada nesta tentativa -> apaga (so a `pendente` daquela sessao); era
+  cancelada/negada e foi reaberta -> volta ao status de antes. A rota
+  (`app/api/terapeutas/sessoes/route.ts`, PATCH) chama isso quando o update da sessao da erro e
+  devolve o erro original. Limite conhecido: ao voltar uma reaberta, os campos `decidido_por_*`
+  que a reabertura limpou nao voltam (so o status).
+- Verificado: `npm test` 1055 passando, `tsc` limpo. Nao exercitado contra o banco (exigiria
+  forcar erro de escrita em producao).
+- Deploy: junto com o 137 (encaixe), num deploy unico a pedido do dono.
+
+- **Deploy de 137 + 139 (01/11/2026):** dono aprovou deploy unico. `tsc` limpo, 1055 testes,
+  `next build` ok antes do push.

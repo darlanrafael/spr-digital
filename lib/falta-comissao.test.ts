@@ -5,7 +5,7 @@ process.env.TZ = 'UTC'
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { planejarFalta, decisaoDaFalta } from './falta-comissao'
+import { planejarFalta, decisaoDaFalta, comoDesfazerSolicitacaoDeFalta } from './falta-comissao'
 
 // Regra v2 (correcao de 26/10/2026): marcar "nao compareceu" faz o paciente
 // PERDER a sessao (o pacote anda, sai dos pendentes) e grava a falta no
@@ -66,4 +66,20 @@ test('decisao PAGAR: falta aprovada e desbloqueia a sessao', () => {
 
 test('decisao NAO PAGAR: falta negada e nao desbloqueia', () => {
   assert.deepEqual(decisaoDaFalta('nao_pagar'), { novoStatusFalta: 'negado', desbloquear: false })
+})
+
+// ── Desfazer a solicitacao quando a sessao nao pode ser gravada (29/10/2026) ──
+// A solicitacao de falta e gravada ANTES da sessao (ordem do dinheiro). Se a
+// escrita da sessao falhar - foi o que aconteceu ate 29/10 com o check do banco
+// - a solicitacao ficava pendente em Aprovacoes sem a sessao ter virado falta.
+test('desfazer: solicitacao criada agora -> apaga', () => {
+  assert.deepEqual(comoDesfazerSolicitacaoDeFalta(null), { acao: 'apagar' })
+})
+
+test('desfazer: solicitacao reaberta (estava cancelada) -> volta pra cancelada', () => {
+  assert.deepEqual(comoDesfazerSolicitacaoDeFalta({ status: 'cancelado' }), { acao: 'voltar', status: 'cancelado' })
+})
+
+test('desfazer: solicitacao reaberta (estava negada) -> volta pra negada', () => {
+  assert.deepEqual(comoDesfazerSolicitacaoDeFalta({ status: 'negado' }), { acao: 'voltar', status: 'negado' })
 })

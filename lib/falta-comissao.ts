@@ -73,3 +73,20 @@ export function decisaoDaFalta(
     ? { novoStatusFalta: 'aprovado', desbloquear: true }
     : { novoStatusFalta: 'negado', desbloquear: false }
 }
+
+/**
+ * Como desfazer a solicitacao de falta quando a escrita da SESSAO falha.
+ *
+ * A solicitacao e gravada antes da sessao, de proposito (a comissao nunca fica
+ * travada sem o registro). O outro lado dessa ordem: se a sessao nao grava, a
+ * solicitacao fica pendente em Aprovacoes de uma falta que nao existe. Foi o
+ * que ficaria acontecendo com Denise/Leomir ate 29/10/2026, quando o check do
+ * banco recusava 'nao_compareceu'. `existente` e o que havia ANTES desta
+ * tentativa: nada -> apaga a que foi criada; cancelada/negada que foi reaberta
+ * -> volta ao status de antes.
+ */
+export function comoDesfazerSolicitacaoDeFalta(
+  existente: { status: string } | null,
+): { acao: 'apagar' } | { acao: 'voltar'; status: string } {
+  return existente ? { acao: 'voltar', status: existente.status } : { acao: 'apagar' }
+}
