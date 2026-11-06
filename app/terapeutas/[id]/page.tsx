@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { distribuicaoNaTela, ehDiagnosticoNoLancamento, produtoPadraoDoTerapeuta, produtosDaTela } from '@/lib/produtos-do-lancamento-manual'
 import {
   CheckCircle, RefreshCw, ArrowLeft, X, AlertTriangle,
   Users, Clock, TrendingUp, Award, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download,
@@ -642,6 +643,7 @@ export default function PainelTerapeuta() {
   const [manualEmail, setManualEmail] = useState('')
   const [manualTelefone, setManualTelefone] = useState('')
   const [manualProduto, setManualProduto] = useState('')
+  const [manualFormato, setManualFormato] = useState<1 | 2 | 3 | null>(null)
   const [manualPlataforma, setManualPlataforma] = useState('hubla')
   const [manualValorBruto, setManualValorBruto] = useState('')
   const [manualValorLiquido, setManualValorLiquido] = useState('')
@@ -854,7 +856,6 @@ export default function PainelTerapeuta() {
           .select('id,nome,email,telefone,produto,plataforma,valor_pago_cliente,valor_liquido,data_hora,status,order_id,pacote_pai_id,oferta_nome')
           .ilike('produto', '%Diagnóstico Guiado%')
           .eq('status', 'aprovada')
-          .not('id', 'like', 'manual_%')
         // Mesmo corte de vendas_a_partir_de da consulta de cima. Sem isso,
         // se o corte do Pedro for reajustado, uma venda do Diagnostico ja
         // encerrada volta a aparecer como pendente.
@@ -871,6 +872,9 @@ export default function PainelTerapeuta() {
           // tabela de Pendentes, via ofertaDiagnosticoNaoMapeada().
           if (saleIds.includes(v.id)) continue
           if (pendentes.some(p => p.id === v.id)) continue
+          // Lancamento manual so entra com formato gravado (desde 06/11/2026). Os
+          // antigos nao tem como ser agendados daqui.
+          if (v.id.startsWith('manual_') && !formatoDaVenda(v)) continue
           // Venda ligada a outro pacote nao e pendente: as sessoes dela estao
           // na venda-pai. Esta consulta reimplementava a regra a mao e nao
           // conhecia o `pacote_pai_id`, entao uma compra do Diagnostico ja
@@ -1558,6 +1562,7 @@ export default function PainelTerapeuta() {
   // Não exigimos mais nenhum campo pra lançar — o essencial (nome, valores,
   // etc.) pode ser completado depois pelo prontuário. A única coisa que
   // trava é a senha, pedida no SenhaModal na hora de confirmar.
+  const manualEhDiagnostico = ehDiagnosticoNoLancamento(manualProduto)
   const manualTotalNum = parseInt(manualTotalSessoes, 10) || 1
   const manualEntreguesNum = Math.min(Math.max(parseInt(manualEntreguesNumero, 10) || 0, 0), manualTotalNum)
   const manualFuturasNum = manualTotalNum - manualEntreguesNum
@@ -1591,10 +1596,16 @@ export default function PainelTerapeuta() {
         valor_pago_cliente: parseValorBR(manualValorBruto),
         valor_liquido: parseValorBR(manualValorLiquido),
         data_hora: manualDataCompra || undefined,
-        total_sessoes: manualTotalNum,
-        sessoes_entregues: manualEntreguesNum,
-        proxima_sessao_data: manualProximaSessaoData || undefined,
-        datas_futuras: manualDatasEditadas.length === manualFuturasNum ? manualDatasEditadas : undefined,
+        // No Diagnostico quantidade e divisao saem do formato, no servidor; as
+        // datas sao escolhidas no agendamento, depois da aprovacao.
+        ...(manualEhDiagnostico
+          ? { formato_diagnostico: manualFormato }
+          : {
+              total_sessoes: manualTotalNum,
+              sessoes_entregues: manualEntreguesNum,
+              proxima_sessao_data: manualProximaSessaoData || undefined,
+              datas_futuras: manualDatasEditadas.length === manualFuturasNum ? manualDatasEditadas : undefined,
+            }),
         usuario_email: adminEmail, senha,
         confirmou_duplicata: confirmarDuplicata || undefined,
       }),
@@ -1617,7 +1628,7 @@ export default function PainelTerapeuta() {
       aguardandoAprovacao: !!json.aguardando_aprovacao,
       reservados: json.horarios_reservados ?? 0,
     })
-    setManualNome(''); setManualEmail(''); setManualTelefone(''); setManualProduto('')
+    setManualNome(''); setManualEmail(''); setManualTelefone(''); setManualProduto(''); setManualFormato(null)
     setManualValorBruto(''); setManualValorLiquido(''); setManualDataCompra('')
     setManualTotalSessoes(''); setManualEntreguesNumero(''); setManualProximaSessaoData('')
     loadData()
@@ -2226,7 +2237,7 @@ export default function PainelTerapeuta() {
                     ))}
                   </div>
                   {!isTerapeutaSession && (
-                    <button onClick={() => { setManualErro(''); setManualProduto(`Mentoria Particular - ${terapeuta?.nome ?? ''}`); setManualOpen(true) }}
+                    <button onClick={() => { setManualErro(''); setManualProduto(produtoPadraoDoTerapeuta(terapeuta?.nome)); setManualFormato(null); setManualOpen(true) }}
                       className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
                       + Lançar paciente manualmente
                     </button>
@@ -3384,8 +3395,17 @@ export default function PainelTerapeuta() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">Produto</label>
-                  <input type="text" value={manualProduto} onChange={e => setManualProduto(e.target.value)}
-                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50" />
+                  <select value={manualProduto} onChange={e => {
+                    setManualProduto(e.target.value); setManualFormato(null)
+                    // Diagnostico nao usa estes campos, e eles nao podem ir escondidos.
+                    if (ehDiagnosticoNoLancamento(e.target.value)) {
+                      setManualTotalSessoes(''); setManualEntreguesNumero(''); setManualProximaSessaoData('')
+                    }
+                  }}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
+                    <option value="">Escolha o produto</option>
+                    {produtosDaTela(terapeuta?.nome).map(p => <option key={p.nome} value={p.nome}>{p.rotulo}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">Plataforma</label>
@@ -3421,6 +3441,24 @@ export default function PainelTerapeuta() {
                   </p>
                 )}
               </div>
+              {manualEhDiagnostico ? (
+                <div className="border-t border-white/10 pt-3">
+                  <label className="text-xs text-gray-400 block mb-1">Formato do Diagnóstico</label>
+                  <select value={manualFormato ?? ''} onChange={e => setManualFormato(e.target.value ? Number(e.target.value) as 1 | 2 | 3 : null)}
+                    className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500/50">
+                    <option value="">Escolha o formato</option>
+                    <option value="1">Formato 1</option>
+                    <option value="2">Formato 2</option>
+                    <option value="3">Formato 3</option>
+                  </select>
+                  {distribuicaoNaTela(manualProduto, manualFormato) && (
+                    <p className="text-xs text-indigo-300 mt-2">{distribuicaoNaTela(manualProduto, manualFormato)}</p>
+                  )}
+                  <p className="text-[10px] text-gray-600 mt-2">
+                    Depois da aprovação, a venda aparece em Agendamentos Pendentes. As datas são escolhidas lá, e cada sessão já vai para o terapeuta certo.
+                  </p>
+                </div>
+              ) : (
               <div className="border-t border-white/10 pt-3">
                 <p className="text-xs text-gray-400 font-medium mb-2">Sessões</p>
                 <div className="grid grid-cols-3 gap-3">
@@ -3459,12 +3497,19 @@ export default function PainelTerapeuta() {
                   </div>
                 )}
               </div>
+              )}
               {manualErro && <p className="text-xs text-red-400">{manualErro}</p>}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setManualOpen(false)}
                 className="flex-1 px-4 py-2 text-sm text-gray-400 bg-gray-800 border border-white/10 rounded-lg">Cancelar</button>
-              <button onClick={() => { setManualErro(''); setManualSenhaOpen(true) }}
+              <button onClick={() => {
+                if (!manualProduto) { setManualErro('Escolha o produto.'); return }
+                if (manualEhDiagnostico && !manualFormato) { setManualErro('Escolha o formato do Diagnóstico.'); return }
+                // Em branco virava 1 sessão sem ninguém ter pedido.
+                if (!manualEhDiagnostico && !(parseInt(manualTotalSessoes, 10) > 0)) { setManualErro('Informe o total de sessões vendidas.'); return }
+                setManualErro(''); setManualSenhaOpen(true)
+              }}
                 className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors">
                 Confirmar lançamento
               </button>

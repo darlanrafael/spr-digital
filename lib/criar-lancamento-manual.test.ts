@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { datasDoLancamento, montarSessoesDoLancamento, fimDaSessaoISO } from './criar-lancamento-manual'
+import { datasDoLancamento, montarSessoesDoLancamento, fimDaSessaoISO, ofertaDoLancamento, idDaVendaDoPedido, criarLancamentoManual } from './criar-lancamento-manual'
 
 const base = { terapeuta_id: 't1' }
 const hh = (iso: string) => new Date(new Date(iso).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ')
@@ -156,4 +156,98 @@ test('a sessao dura UMA hora no Google, nem mais nem menos', () => {
   const fim = new Date(fimDaSessaoISO('2026-09-15T14:00:00Z')).getTime()
   assert.equal(fim - inicio, 60 * 60 * 1000, 'exatamente 3.600.000 ms')
   assert.ok(fim > inicio, 'o fim nunca pode ser antes do inicio')
+})
+
+test('a venda guarda a oferta do pedido', () => {
+  assert.equal(ofertaDoLancamento({ ...base, oferta_nome: 'Formato 1', total_sessoes: 9 }), 'Formato 1')
+})
+
+test('pedido antigo, ainda pendente, sem oferta: a quantidade aprovada nao se perde', () => {
+  assert.equal(ofertaDoLancamento({ ...base, total_sessoes: 9 }), '9 sessões')
+  assert.equal(ofertaDoLancamento({ ...base, total_sessoes: 1 }), '1 sessão')
+})
+
+// Caso real: Gerson (22/10/2026) e Maisa (06/11/2026), duas vendas com 1 segundo
+// de diferenca para um pedido so, porque o id da venda era aleatorio. Com o id
+// vindo do pedido, a chave primaria de `sales` recusa a segunda.
+test('o id da venda vem do pedido: o mesmo pedido da sempre o mesmo id', () => {
+  assert.equal(idDaVendaDoPedido('abc'), 'manual_abc')
+  assert.equal(idDaVendaDoPedido('abc'), idDaVendaDoPedido('abc'))
+  assert.notEqual(idDaVendaDoPedido('abc'), idDaVendaDoPedido('def'))
+})
+
+// Banco falso: `sales` e `sessoes` recusam repeticao como as chaves de verdade.
+function bancoDoPedido(inicio: { vendaExiste: boolean; sessoes: number; falhaSessoes?: string }) {
+  const estado = { vendaExiste: inicio.vendaExiste, sessoes: inicio.sessoes, vendaApagada: false }
+  const client = {
+    from(tabela: string) {
+      return {
+        select: () => ({
+          eq: () => tabela === 'terapeutas'
+            ? { single: async () => ({ data: { id: 't1', percentual_comissao: 10 }, error: null }) }
+            : Promise.resolve({ count: estado.sessoes, error: null }),
+        }),
+        insert: async (linhas: unknown) => {
+          if (tabela === 'sales') {
+            if (estado.vendaExiste) return { error: { code: '23505', message: 'duplicada' } }
+            estado.vendaExiste = true
+            return { error: null }
+          }
+          if (tabela === 'sessoes') {
+            if (inicio.falhaSessoes) return { error: { code: inicio.falhaSessoes, message: 'falhou' } }
+            estado.sessoes = (linhas as unknown[]).length
+            return { error: null }
+          }
+          return { error: null }
+        },
+        delete: () => ({ eq: async () => { estado.vendaApagada = true; return { error: null } } }),
+        update: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }),
+      }
+    },
+  }
+  return { client: client as never, estado }
+}
+const comData = { ...base, total_sessoes: 2, proxima_sessao_data: '2030-01-10T10:00' }
+const criar = (client: never, payload = comData) => criarLancamentoManual({
+  client, solicitacaoId: 'abc', payload, usuarioNome: 'D', usuarioTipo: 'admin', registrar: async () => {},
+})
+
+test('caiu depois de gravar a venda: a nova aprovacao cria as sessoes que faltaram', async () => {
+  const { client, estado } = bancoDoPedido({ vendaExiste: true, sessoes: 0 })
+  const r = await criar(client)
+  assert.equal(r.ok, true)
+  assert.equal(estado.sessoes, 2)
+  assert.equal(r.ok && r.sessoesCriadas, 2)
+})
+
+test('venda e sessoes ja existem: nao cria nada de novo', async () => {
+  const { client, estado } = bancoDoPedido({ vendaExiste: true, sessoes: 2 })
+  const r = await criar(client)
+  assert.deepEqual(r, { ok: true, saleId: 'manual_abc', sessoesCriadas: 2, sessoesPuladas: 0, jaExistia: true })
+  assert.equal(estado.vendaApagada, false)
+})
+
+test('outra chamada gravou as sessoes primeiro: nao apaga a venda dela', async () => {
+  const { client, estado } = bancoDoPedido({ vendaExiste: true, sessoes: 0, falhaSessoes: '23505' })
+  const r = await criar(client)
+  assert.equal(r.ok, true)
+  assert.equal(r.ok && r.jaExistia, true)
+  assert.equal(estado.vendaApagada, false)
+})
+
+test('falha ao gravar sessoes: so apaga a venda que esta chamada criou', async () => {
+  const minha = bancoDoPedido({ vendaExiste: false, sessoes: 0, falhaSessoes: 'XX000' })
+  assert.equal((await criar(minha.client)).ok, false)
+  assert.equal(minha.estado.vendaApagada, true)
+
+  const deOutra = bancoDoPedido({ vendaExiste: true, sessoes: 0, falhaSessoes: 'XX000' })
+  assert.equal((await criar(deOutra.client)).ok, false)
+  assert.equal(deOutra.estado.vendaApagada, false)
+})
+
+test('Diagnostico nasce sem sessao: criar de novo so confirma a venda', async () => {
+  const { client, estado } = bancoDoPedido({ vendaExiste: true, sessoes: 0 })
+  const r = await criar(client, { ...base, total_sessoes: 9, oferta_nome: 'Formato 1' } as never)
+  assert.deepEqual(r, { ok: true, saleId: 'manual_abc', sessoesCriadas: 0, sessoesPuladas: 0, jaExistia: true })
+  assert.equal(estado.sessoes, 0)
 })

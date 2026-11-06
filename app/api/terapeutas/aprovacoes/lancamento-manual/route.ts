@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { verificarAcesso, erroAcesso } from '@/lib/terapeutas-auth'
-import { criarLancamentoManual, datasDoLancamento, type PayloadLancamentoManual } from '@/lib/criar-lancamento-manual'
+import { criarLancamentoManual, datasDoLancamento, idDaVendaDoPedido, type PayloadLancamentoManual } from '@/lib/criar-lancamento-manual'
 import { buscarConflitosAgenda } from '@/lib/agenda-conflitos'
 import { lerIdentidade, podeAdministrar, podeMexerEmVenda } from '@/lib/identidade-da-chamada'
 
@@ -108,6 +108,20 @@ export async function PATCH(req: NextRequest) {
 
     const reservas = (s.compromissos_reservados as string[] | null) ?? []
 
+    // A venda deste pedido ja existe: a primeira aprovacao criou e caiu antes de
+    // marcar o pedido, ou esta rodando agora. Nada de criar de novo, e nada de
+    // recusar um pedido que ja virou venda.
+    // O id vem do banco, nao do texto recebido: o mesmo UUID em maiusculas daria
+    // outro id de venda, e a chave primaria (texto) deixaria passar.
+    const idDoPedido = s.id as string
+    const saleIdDoPedido = idDaVendaDoPedido(idDoPedido)
+    const { data: vendaExistente, error: vendaErr } = await client
+      .from('sales').select('id').eq('id', saleIdDoPedido).maybeSingle()
+    if (vendaErr) return NextResponse.json({ error: vendaErr.message }, { status: 500 })
+    if (vendaExistente && acao === 'rejeitar') {
+      return NextResponse.json({ error: 'A venda deste pedido já foi criada. Atualize a página.' }, { status: 409 })
+    }
+
     if (acao === 'rejeitar') {
       // Nada foi criado, então rejeitar é só liberar os horários reservados.
       //
@@ -123,16 +137,23 @@ export async function PATCH(req: NextRequest) {
           }, { status: 500 })
         }
       }
-      const { error } = await client.from('solicitacoes_lancamento_manual').update({
+      const { data: rejeitado, error } = await client.from('solicitacoes_lancamento_manual').update({
         status: 'rejeitado', decidido_por_nome: nomeUsuario, decidido_por_email: usuario_email,
         decidido_em: new Date().toISOString(), justificativa_decisao: justificativa,
         compromissos_reservados: [],
-      }).eq('id', solicitacao_id)
+      }).eq('id', solicitacao_id).eq('status', 'pendente').select('id')
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if ((rejeitado ?? []).length === 0) {
+        return NextResponse.json({ error: 'Esta solicitação acabou de ser decidida. Atualize a página.' }, { status: 409 })
+      }
       return NextResponse.json({ success: true, acao: 'rejeitado', horarios_liberados: reservas.length })
     }
 
     const payload = s.payload as unknown as PayloadLancamentoManual
+
+    // Retomada: as reservas ja sairam e as sessoes da venda dariam conflito com
+    // elas mesmas. Vai direto completar o que faltou.
+    if (!vendaExistente) {
 
     // As reservas saem ANTES de criar as sessões: elas ocupam exatamente os
     // horários que as sessões vão ocupar, então a checagem de conflito da
@@ -169,14 +190,16 @@ export async function PATCH(req: NextRequest) {
         // com o comercial" achando que a vaga continua reservada, e ela estaria
         // livre para qualquer outro agendamento.
         let naoRedevolvidas = 0
+        const novasReservas: string[] = []
         for (const dataISO of datas.futuras) {
-          const { error: reservaErr } = await client.from('compromissos_terapeuta').insert({
+          const { data: novaReserva, error: reservaErr } = await client.from('compromissos_terapeuta').insert({
             terapeuta_id: payload.terapeuta_id,
             titulo: `RESERVA - ${payload.nome || 'lançamento manual'} (aguardando aprovação)`,
             inicio: dataISO, fim: new Date(new Date(dataISO).getTime() + 60 * 60 * 1000).toISOString(),
             categoria: 'compromisso', criado_por_nome: nomeUsuario,
             criado_por_tipo: 'admin', criado_por_email: usuario_email,
-          })
+          }).select('id').single()
+          if (novaReserva) novasReservas.push((novaReserva as { id: string }).id)
           if (reservaErr) {
             naoRedevolvidas++
             console.error('[aprovacoes/lancamento-manual] reserva nao redevolvida:', dataISO, reservaErr)
@@ -185,6 +208,11 @@ export async function PATCH(req: NextRequest) {
         const avisoReserva = naoRedevolvidas > 0
           ? ` ATENCAO: ${naoRedevolvidas} de ${datas.futuras.length} horario(s) NAO voltaram a ficar reservados - trate como vaga livre.`
           : ''
+        // Reserva devolvida tem id novo. Sem guardar, a proxima aprovacao nao
+        // apaga estas reservas e bate nelas como se fossem conflito.
+        const { error: guardarErr } = await client.from('solicitacoes_lancamento_manual')
+          .update({ compromissos_reservados: novasReservas }).eq('id', solicitacao_id).eq('status', 'pendente')
+        if (guardarErr) console.error('[aprovacoes/lancamento-manual] reservas devolvidas sem vinculo:', novasReservas, guardarErr)
         return NextResponse.json({
           error: `O horário foi ocupado enquanto o pedido esperava: ${conflitos.map(c => c.descricao).join(' | ')}. Ajuste a data com o comercial antes de aprovar.${avisoReserva}`,
           conflitos,
@@ -192,25 +220,36 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    }
+
     const r = await criarLancamentoManual({
-      client, payload, usuarioNome: nomeUsuario,
+      client, solicitacaoId: idDoPedido, payload, usuarioNome: nomeUsuario,
       usuarioTipo: (usuario?.tipo as string) ?? 'admin',
     })
     if (!r.ok) {
       return NextResponse.json({ error: r.erro }, { status: r.status })
     }
 
-    const { error: upErr } = await client.from('solicitacoes_lancamento_manual').update({
+    // So fecha pedido ainda pendente. Se outra chamada ja fechou, os numeros dela
+    // valem; se foi recusado enquanto a venda nascia, isso tem de aparecer.
+    const { data: fechado, error: upErr } = await client.from('solicitacoes_lancamento_manual').update({
       status: 'aprovado', decidido_por_nome: nomeUsuario, decidido_por_email: usuario_email,
       decidido_em: new Date().toISOString(), justificativa_decisao: justificativa ?? null,
       sale_id_criada: r.saleId, sessoes_criadas: r.sessoesCriadas, compromissos_reservados: [],
-    }).eq('id', solicitacao_id)
-    // A criação já aconteceu: falhar aqui não desfaz nada, mas precisa
-    // aparecer, senão a solicitação fica "pendente" e alguém aprova de novo.
+    }).eq('id', solicitacao_id).eq('status', 'pendente').select('id')
+    // A criação já aconteceu: falhar aqui não desfaz nada, mas precisa aparecer.
     if (upErr) {
       return NextResponse.json({
-        error: `O lançamento foi criado (venda ${r.saleId}), mas a solicitação não foi marcada como aprovada: ${upErr.message}. NÃO aprove de novo - isso criaria um segundo pacote.`,
+        error: `O lançamento foi criado (venda ${r.saleId}), mas a solicitação não foi marcada como aprovada: ${upErr.message}. Aprovar de novo só conclui o pedido, não cria outra venda.`,
       }, { status: 500 })
+    }
+    if ((fechado ?? []).length === 0) {
+      const { data: atual } = await client.from('solicitacoes_lancamento_manual').select('status').eq('id', solicitacao_id).maybeSingle()
+      if ((atual as { status?: string } | null)?.status === 'rejeitado') {
+        return NextResponse.json({
+          error: `Este pedido foi recusado enquanto a aprovação rodava, e a venda ${r.saleId} chegou a ser criada. Confira e, se for o caso, exclua a venda.`,
+        }, { status: 409 })
+      }
     }
 
     return NextResponse.json({

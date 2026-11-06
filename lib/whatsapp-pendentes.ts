@@ -131,7 +131,14 @@ export async function buscarPendentes(
       // sessao futura recebiam um numero que o WhatsApp nao usa.
       telefonePorSale[s.id as string] = paraWhatsApp(normalizarTelefoneBR(s.telefone as string | null))
       dataHoraPorSale[s.id as string] = s.data_hora as string
-      const formato = formatoDaVenda({ id: s.id as string, order_id: (s.order_id as string | null) ?? undefined })
+      // Oferta e produto entram para reconhecer o Diagnostico sem order_id que
+      // resolva: Kiwify e lancamento manual.
+      const formato = formatoDaVenda({
+        id: s.id as string,
+        order_id: (s.order_id as string | null) ?? undefined,
+        oferta_nome: s.oferta_nome as string | null,
+        produto: s.produto as string | null,
+      })
       if (formato) formatoPorSale[s.id as string] = formato.formato
     }
 

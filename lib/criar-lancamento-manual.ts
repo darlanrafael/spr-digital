@@ -29,11 +29,34 @@ export type PayloadLancamentoManual = {
   sessoes_entregues?: number | null
   proxima_sessao_data?: string | null
   datas_futuras?: string[] | null
+  /** Decidida no servidor por prepararPedido. Ver lib/produtos-do-lancamento-manual.ts. */
+  oferta_nome?: string | null
+  formato_diagnostico?: 1 | 2 | 3 | null
 }
 
 export type ResultadoCriacao =
-  | { ok: true; saleId: string; sessoesCriadas: number; sessoesPuladas: number }
+  | { ok: true; saleId: string; sessoesCriadas: number; sessoesPuladas: number; jaExistia?: boolean }
   | { ok: false; erro: string; status: number }
+
+/**
+ * O id da venda vem do pedido, e nao do relogio. A chave primaria de `sales`
+ * passa a garantir uma venda por pedido, inclusive com dois cliques juntos ou
+ * queda no meio da aprovacao. Com id aleatorio, um pedido so virou duas vendas
+ * no Gerson (22/10/2026) e na Maisa (06/11/2026), com 1 segundo de diferenca.
+ */
+export function idDaVendaDoPedido(solicitacaoId: string): string {
+  return `manual_${solicitacaoId}`
+}
+
+/**
+ * A oferta gravada na venda. Pedido antigo, ainda na fila, nao tem o campo: a
+ * quantidade pedida vira oferta para o agendamento nao cair na tabela de precos.
+ */
+export function ofertaDoLancamento(p: PayloadLancamentoManual): string {
+  if (p.oferta_nome) return p.oferta_nome
+  const total = Math.max(p.total_sessoes ?? 1, 1)
+  return `${total} ${total === 1 ? 'sessão' : 'sessões'}`
+}
 
 /**
  * As datas das sessões, sem tocar no banco.
@@ -150,11 +173,14 @@ export function fimDaSessaoISO(inicioISO: string): string {
 
 export async function criarLancamentoManual(params: {
   client: SupabaseClient
+  solicitacaoId: string
   payload: PayloadLancamentoManual
   usuarioNome: string
   usuarioTipo: string
+  /** Trocado no teste: o log real abre o proprio cliente do banco. */
+  registrar?: typeof registrarAtividade
 }): Promise<ResultadoCriacao> {
-  const { client, payload: p, usuarioNome, usuarioTipo } = params
+  const { client, solicitacaoId, payload: p, usuarioNome, usuarioTipo, registrar = registrarAtividade } = params
 
   const { data: terapeuta, error: terapErr } = await client
     .from('terapeutas').select('id,percentual_comissao').eq('id', p.terapeuta_id).single()
@@ -163,7 +189,7 @@ export async function criarLancamentoManual(params: {
   const datas = datasDoLancamento(p)
   if (datas.erro) return { ok: false, erro: datas.erro, status: 400 }
 
-  const saleId = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const saleId = idDaVendaDoPedido(solicitacaoId)
   const { error: saleErr } = await client.from('sales').insert({
     id: saleId,
     project_id: 'proj_1',
@@ -177,8 +203,24 @@ export async function criarLancamentoManual(params: {
     preco_base: p.preco_base ?? p.valor_pago_cliente ?? 0,
     data_hora: p.data_hora ? brasiliaLocalToISO(p.data_hora) : new Date().toISOString(),
     status: 'aprovada',
+    oferta_nome: ofertaDoLancamento(p),
   })
-  if (saleErr) return { ok: false, erro: saleErr.message, status: 500 }
+  // 23505: a venda deste pedido ja existe, porque outra chamada esta criando ou
+  // uma anterior caiu no meio. Nao e erro: segue para completar o que faltar. E
+  // so apaga a venda, mais abaixo, quem a criou.
+  const vendaJaExistia = (saleErr as { code?: string } | null)?.code === '23505'
+  if (saleErr && !vendaJaExistia) return { ok: false, erro: saleErr.message, status: 500 }
+
+  if (vendaJaExistia) {
+    const { count, error: contarErr } = await client.from('sessoes').select('id', { count: 'exact', head: true }).eq('sale_id', saleId)
+    if (contarErr) return { ok: false, erro: contarErr.message, status: 500 }
+    const jaCriadas = count ?? 0
+    // Nada a completar. Eventos que tenham faltado ficam como estao: refazer o
+    // agendamento recria convite e link.
+    if (jaCriadas > 0 || datas.entregues.length + datas.futuras.length === 0) {
+      return { ok: true, saleId, sessoesCriadas: jaCriadas, sessoesPuladas: 0, jaExistia: true }
+    }
+  }
 
   const { comissao_por_sessao } = calcularComissao({
     valor_liquido: p.valor_liquido ?? 0,
@@ -202,9 +244,15 @@ export async function criarLancamentoManual(params: {
   if (sessoes.length > 0) {
     const { error: insertErr } = await client.from('sessoes').insert(sessoes)
     if (insertErr) {
+      // unique (sale_id, numero_sessao): a outra chamada gravou primeiro, e os
+      // eventos do Google sao dela.
+      if ((insertErr as { code?: string }).code === '23505') {
+        return { ok: true, saleId, sessoesCriadas: sessoes.length, sessoesPuladas: 0, jaExistia: true }
+      }
       // Sem sessão nenhuma criada, a venda manual fica órfã - melhor remover do
       // que deixar um registro de faturamento sem paciente/sessão associada.
-      await client.from('sales').delete().eq('id', saleId)
+      // A venda de outra chamada não é desta remover.
+      if (!vendaJaExistia) await client.from('sales').delete().eq('id', saleId)
       return { ok: false, erro: insertErr.message, status: 500 }
     }
   }
@@ -226,7 +274,7 @@ export async function criarLancamentoManual(params: {
     }
   }
 
-  await registrarAtividade({
+  await registrar({
     usuario_nome: usuarioNome,
     usuario_tipo: usuarioTipo,
     tipo_acao: 'lancamento_manual',

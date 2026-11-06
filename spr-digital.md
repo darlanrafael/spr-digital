@@ -7898,3 +7898,113 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   feita por mim para isso; o teste no motor do Safari (WebKit) nao chegou a rodar (download
   interrompido quando a sessao reiniciou). No Chrome o seletor ja funcionava (Ontem, 30 dias,
   Hoje, 7 dias trocando URL e refazendo a busca). Causa no Safari nao identificada por mim.
+
+# 141. 01/11/2026 ~21:30 BRT - Supabase BLOQUEADO por cota de trafego de saida (exceed_egress_quota)
+
+- Sintoma: alerta do n8n "LEMBRETE VESPERA FALHOU" com o erro do Supabase "Service for this project
+  is restricted due to the following violations: exceed_egress_quota. The project owner must
+  upgrade their plan or remove spend caps to restore service."
+- Conferido rodando (02/11 00:38 UTC = 01/11 21:38 BRT): a API REST do projeto
+  `jgpgvskrpjoplcocptdy` ("PROJETOS SPR DIGITAL - FINANCEIRO", org "Gestao Projetos Financeiros
+  SPR DIGITAL") responde **HTTP 402** com essa mensagem. O banco em si aparece ACTIVE_HEALTHY no
+  painel; o que esta bloqueado e o acesso pela API.
+- Impacto: o sistema inteiro (DRE, terapeutas, fechamentos, funis) depende dessa API. Lembretes
+  de vespera e de 30 min falham; webhooks de venda (Hubla/Kiwify) que chegarem durante o bloqueio
+  provavelmente falham ao gravar (nao verificado se as plataformas reenviam).
+- Resolucao: acao do dono no painel do Supabase (Billing da org): subir o plano ou tirar o limite
+  de gasto (spend cap). Depois: conferir vendas e lembretes perdidos no periodo e investigar o que
+  gastou tanto trafego de saida.
+- **Causa provavel (investigada 01/11 ~22h BRT, so leitura):** `pg_stat_statements` (acumulado
+  desde 10/06/2026) mostra as consultas mais chamadas sendo as do painel dos terapeutas:
+  sessoes em lote 225.184 chamadas, sales id/valor 183.981, terapeutas 153.000, e mais 5 consultas
+  de sessoes com ~117.800 cada. No codigo: `app/terapeutas/page.tsx:169` e
+  `app/terapeutas/[id]/page.tsx:962` chamam `/api/terapeutas/dashboard` **a cada 60 segundos**
+  enquanto a tela estiver aberta (inclusive em aba esquecida em segundo plano), so para atualizar
+  "consultas de hoje". Mas a rota refaz o painel INTEIRO a cada chamada: todas as vendas do
+  terapeuta no periodo (paginas de 1000), todas as sessoes em lotes de 200, valores das vendas e
+  ofertas (`app/api/terapeutas/dashboard/route.ts:226-295, 433, 498-622`). Cada aba aberta = 1.440
+  painéis completos por dia. Tamanho de referencia: a tabela sessoes inteira em JSON ~1,1 MB; sales
+  inteira ~13 MB. Segundo suspeito: `sales.*` por periodo (`lib/services.ts:80`, painel principal
+  e DRE), 120.361 chamadas, puxando TODAS as colunas.
+- **Nao verificado:** o grafico de egress por dia e o plano da org (gratis = 5 GB/mes; Pro com
+  spend cap = 250 GB) so aparecem no painel do Supabase (Usage), que eu nao acesso.
+- Correcao proposta (depois de liberar, com aprovacao): atualizacao de 60s buscar so as consultas
+  de hoje (consulta leve propria) e parar quando a aba estiver escondida; e trocar `select('*')`
+  de sales pelas colunas usadas.
+- **Confirmado pelo e-mail do Supabase (01/11/2026 19:01, print do dono):** org "Gestao Projetos
+  Financeiros SPR DIGITAL" (id xzwfwztynrxgimynaxst) esta no **plano gratuito**: egress de
+  **7,65 GB de 5,5 GB** no ciclo. "Requests to your projects are dropped until your quota refills
+  during November 10, 2026" - ou seja, sem acao, o sistema fica fora ate 10/11. Saida imediata:
+  plano Pro (US$ 25/mes, 250 GB de egress incluidos). Ciclo de cobranca vira no dia 10.
+- **Resolvido 01/11/2026 ~21:53 BRT:** dono assinou o Pro; API voltou (REST 200 as 00:53 UTC).
+- **Janela fora do ar medida pelo n8n:** ultimo lembrete de 30 min OK as 19:00 BRT, erros de 19:05
+  a 21:50 BRT. Ou seja, ~19:01 a ~21:53 BRT.
+- **Dados:** o que ja estava no banco nao se perdeu (bloqueio so de acesso). O risco e o que
+  tentou ENTRAR na janela: `webhook_events` nao tem nada entre 17h e o fim do bloqueio (ultimo
+  evento 17h BRT). Venda da Hubla/Kiwify nesse intervalo nao foi gravada; a reconciliacao
+  (`/api/webhooks/reconciliar`) so recupera evento que chegou a ser gravado com erro, entao NAO
+  cobre isso. Se as plataformas reenviam webhook que falhou: nao verificado. Conferir nos paineis
+  da Hubla e da Kiwify as vendas de 01/11 19h-22h.
+- Lembrete de vespera roda 21:30, 21:45 e 22:00 BRT; os dois primeiros caíram no bloqueio, o das
+  22:00 roda com o banco de volta.
+- **Depois da volta (conferido no banco):** lembrete de vespera das 22:00 BRT enviou grupo e
+  paciente das 5 sessoes de 02/11 (Marcio 09:40, Lais 10:30, Priscilla 12:40, Rogerio 18:15 - Pedro;
+  Rayssa 19:00 - Leomir). Primeira venda depois do bloqueio gravada normal: Hubla 21:56 BRT,
+  "COMO SER PERDOADO", Damiao Pereira de Souza (webhook_events `sale_created`). Na janela 19:01-21:53
+  o banco nao tem nenhum evento de webhook; ultimo antes foi 17:03 (CanceledSale, ignorado).
+
+# 142. Venda manual da Maisa (06/11/2026): criada em dobro e agendamento preso em 1 sessao - investigado
+
+- Pedido unico do Felipe (`solicitacoes_lancamento_manual` b2a7428d, 18:24 BRT, 9 sessoes, R$ 4.997,
+  sem data de proxima sessao) aprovado pelo Darlan as 18:52 gerou DUAS vendas: 
+  `manual_1794001928039_h1wqo6` (18:52:08) e `manual_1794001929122_ceztle` (18:52:09). A solicitacao
+  aponta so para a segunda. Log de atividades tem as duas aprovacoes.
+- Causa da duplicacao (lida no codigo): a rota de aprovar confere `status='pendente'` e so marca
+  aprovado NO FIM, depois de criar a venda; duas chamadas quase juntas passam as duas pela conferencia.
+  Mesmo padrao em Gerson Costa (22/10, 19:43:30 e :31; R$ 5.280 cada, sem sessao).
+- Causa do "1 sessao": aprovado sem data nao cria sessao e a quantidade pedida (9) nao fica gravada
+  na venda. No agendamento o modal deduz por tabela de preco; R$ 4.997 nao esta na tabela e cai em 1,
+  sem campo editavel. Adriano e Gerson (R$ 5.280) nao sofrem porque o preco bate 8.
+- Mensagem exata do erro que o Felipe viu: ainda nao obtida (print nao mostra erro).
+- **Decisao do dono (06/11/2026): excluir a venda manual da Maisa; o Felipe lanca de novo.** Conferido
+  antes: 0 sessoes e 0 ocorrencias nas duas vendas. Apagadas `manual_1794001928039_h1wqo6` e
+  `manual_1794001929122_ceztle` (HTTP 200; consulta depois: nenhuma venda desse e-mail). Ficam como
+  historico: as 2 linhas de `atividades_log` e a solicitacao b2a7428d (aprovado), com
+  `sale_id_criada` apontando para venda que nao existe mais. Gerson NAO foi mexido (dono limitou as
+  vendas manuais de hoje).
+- **A Maisa e Diagnostico Guiado**, segundo o dono. O lancamento manual NAO conhece Diagnostico (lido no
+  codigo, nao rodado): o formulario fica na tela de UM terapeuta, produto e texto livre, e nao existe
+  campo de oferta. Sem oferta, `formatoDaVenda` devolve null e o agendamento trata como produto comum.
+- Acesso ao banco: `supabase db query` le o cofre do Mac e fazia aparecer pedido de senha; o dono pediu
+  para parar. Consultas agora pela API REST com a chave do `.env.local`.
+
+# 143. Lancamento manual: lista de produtos ligada, Diagnostico com formato, uma venda por pedido (06/11/2026) - AGUARDANDO APROVACAO E DEPLOY
+
+- Pedido do dono: corrigir antes de o Felipe relancar a Maisa, com revisao do Codex em duas abordagens.
+- **Formulario** (`app/terapeutas/[id]/page.tsx`): liga a decisao de 09/09/2026 que nunca tinha ido para a
+  tela (54.3). Produto vira lista (`produtosDaTela`): Mentoria do terapeuta da tela e os dois Diagnosticos
+  (Denise e Leomir). Diagnostico pergunta o formato, mostra "9 sessoes: 2 com Pedro e 7 com Leomir" e nao
+  pede datas. Mentoria exige o total (em branco virava 1).
+- **Servidor** (`lib/produtos-do-lancamento-manual.ts`, `prepararPedido`): decide quantidade e oferta;
+  recusa produto fora da lista, Mentoria de outro terapeuta e Diagnostico com data ou sessao entregue.
+- **Venda** (`lib/criar-lancamento-manual.ts`): grava `oferta_nome` ("Formato 1" ou "9 sessoes"). E isso
+  que faz o agendamento dividir certo e nao cair na tabela de precos.
+- **Uma venda por pedido:** o id da venda passa a ser `manual_<id do pedido>`, com o id lido do banco.
+  `sales.id` e chave primaria (conferido na API do banco), entao a segunda e recusada. Aprovacao que caiu
+  no meio e retomada completando o que faltou. A tela de aprovar trava enquanto envia.
+- **Corrigido junto:** reserva devolvida apos conflito guarda os ids novos; rejeitar e fechar so valem com
+  pedido ainda pendente; lembrete reconhece Diagnostico por oferta e produto (Kiwify e manual); Diagnostico
+  manual com formato aparece nos Pendentes do Pedro.
+- **Desenho descartado:** primeiro marquei o pedido como aprovado antes de criar a venda. A 1a rodada do
+  Codex mostrou varios jeitos de ficar preso (2 achados CRITICOS, 5 ALTOS). Foi revertido.
+- **Revisao Codex, abordagem A (quebrar a aprovacao) e B (seguir o dado pelo sistema):** 3 rodadas.
+  Rodada 3: B sem CRITICO/ALTO; A sem CRITICO e com 1 ALTO aberto: aprovar e recusar ao mesmo tempo + queda
+  do servidor no intervalo deixa venda sem sessao e pedido recusado. Nao corrigido: exige as 3 coisas juntas.
+- **Verificado:** 1075 testes, `tsc` limpo. No navegador com API simulada (nada gravado): formulario, envio
+  do pedido, e agendamento abrindo com 9 sessoes (Pedro 2, Leomir a partir da 3a) e Mentoria com 9.
+  NAO exercitado contra o banco real.
+- **Pendencias conhecidas, nao mexidas:** dashboard projeta quantidade errada de Diagnostico sem sessao
+  (tambem nas vendas reais da Kiwify); Mentoria "Pedro | Leomir" tem repasse de R$ 90 no fechamento, mas o
+  lancamento e o agendamento calculam comissao por percentual; venda em dobro do Gerson (`w3m4xj`) segue
+  no banco; queda com reserva recem-devolvida pode deixar bloqueio orfao na agenda; evento do Google criado
+  sem o id salvo fica sem vinculo.

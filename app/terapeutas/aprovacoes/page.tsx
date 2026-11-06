@@ -91,6 +91,8 @@ export default function TerapeutasAprovacoes() {
   const [lancMotivo, setLancMotivo] = useState('')
   const [lancErro, setLancErro] = useState('')
   const [lancSenhaOpen, setLancSenhaOpen] = useState(false)
+  const lancEnviando = useRef(false)
+  const [lancEnviandoTela, setLancEnviandoTela] = useState(false)
   const [lancPendente, setLancPendente] = useState<{ id: string; acao: 'aprovar' | 'rejeitar' } | null>(null)
   // Faltas (nao compareceu) da Denise/Leomir aguardando o dono decidir se paga a comissao.
   const [faltas, setFaltas] = useState<Record<string, unknown>[]>([])
@@ -233,7 +235,11 @@ export default function TerapeutasAprovacoes() {
   }
 
   async function confirmarLancamento(senhaAcao: string) {
-    if (!lancPendente) return
+    if (!lancPendente || lancEnviando.current) return
+    // Ref, nao so estado: dois cliques no mesmo instante enxergariam o estado
+    // antigo. A rota tambem recusa o segundo; aqui evita o erro na tela.
+    lancEnviando.current = true
+    setLancEnviandoTela(true)
     const { id, acao } = lancPendente
     setLancErro('')
     try {
@@ -247,12 +253,15 @@ export default function TerapeutasAprovacoes() {
         }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) { setLancErro(json.error ?? `Erro ${res.status}`); return }
+      if (!res.ok) { setLancErro(json.error ?? `Erro ${res.status}`); loadData(); return }
       setLancSenhaOpen(false); setLancPendente(null)
       setLancDecidindo(null); setLancMotivo('')
       loadData()
     } catch (e) {
       setLancErro(e instanceof Error ? e.message : String(e))
+    } finally {
+      lancEnviando.current = false
+      setLancEnviandoTela(false)
     }
   }
 
@@ -880,7 +889,7 @@ export default function TerapeutasAprovacoes() {
         descricao={lancPendente?.acao === 'aprovar'
           ? 'Ao confirmar, o sistema cria a venda, as sessões, o link do Meet e a comissão, e libera os horários reservados.'
           : 'Nada foi criado, então recusar só libera os horários que estavam reservados na agenda.'}
-        loading={false} erro={lancErro} />
+        loading={lancEnviandoTela} erro={lancErro} />
 
       <SenhaModal isOpen={faltaSenhaOpen}
         onClose={() => { setFaltaSenhaOpen(false); setFaltaPendente(null); setFaltaErro('') }}

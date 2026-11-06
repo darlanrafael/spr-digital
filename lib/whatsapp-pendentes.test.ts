@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { verificarSecretCron, vendaEntraNoLembrete } from './whatsapp-pendentes'
@@ -113,4 +114,11 @@ test('uma hora antes do corte, com fusos diferentes, fica FORA', () => {
     corteDoTerapeuta: '2026-08-01T03:00:00Z',
     dataHoraDaVenda: '2026-07-31T23:00:00-03:00',
   }), false)
+})
+
+test('a etiqueta do Diagnostico considera oferta e produto, para Kiwify e lancamento manual', () => {
+  const fonte = readFileSync(new URL('./whatsapp-pendentes.ts', import.meta.url), 'utf8')
+  const chamada = fonte.slice(fonte.indexOf('const formato = formatoDaVenda('), fonte.indexOf('if (formato) formatoPorSale'))
+  assert.match(chamada, /oferta_nome: s\.oferta_nome/)
+  assert.match(chamada, /produto: s\.produto/)
 })

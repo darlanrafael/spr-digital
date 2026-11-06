@@ -4,6 +4,7 @@ import { verificarSenhaUsuario } from '@/lib/terapeutas-auth'
 import { lerIdentidade } from '@/lib/identidade-da-chamada'
 import { podeAgirNaSessao } from '@/lib/sessao-do-terapeuta'
 import { datasDoLancamento, type PayloadLancamentoManual } from '@/lib/criar-lancamento-manual'
+import { prepararPedido } from '@/lib/produtos-do-lancamento-manual'
 import { avisoDeDuplicata, type VendaExistente } from '@/lib/lancamento-manual-duplicata'
 import { buscarConflitosAgenda } from '@/lib/agenda-conflitos'
 
@@ -62,6 +63,13 @@ export async function POST(req: NextRequest) {
   const { data: terapeuta, error: terapErr } = await client
     .from('terapeutas').select('id,nome').eq('id', payload.terapeuta_id).single()
   if (terapErr || !terapeuta) return NextResponse.json({ error: 'Terapeuta não encontrado' }, { status: 404 })
+
+  // Produto, quantidade e oferta: decididos aqui, nao pela tela. Vale para quem
+  // chamar a rota direto, e e o que grava o formato do Diagnostico no pedido.
+  const pedido = prepararPedido({ ...payload, terapeuta_nome: (terapeuta as { nome: string }).nome })
+  if (!pedido.ok) return NextResponse.json({ error: pedido.erro }, { status: 400 })
+  payload.total_sessoes = pedido.total_sessoes
+  payload.oferta_nome = pedido.oferta_nome
 
   // 1. As datas precisam fazer sentido ANTES de virar pedido: recusar aqui
   // custa um aviso; recusar na aprovação desperdiça a ida e volta inteira.

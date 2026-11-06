@@ -20,15 +20,21 @@ export type ProdutoDoLancamento = {
   /** O que a tela pergunta depois de escolher. */
   pergunta: 'quantidade' | 'formato'
   /** Terapeuta sugerido, quando o produto nomeia um so. */
-  terapeutaPadrao: 'pedro' | 'denise' | null
+  terapeutaPadrao: 'pedro' | 'denise' | 'leomir' | null
+  /** O que aparece na lista da tela. */
+  rotulo: string
 }
 
 export const PRODUTOS_DO_LANCAMENTO_MANUAL: ProdutoDoLancamento[] = [
-  { nome: 'Mentoria Particular - Pedro Roncada', pergunta: 'quantidade', terapeutaPadrao: 'pedro' },
-  { nome: 'Mentoria Particular - Denise Nascimento', pergunta: 'quantidade', terapeutaPadrao: 'denise' },
+  { nome: 'Mentoria Particular - Pedro Roncada', pergunta: 'quantidade', terapeutaPadrao: 'pedro', rotulo: 'Mentoria Particular - Pedro' },
+  { nome: 'Mentoria Particular - Denise Nascimento', pergunta: 'quantidade', terapeutaPadrao: 'denise', rotulo: 'Mentoria Particular - Denise' },
+  // O Leomir entrou em 02/10/2026, depois desta lista. Mesmo nome que a tela dele
+  // ja sugeria: "Pedro | Leomir" e lido como venda dos dois terapeutas.
+  { nome: 'Mentoria Particular - Leomir Santos', pergunta: 'quantidade', terapeutaPadrao: 'leomir', rotulo: 'Mentoria Particular - Leomir' },
   // O Diagnostico pergunta o FORMATO, nao a quantidade: a quantidade e a
   // divisao entre os dois terapeutas saem dele.
-  { nome: 'Diagnóstico Guiado: Programa de acompanhamento Individual', pergunta: 'formato', terapeutaPadrao: null },
+  { nome: 'Diagnóstico Guiado: Programa de acompanhamento Individual', pergunta: 'formato', terapeutaPadrao: null, rotulo: 'Diagnóstico Guiado - Pedro e Denise' },
+  { nome: 'Diagnóstico Guiado: Programa de acompanhamento Individual - Leomir', pergunta: 'formato', terapeutaPadrao: null, rotulo: 'Diagnóstico Guiado - Pedro e Leomir' },
 ]
 
 export function produtoDoLancamento(nome: string | null | undefined): ProdutoDoLancamento | null {
@@ -73,4 +79,78 @@ export function totalDeSessoes(params: {
 export function divisaoDoDiagnostico(formato: 1 | 2 | 3): { totalSessoes: number; sessoesPedro: number; sessoesDenise: number } {
   const f = SESSOES_POR_FORMATO_PUBLICO[formato]
   return { totalSessoes: f.totalSessoes, sessoesPedro: f.sessoesPedro, sessoesDenise: f.totalSessoes - f.sessoesPedro }
+}
+
+/** Quem continua depois do Pedro. Mesma regra de lib/terapeuta-do-diagnostico.ts: sem nome no produto, Denise. */
+function continuidade(produto: string): string {
+  return produto.toLowerCase().includes('leomir') ? 'Leomir' : 'Denise'
+}
+
+/** O texto que a tela mostra ao escolher o formato. `null` quando nao e Diagnostico ou falta o formato. */
+export function distribuicaoNaTela(produto: string | null | undefined, formato: 1 | 2 | 3 | null | undefined): string | null {
+  if (!formato || !ehDiagnosticoNoLancamento(produto)) return null
+  const d = divisaoDoDiagnostico(formato)
+  return `${d.totalSessoes} sessões: ${d.sessoesPedro} com Pedro e ${d.sessoesDenise} com ${continuidade(produto as string)}`
+}
+
+/** O produto ja vem escolhido pela tela do terapeuta. Vazio obriga a escolher. */
+export function produtoPadraoDoTerapeuta(nomeTerapeuta: string | null | undefined): string {
+  const alvo = chaveDoTerapeuta(nomeTerapeuta)
+  return PRODUTOS_DO_LANCAMENTO_MANUAL.find(p => alvo && p.terapeutaPadrao === alvo)?.nome ?? ''
+}
+
+function chaveDoTerapeuta(nome: string | null | undefined): 'pedro' | 'denise' | 'leomir' | null {
+  const n = (nome ?? '').toLowerCase()
+  return n.includes('pedro') ? 'pedro' : n.includes('denise') ? 'denise' : n.includes('leomir') ? 'leomir' : null
+}
+
+/**
+ * O que a lista mostra na tela de um terapeuta. As sessoes da Mentoria vao para
+ * o terapeuta da tela, entao oferecer a de outro criaria sessao e comissao na
+ * pessoa errada. O Diagnostico aparece em todas: quem divide e o agendamento.
+ */
+export function produtosDaTela(nomeTerapeuta: string | null | undefined): ProdutoDoLancamento[] {
+  const chave = chaveDoTerapeuta(nomeTerapeuta)
+  return PRODUTOS_DO_LANCAMENTO_MANUAL.filter(p => p.pergunta === 'formato' || p.terapeutaPadrao === chave)
+}
+
+export type PedidoPreparado =
+  | { ok: true; total_sessoes: number; oferta_nome: string }
+  | { ok: false; erro: string }
+
+/**
+ * Valida o pedido no servidor e decide quantidade e oferta. O que veio da tela
+ * nesses dois campos e ignorado no Diagnostico.
+ *
+ * A oferta gravada e o que faz o resto do sistema entender a venda depois:
+ * `formatoDaVenda` le "Formato N" e `sessoesDoNomeDaOferta` le "9 sessoes". Sem
+ * ela, o agendamento deduzia pelo preco e caia em 1 sessao (caso Maisa).
+ *
+ * Diagnostico nao aceita data nem sessao entregue: criarLancamentoManual cria
+ * tudo em UM terapeuta, e quem divide entre Pedro e o outro e o agendamento.
+ */
+export function prepararPedido(p: {
+  produto?: string | null
+  formato_diagnostico?: 1 | 2 | 3 | null
+  total_sessoes?: number | null
+  sessoes_entregues?: number | null
+  proxima_sessao_data?: string | null
+  /** Quando vem, a Mentoria precisa ser deste terapeuta. */
+  terapeuta_nome?: string | null
+}): PedidoPreparado {
+  if (ehDiagnosticoNoLancamento(p.produto)) {
+    const f = p.formato_diagnostico
+    if (f !== 1 && f !== 2 && f !== 3) return { ok: false, erro: 'Escolha o formato do Diagnóstico Guiado (1, 2 ou 3).' }
+    if (p.proxima_sessao_data || (p.sessoes_entregues ?? 0) > 0) {
+      return { ok: false, erro: 'No Diagnóstico Guiado as datas são escolhidas no agendamento, depois da aprovação. Deixe a próxima sessão e as entregues em branco.' }
+    }
+    return { ok: true, total_sessoes: SESSOES_POR_FORMATO_PUBLICO[f].totalSessoes, oferta_nome: `Formato ${f}` }
+  }
+  const dono = produtoDoLancamento(p.produto)?.terapeutaPadrao
+  if (p.terapeuta_nome && dono && dono !== chaveDoTerapeuta(p.terapeuta_nome)) {
+    return { ok: false, erro: 'Esta Mentoria é de outro terapeuta. Lance pela tela dele.' }
+  }
+  const t = totalDeSessoes({ produto: p.produto, quantidade: p.total_sessoes })
+  if (t.total === null) return { ok: false, erro: t.erro ?? 'Pedido inválido.' }
+  return { ok: true, total_sessoes: t.total, oferta_nome: `${t.total} ${t.total === 1 ? 'sessão' : 'sessões'}` }
 }
