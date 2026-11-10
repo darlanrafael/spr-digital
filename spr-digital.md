@@ -8028,3 +8028,51 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   Luiz R$ 297 (liquido 285,14). `data_hora` = hora da criacao da fatura (21:01:35 e 21:32:49 BRT), dia 01/11 certo.
 - Licao: o historico de webhook da Hubla guarda o que falhou e permite reprocessar; o nosso webhook ignora duplicata por
   order_id, entao reprocessar e seguro. Para a proxima queda: filtrar o dia + "Erros internos (5xx)" e reprocessar tudo.
+
+# 145. Botao "Contar O Resgate - CSP" nos Funis + erro da Meta deixa de ser escondido (10/11/2026) - AGUARDANDO PREVIA E DEPLOY
+
+- Pedido do dono (10/11): poder tirar o O RESGATE - CSP da conta do funil Como Ser Perdoado com um botao, e
+  voltar a contar com um clique. Mesmo design da pagina; so entram o botao, o aviso e a marca na esteira.
+  Ampliado no mesmo dia: dois defeitos dos criativos e o erro escondido da Meta (Funis, DRE, inicio, Fechamento).
+- Spec `docs/superpowers/specs/2026-11-10-botao-resgate-funis-design.md`; plano
+  `docs/superpowers/plans/2026-11-10-botao-resgate-funis.md` (4 rodadas Codex atacante + auditor + Gemini).
+  Branch `feat/botao-resgate-funis`, uma parte por vez, teste antes do codigo, 3 revisores Codex por parte.
+- **145.1 Botao (partes 1 a 3).** `ProdutoDoFunil.desligavel` (so o O RESGATE - CSP, Hubla
+  `4c7FpX4SdlqVQT0WJfOv`). `lib/funis/produto-desligavel.ts`: `produtoDesligavelDoFunil`,
+  `semProdutosDesligaveis` (regra de casamento de sempre: nome ou id + plataforma), `marcarForaDaConta`.
+  Rota `/api/funis/performance` le `semResgate=1` e filtra vendas e reembolsos DEPOIS do cache (o cache
+  guarda a lista inteira). Imersao ignora o parametro. Esteira continua com todas as vendas e marca o degrau
+  "fora da conta"; a soma da esteira desconta. Trafego nunca muda. Tela: botao no estilo do "Somente ativos",
+  ao lado das abas; aviso amarelo "O Resgate - CSP está fora da conta. Os números mostram o funil sem ele.";
+  abre sempre contando, volta a contar ao trocar de funil, recarregar ou sair; aviso e marca saem da resposta
+  (busca que falha deixa os numeros esmaecidos, sem desligar o botao sozinho).
+- **Numeros esperados (30 dias = 23/10 a 10/11, banco lido em 10/11 ~19:30 BRT):** contando 248 vendas,
+  bruto R$ 65.415,70, taxas R$ 1.927,42, imposto R$ 8.405,92, 26 reembolsos R$ 5.917,30. Sem o Resgate 231,
+  R$ 53.966,70, R$ 1.632,10, R$ 6.934,72, reembolsos iguais (Resgate: 17 vendas, R$ 11.449,00, 0 reembolso).
+- **145.2 Criativos (parte 4, defeitos antigos).** O "nao atribuido" aparece mesmo sem anuncio na lista; falha
+  da busca mostra "Não foi possível carregar os anúncios da Meta. Clique em Atualizar para tentar de novo."
+  em vermelho (antes dizia "Nenhum anúncio no período").
+- **145.3 Erro da Meta nos Funis (parte 5).** `RelatoMeta = { falhas }` opcional em `getCampanhaInsights`,
+  `getAdInsightsPorTermos`, `getCampanhaInsightsDiario`, `getAdsCreativeDetails` (lote ou anuncio com erro
+  conta falha e nao entra no mapa nem no cache de 5 min). `cacheCurto.get(..., guardar)` e
+  `lib/funis/busca-meta-funil.ts`: busca incompleta NAO fica no cache de 2 min. Avisos (`lib/funis/aviso-meta.ts`):
+  resumo "A Meta não respondeu por completo. O Investido, o ROAS e os anúncios podem estar menores do que o
+  real. Clique em Atualizar."; criativos "... Alguns anúncios podem estar faltando. Clique em Atualizar.".
+- **145.4 Erro da Meta no DRE, inicio e Fechamento (parte 6).** Problema provado rodando em 10/11 (5 contas
+  simuladas, conta C de R$ 8.000 falhando por HTTP 500, limite de chamadas ou rede): `getProjectInvestment`
+  devolvia R$ 22.000 no lugar de R$ 30.000 (R$ 25.047 no lugar de R$ 34.155 com 13,85%) SEM erro, e o
+  Fechamento deixava confirmar. O dono confere todo fechamento contra a Meta e sempre bateu: isto e segunda
+  protecao, NAO correcao de fechamento antigo. Agora: `fetchAccountPages` conta falha (inclusive corpo
+  nao-JSON, que antes derrubava a busca inteira). `/api/meta/custo-trafego` com falha devolve total 0 + erro
+  + `incompleto`. `/api/meta/insights` marca `incompleto` + aviso e deixou de ter cache do Next
+  (`dynamic = 'force-dynamic'` no lugar de `revalidate = 300`). Fechamento: `lib/trafego-do-fechamento.ts`
+  (`podeConfirmarTrafego`, `respostaMetaCompleta`); "Confirmar fechamento" so libera com busca completa,
+  terminada, com os mesmos termos e datas da tela (sem termos: so com total 0); texto ao lado do botao
+  "O custo de tráfego não veio completo da Meta. Busque de novo antes de confirmar o fechamento."; erro da busca
+  "A Meta não respondeu por completo. Clique em Buscar de novo antes de fechar."; busca superada e ignorada;
+  tirar o ultimo termo zera o custo. DRE e card de Meta Ads do inicio: "A Meta não respondeu por completo. O
+  valor de Meta Ads pode estar menor do que o real. Atualize a página."
+- **Verificado:** 1155 testes, `tsc` limpo, `next build` ok. Mutantes mortos: id sem plataforma, esteira zerada,
+  cache sem `guardar`. Os 3 erros de eslint `set-state-in-effect` da pagina de Funis ja existiam antes.
+- **Falta:** previa no localhost com o dono (so leitura, NAO confirmar fechamento: banco de producao) e deploy
+  quando ele pedir.
