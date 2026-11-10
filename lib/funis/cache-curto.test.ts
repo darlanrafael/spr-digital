@@ -46,3 +46,30 @@ test('sem bust, passado o TTL, reexecuta a funcao', async () => {
   assert.equal(b, 'v2')
   assert.equal(chamadas, 2)
 })
+
+// guardar (Task 5, dono 10/11/2026): resultado incompleto da Meta nao fica no cache.
+test('guardar devolvendo false: devolve o valor mas nao guarda (proxima chamada reexecuta)', async () => {
+  let chamadas = 0
+  const c = criarCacheCurto(1000, () => 0)
+  const a = await c.get('k', async () => { chamadas++; return 'incompleto' }, false, () => false)
+  const b = await c.get('k', async () => { chamadas++; return 'bom' })
+  assert.equal(a, 'incompleto')
+  assert.equal(b, 'bom')
+  assert.equal(chamadas, 2)
+})
+
+test('guardar false com bust nao apaga o valor bom ja guardado', async () => {
+  const c = criarCacheCurto(1000, () => 0)
+  await c.get('k', async () => 'bom')
+  const fresco = await c.get('k', async () => 'incompleto', true, () => false)
+  assert.equal(fresco, 'incompleto')
+  assert.equal(await c.get('k', async () => 'nunca'), 'bom')
+})
+
+test('guardar recebe o valor e true guarda normalmente', async () => {
+  const vistos: string[] = []
+  const c = criarCacheCurto(1000, () => 0)
+  await c.get('k', async () => 'v1', false, v => { vistos.push(v); return true })
+  assert.deepEqual(vistos, ['v1'])
+  assert.equal(await c.get('k', async () => 'v2'), 'v1')
+})

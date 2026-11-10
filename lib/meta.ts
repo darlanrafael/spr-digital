@@ -6,6 +6,15 @@ export interface MetaCampanha {
   accountId: string
 }
 
+/**
+ * Relato de falha da Meta (dono 10/11/2026): quem passa um relato fica sabendo
+ * quantas buscas pararam por erro (rede, HTTP, json.error, corpo nao-JSON, item
+ * de lote com erro). Sem relato, o comportamento e o de sempre (fail-open
+ * silencioso). Ver Task 5/6 do plano 2026-11-10-botao-resgate-funis.
+ */
+export type RelatoMeta = { falhas: number }
+const falhou = (relato?: RelatoMeta) => { if (relato) relato.falhas++ }
+
 type RawCampaign = { name: string; insights?: { data?: Array<{ spend: string }> } }
 
 function getToken(): string | null {
@@ -260,6 +269,7 @@ async function fetchInsights(
   dateParam: string,
   token: string,
   filtering?: string,
+  relato?: RelatoMeta,
 ): Promise<AdsRow[]> {
   let nextUrl: string | null =
     `${BASE_URL}/act_${accountId}/insights?level=${level}&fields=${fields}&${dateParam}&limit=500` +
@@ -269,15 +279,15 @@ async function fetchInsights(
   while (nextUrl) {
     let res: Response
     try { res = await fetch(nextUrl) } catch (err) {
-      console.error('[Meta API] Erro de rede (insights):', accountId, err); break
+      console.error('[Meta API] Erro de rede (insights):', accountId, err); falhou(relato); break
     }
     try {
-      if (!res.ok) { console.error('[Meta API] Erro HTTP (insights):', accountId, res.status, (await res.text()).slice(0, 300)); break }
+      if (!res.ok) { falhou(relato); console.error('[Meta API] Erro HTTP (insights):', accountId, res.status, (await res.text()).slice(0, 300)); break }
       const json = await res.json() as { data?: AdsRow[]; paging?: { next?: string }; error?: { message: string } }
-      if (json.error) { console.error('[Meta API] Erro (insights):', accountId, json.error.message); break }
+      if (json.error) { console.error('[Meta API] Erro (insights):', accountId, json.error.message); falhou(relato); break }
       all.push(...(json.data ?? []))
       nextUrl = json.paging?.next ?? null
-    } catch (err) { console.error('[Meta API] parse (insights):', accountId, err); break } // fail-open no parse (item 121)
+    } catch (err) { if (res.ok) falhou(relato); console.error('[Meta API] parse (insights):', accountId, err); break } // fail-open no parse (item 121)
   }
   return all
 }
@@ -289,11 +299,12 @@ export async function getCampanhaInsights(
   dateStart: string,
   dateEnd: string,
   datePreset?: string,
+  relato?: RelatoMeta,
 ): Promise<Record<string, unknown>[]> {
   const token = getToken()
   if (!token) return []
   const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
-  return fetchInsights(accountId, 'campaign', `campaign_name,${INSIGHT_FIELDS}`, dateParam, token)
+  return fetchInsights(accountId, 'campaign', `campaign_name,${INSIGHT_FIELDS}`, dateParam, token, undefined, relato)
 }
 
 // RÁPIDO: anúncios que TIVERAM ENTREGA no período (insights nível ad), filtrados
@@ -302,14 +313,14 @@ export async function getCampanhaInsights(
 // depois, em lote, só pros ads entregues. Alimenta a visão "somente ativos" dos
 // criativos sem puxar os anúncios parados (que fazem a Imersão ter 300+ ads).
 export async function getAdInsightsPorTermos(
-  accountId: string, dateStart: string, dateEnd: string, termos: string[], datePreset?: string,
+  accountId: string, dateStart: string, dateEnd: string, termos: string[], datePreset?: string, relato?: RelatoMeta,
 ): Promise<Record<string, unknown>[]> {
   const token = getToken(); if (!token) return []
   const ts = (termos ?? []).map(t => t.trim()).filter(Boolean); if (ts.length === 0) return []
   const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
   const fields = `ad_id,ad_name,campaign_name,${INSIGHT_FIELDS}`
   const porTermo = await Promise.all(ts.map(termo =>
-    fetchInsights(accountId, 'ad', fields, dateParam, token, JSON.stringify([{ field: 'campaign.name', operator: 'CONTAIN', value: termo }])),
+    fetchInsights(accountId, 'ad', fields, dateParam, token, JSON.stringify([{ field: 'campaign.name', operator: 'CONTAIN', value: termo }]), relato),
   ))
   const vistos = new Set<string>(); const out: Record<string, unknown>[] = []
   for (const row of porTermo.flat()) {
@@ -338,6 +349,8 @@ type OpcoesCriativo = {
   agora?: () => number
   /** Validade do cache em ms (default 5 min). */
   ttl?: number
+  /** Conta as falhas (lote ou id com erro). Ver RelatoMeta. */
+  relato?: RelatoMeta
 }
 
 export async function getAdsCreativeDetails(
@@ -371,19 +384,26 @@ export async function getAdsCreativeDetails(
   const buscarLote = async (lote: string[]): Promise<void> => {
     const url = `${BASE_URL}/?ids=${lote.join(',')}&fields=${fields}&access_token=${token}`
     let res: Response
-    try { res = await fetch(url) } catch (err) { console.error('[Meta API] rede (creative details):', err); return }
+    try { res = await fetch(url) } catch (err) { console.error('[Meta API] rede (creative details):', err); falhou(opts.relato); return }
     // fail-open tambem no PARSE: corpo nao-JSON (pagina de erro HTML, body truncado)
     // nao pode derrubar os outros lotes/contas. Ver item 121 do spr-digital.md.
     try {
-      if (!res.ok) { console.error('[Meta API] HTTP (creative details):', res.status, (await res.text()).slice(0, 200)); return }
-      const json = await res.json() as Record<string, unknown>
-      for (const id of Object.keys(json)) {
-        if (id === 'error') continue
-        const detail = json[id] as Record<string, unknown>
-        map.set(id, detail)
-        cache.set(id, { t: agora(), detail })
+      if (!res.ok) { falhou(opts.relato); console.error('[Meta API] HTTP (creative details):', res.status, (await res.text()).slice(0, 200)); return }
+      const json = await res.json() as unknown
+      if (!json || typeof json !== 'object' || Array.isArray(json) || 'error' in json) {
+        console.error('[Meta API] erro no lote (creative details)'); falhou(opts.relato); return
       }
-    } catch (err) { console.error('[Meta API] parse (creative details):', err); return }
+      // Percorre os ids PEDIDOS (nao as chaves da resposta). Ausente, false,
+      // null, nao-objeto ou { error } = falha: fica fora do mapa e do cache.
+      let ruins = 0
+      for (const id of lote) {
+        const detail = (json as Record<string, unknown>)[id]
+        if (!detail || typeof detail !== 'object' || Array.isArray(detail) || 'error' in detail) { ruins++; continue }
+        map.set(id, detail as Record<string, unknown>)
+        cache.set(id, { t: agora(), detail: detail as Record<string, unknown> })
+      }
+      if (ruins > 0) { console.error('[Meta API] ids sem detalhe (creative details):', ruins); falhou(opts.relato) }
+    } catch (err) { if (res.ok) falhou(opts.relato); console.error('[Meta API] parse (creative details):', err); return }
   }
 
   // Lotes em PARALELO (antes era em serie), em ondas de ate `limiteConcorrencia`
@@ -402,6 +422,7 @@ export async function getCampanhaInsightsDiario(
   dateStart: string,
   dateEnd: string,
   datePreset?: string,
+  relato?: RelatoMeta,
 ): Promise<{ campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[]> {
   const token = getToken()
   if (!token) return []
@@ -411,14 +432,14 @@ export async function getCampanhaInsightsDiario(
   const all: { campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[] = []
   while (nextUrl) {
     let res: Response
-    try { res = await fetch(nextUrl) } catch (err) { console.error('[Meta API] rede (camp diário):', accountId, err); break }
+    try { res = await fetch(nextUrl) } catch (err) { console.error('[Meta API] rede (camp diário):', accountId, err); falhou(relato); break }
     try {
-      if (!res.ok) { console.error('[Meta API] HTTP (camp diário):', accountId, res.status, (await res.text()).slice(0, 200)); break }
+      if (!res.ok) { falhou(relato); console.error('[Meta API] HTTP (camp diário):', accountId, res.status, (await res.text()).slice(0, 200)); break }
       const json = await res.json() as { data?: typeof all; paging?: { next?: string }; error?: { message: string } }
-      if (json.error) { console.error('[Meta API] erro (camp diário):', accountId, json.error.message); break }
+      if (json.error) { console.error('[Meta API] erro (camp diário):', accountId, json.error.message); falhou(relato); break }
       all.push(...(json.data ?? []))
       nextUrl = json.paging?.next ?? null
-    } catch (err) { console.error('[Meta API] parse (camp diário):', accountId, err); break } // fail-open no parse (item 121)
+    } catch (err) { if (res.ok) falhou(relato); console.error('[Meta API] parse (camp diário):', accountId, err); break } // fail-open no parse (item 121)
   }
   return all
 }

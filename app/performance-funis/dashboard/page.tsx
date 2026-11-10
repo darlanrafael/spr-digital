@@ -115,6 +115,8 @@ function Conteudo() {
   const [carregandoCriativos, setCarregandoCriativos] = useState(false)
   // Falha da busca dos criativos (antes caía em "Nenhum anúncio no período").
   const [erroCriativos, setErroCriativos] = useState<string | null>(null)
+  // A Meta respondeu os criativos pela metade (alguns anúncios podem faltar).
+  const [criativosIncompletos, setCriativosIncompletos] = useState(false)
   const [somenteAtivos, setSomenteAtivos] = useState(true)
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -158,7 +160,7 @@ function Conteudo() {
   // Limpa a tela só quando TROCA de funil (aí sim mostra o "carregando" cheio).
   // Mudar só o PERÍODO não limpa: mantém os números atuais e troca quando chegam.
   useEffect(() => {
-    setD(null); setCriativos([]); setNaoAtribuido({ vendas: 0, faturamento: 0 }); setPagVendas(0)
+    setD(null); setCriativos([]); setNaoAtribuido({ vendas: 0, faturamento: 0 }); setPagVendas(0); setCriativosIncompletos(false)
   }, [funilId])
 
   // Dados do funil selecionado. Duas buscas: o RESUMO (rápido: funil, resultado,
@@ -184,11 +186,12 @@ function Conteudo() {
   useEffect(() => {
     if (!funilId) return
     let cancelado = false
-    setCriativos([]); setNaoAtribuido({ vendas: 0, faturamento: 0 }); setCarregandoCriativos(true); setPagina(0); setErroCriativos(null)
+    setCriativos([]); setNaoAtribuido({ vendas: 0, faturamento: 0 }); setCarregandoCriativos(true); setPagina(0); setErroCriativos(null); setCriativosIncompletos(false)
     fetch(`/api/funis/performance?funilId=${funilId}&${query}&criativos=1${somenteAtivos ? '' : '&todos=1'}${semResgate}${noCache}`)
       .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Falha'); return j })
-      .then((j: { criativos: Criativo[]; naoAtribuido: { vendas: number; faturamento: number } }) => {
+      .then((j: { criativos: Criativo[]; naoAtribuido: { vendas: number; faturamento: number }; metaIncompleta?: boolean }) => {
         if (cancelado) return
+        setCriativosIncompletos(j.metaIncompleta === true)
         setCriativos(j.criativos || [])
         setNaoAtribuido(j.naoAtribuido || { vendas: 0, faturamento: 0 })
       })
@@ -445,6 +448,9 @@ function Conteudo() {
                 ? 'Anúncios ATIVOS agora que gastaram no período, do maior volume de vendas para o menor. Vendas atribuídas pela UTM.'
                 : 'Todos que gastaram no período (ativos e pausados).'}
             </div>
+            {criativosIncompletos && !erroCriativos && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">A Meta não respondeu por completo. Alguns anúncios podem estar faltando. Clique em Atualizar.</div>
+            )}
 
             {carregandoCriativos && criativos.length === 0 ? (
               <div className="mt-4 flex items-center gap-2 text-sm text-[#9CA3AF]">

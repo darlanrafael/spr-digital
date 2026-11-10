@@ -4,8 +4,9 @@ import { lerIdentidade, podeVerFunis } from '@/lib/identidade-da-chamada'
 import { janelaDoPeriodo } from '@/lib/funis/janela-do-periodo'
 import {
   getAccountIds, getCampanhaInsights, getCampanhaInsightsDiario,
-  getAdInsightsPorTermos, getAdsCreativeDetails,
+  getAdInsightsPorTermos, getAdsCreativeDetails, type RelatoMeta,
 } from '@/lib/meta'
+import { avisoDoResumoMeta, AVISO_META_INCOMPLETA } from '@/lib/funis/aviso-meta'
 import {
   normalizarAd, normalizarInsight, adsDoFunil, agregarFunil, metricasDoCriativo, type AdInsight,
 } from '@/lib/funis/meta-funil'
@@ -52,7 +53,6 @@ export async function GET(req: NextRequest) {
     const excluir = sp.get('semResgate') === '1' && (!funilId || desligavel !== null)
 
     const metaDisponivel = !!process.env.META_ACCESS_TOKEN
-    const aviso = metaDisponivel ? null : 'Os dados da Meta estão indisponíveis no momento. Verifique a conexão/token.'
     const contas = getAccountIds()
 
     // CRIATIVOS = parte LENTA, numa chamada à parte (?criativos=1). Busca vendas e
@@ -66,14 +66,21 @@ export async function GET(req: NextRequest) {
       //   "Somente ativos" (padrão) -> só os que tiveram GASTO (>0)
       //   "todos" (?todos=1)        -> inclui os que rodaram sem gastar/pausados
       const todos = sp.get('todos') === '1'
+      // Erro da Meta não fica escondido (10/11/2026): cada busca leva um relato de
+      // falha; resultado com falha volta com falhou=true e NÃO fica no cache.
+      type AdEntregue = ReturnType<typeof metricasDoCriativo> & { ativo: boolean }
+      const semAds = (falhou: boolean) => Promise.resolve({ linhas: [] as AdEntregue[], falhou })
       const adsEntregues = (funil.termosCampanha.length === 0 || semMeta)
-        ? Promise.resolve([] as (ReturnType<typeof metricasDoCriativo> & { ativo: boolean })[])
-        : cacheCurto.get(`adsEntregues|${funil.id}|${periodo}`, async () => {
-          const rows = (await Promise.all(contas.map(a => getAdInsightsPorTermos(a, dateStart, dateEnd, funil.termosCampanha)))).flat()
+        ? semAds(false)
+        : !metaDisponivel
+          ? semAds(true) // sem token: não chama a Meta, não guarda e avisa
+          : cacheCurto.get(`adsEntregues|${funil.id}|${periodo}`, async () => {
+          const relato: RelatoMeta = { falhas: 0 }
+          const rows = (await Promise.all(contas.map(a => getAdInsightsPorTermos(a, dateStart, dateEnd, funil.termosCampanha, undefined, relato)))).flat()
           const ids = [...new Set(rows.map(r => String(r.ad_id)).filter(Boolean))]
           // bust = botao Atualizar (?nocache=1): fura tambem o cache por anuncio.
-          const det = await getAdsCreativeDetails(ids, 6, { bust })
-          return rows.map(row => {
+          const det = await getAdsCreativeDetails(ids, 6, { bust, relato })
+          const linhas: AdEntregue[] = rows.map(row => {
             const d = det.get(String(row.ad_id)) ?? {}
             const m = metricasDoCriativo(normalizarAd({
               id: String(row.ad_id),
@@ -87,12 +94,14 @@ export async function GET(req: NextRequest) {
             // em revisao, adset/campanha pausada etc. -> nao ativo.
             return { ...m, ativo: (d.effective_status as string) === 'ACTIVE' }
           })
-        }, bust)
-      const [vendasTodas, adsBase] = await Promise.all([
+          return { linhas, falhou: relato.falhas > 0 }
+        }, bust, v => !v.falhou)
+      const [vendasTodas, adsRes] = await Promise.all([
         cacheCurto.get(`vendas|${periodo}`, async () => getSalesParaFunil(dateStart, dateEnd, ['aprovada']), bust),
         adsEntregues,
       ])
       const vendas = excluir ? semProdutosDesligaveis(vendasTodas) : vendasTodas
+      const adsBase = adsRes.linhas
       // Só anúncios que GASTARAM no período (>0). Marcado (padrão): só os ATIVOS
       // agora. Desmarcado (todos): ativos + pausados, desde que tenham gasto.
       const ads = adsBase.filter(a => a.spend > 0 && (todos || a.ativo))
@@ -108,16 +117,30 @@ export async function GET(req: NextRequest) {
       const criativos = montarCriativos(adsMeta, vendasDoFunil.map((v: Sale) => ({
         utm_content: v.utm_content, valor_pago_cliente: v.valor_pago_cliente, ehPrincipal: ehProdutoPrincipal(v, funil.id),
       })))
-      return NextResponse.json({ criativos: criativos.linhas, naoAtribuido: criativos.naoAtribuido, desligavel, contandoDesligavel: !excluir })
+      return NextResponse.json({ criativos: criativos.linhas, naoAtribuido: criativos.naoAtribuido, desligavel, contandoDesligavel: !excluir, metaIncompleta: adsRes.falhou })
     }
 
     // RESUMO / VISÃO GERAL: as 4 buscas EM PARALELO (antes eram em série).
-    const [vendasTodas, reembolsosTodos, campanhas, diariosCamp] = await Promise.all([
+    const [vendasTodas, reembolsosTodos, campsRes, diaRes] = await Promise.all([
       cacheCurto.get(`vendas|${periodo}`, async () => getSalesParaFunil(dateStart, dateEnd, ['aprovada']), bust),
       cacheCurto.get(`reemb|${periodo}`, async () => getReembolsosParaFunil(dateStart, dateEnd), bust),
-      cacheCurto.get(`camps|${periodo}`, async () => semMeta ? [] as AdInsight[] : (await Promise.all(contas.map(a => getCampanhaInsights(a, dateStart, dateEnd)))).flat().map(normalizarInsight) as AdInsight[], bust),
-      cacheCurto.get(`campdia|${periodo}`, async () => semMeta ? [] : (await Promise.all(contas.map(a => getCampanhaInsightsDiario(a, dateStart, dateEnd)))).flat(), bust),
+      cacheCurto.get(`camps|${periodo}`, async () => {
+        if (semMeta) return { linhas: [] as AdInsight[], falhou: false }
+        const relato: RelatoMeta = { falhas: 0 }
+        const linhas = (await Promise.all(contas.map(a => getCampanhaInsights(a, dateStart, dateEnd, undefined, relato)))).flat().map(normalizarInsight) as AdInsight[]
+        return { linhas, falhou: relato.falhas > 0 }
+      }, bust, v => !v.falhou),
+      cacheCurto.get(`campdia|${periodo}`, async () => {
+        if (semMeta) return { linhas: [] as Awaited<ReturnType<typeof getCampanhaInsightsDiario>>, falhou: false }
+        const relato: RelatoMeta = { falhas: 0 }
+        const linhas = (await Promise.all(contas.map(a => getCampanhaInsightsDiario(a, dateStart, dateEnd, undefined, relato)))).flat()
+        return { linhas, falhou: relato.falhas > 0 }
+      }, bust, v => !v.falhou),
     ])
+    const campanhas = campsRes.linhas
+    const diariosCamp = diaRes.linhas
+    const aviso = avisoDoResumoMeta({ semToken: !metaDisponivel, falhouCampanhas: campsRes.falhou, falhouDiario: diaRes.falhou, visaoGeral: !funilId })
+    const metaIncompleta = !!aviso && aviso.includes(AVISO_META_INCOMPLETA)
 
     const vendas = excluir ? semProdutosDesligaveis(vendasTodas) : vendasTodas
     const reembolsos = excluir ? semProdutosDesligaveis(reembolsosTodos) : reembolsosTodos
@@ -134,7 +157,7 @@ export async function GET(req: NextRequest) {
           resultadoLiquido: r.resultadoLiquido, roas: r.roas,
         }
       })
-      return NextResponse.json({ funis, periodo: { de: dateStart, ate: dateEnd }, aviso })
+      return NextResponse.json({ funis, periodo: { de: dateStart, ate: dateEnd }, aviso, metaIncompleta })
     }
 
     // ---- Detalhe de um funil ----
@@ -211,6 +234,7 @@ export async function GET(req: NextRequest) {
       contandoDesligavel: !excluir,
       periodo: { de: dateStart, ate: dateEnd },
       aviso,
+      metaIncompleta,
     })
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Erro inesperado' }, { status: 500 })
