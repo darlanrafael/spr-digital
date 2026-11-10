@@ -166,6 +166,10 @@ function DREContent() {
           </div>
         </div>
 
+        {/* Vale para as duas abas: DRE e Fluxo de Caixa usam o mesmo Meta Ads. */}
+        {metaAdsIncompleto && !metaAdsLoading && (
+          <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">{AVISO_DRE_META_INCOMPLETA}</p>
+        )}
         {toggle === 'dre' ? (
           <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">
             <div className="p-4 border-b border-white/10">
@@ -242,9 +246,6 @@ function DREContent() {
                 </tbody>
               </table>
             </div>
-            {metaAdsIncompleto && !metaAdsLoading && (
-              <p className="border-t border-white/10 px-4 py-3 text-xs text-amber-300">{AVISO_DRE_META_INCOMPLETA}</p>
-            )}
           </div>
         ) : (
           <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">

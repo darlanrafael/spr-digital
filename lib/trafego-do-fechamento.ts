@@ -44,3 +44,17 @@ export function respostaMetaCompleta(o: {
 export const ERRO_TRAFEGO_INCOMPLETO = 'A Meta não respondeu por completo. Clique em Buscar de novo antes de fechar.'
 export const BLOQUEIO_FECHAMENTO_TRAFEGO = 'O custo de tráfego não veio completo da Meta. Busque de novo antes de confirmar o fechamento.'
 export const AVISO_DRE_META_INCOMPLETA = 'A Meta não respondeu por completo. O valor de Meta Ads pode estar menor do que o real. Atualize a página.'
+
+/**
+ * Numera as buscas de trafego do Fechamento: so a resposta da busca VIGENTE e
+ * aplicada. iniciar() abre uma busca nova (supera as anteriores); invalidar()
+ * descarta a que estiver em andamento (ex.: tirou o ultimo termo).
+ */
+export function criarSequenciaDeBusca() {
+  let atual = 0
+  return {
+    iniciar: () => ++atual,
+    invalidar: () => { atual++ },
+    vigente: (n: number) => n === atual,
+  }
+}

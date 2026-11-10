@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   podeConfirmarTrafego, respostaMetaCompleta,
-  ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO, AVISO_DRE_META_INCOMPLETA,
+  ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO, AVISO_DRE_META_INCOMPLETA, criarSequenciaDeBusca,
 } from './trafego-do-fechamento'
 
 // Trava do "Confirmar fechamento" (dono 10/11/2026, Task 6 do plano
@@ -36,9 +36,12 @@ test('termo repetido nao engana a comparacao', () =>
 test('respostaMetaCompleta: HTTP nao-ok (401/403/500) = incompleta', () =>
   assert.equal(respostaMetaCompleta({ ok: false, corpo: { total: 10 } as never }), false))
 test('respostaMetaCompleta: corpo null = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: null }), false))
-test('respostaMetaCompleta: { error } = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { error: 'x' } }), false))
-test('respostaMetaCompleta: { erro } = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { erro: 'x' } }), false))
-test('respostaMetaCompleta: { incompleto: true } = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { incompleto: true } }), false))
+const valida = { total: 22000, campanhas: [{ name: 'CSP', spend: 22000, accountId: 'A' }] }
+test('respostaMetaCompleta: { error } com total = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { ...valida, error: 'x' } as never }), false))
+test('respostaMetaCompleta: { erro } com total = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { ...valida, erro: 'x' } as never }), false))
+test('respostaMetaCompleta: { incompleto: true } com total = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { ...valida, incompleto: true } as never }), false))
+test('respostaMetaCompleta: total 0 sem gasto = completa', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { total: 0, campanhas: [] } as never }), true))
+test('termos + busca completa com total 0 (periodo sem gasto): libera', () => assert.equal(podeConfirmarTrafego({ ...base, total: 0 }), true))
 test('respostaMetaCompleta: resposta normal = completa', () =>
   assert.equal(respostaMetaCompleta({ ok: true, corpo: { total: 10, campanhas: [] } as never }), true))
 
@@ -46,4 +49,33 @@ test('textos exatos (dono 10/11/2026)', () => {
   assert.equal(ERRO_TRAFEGO_INCOMPLETO, 'A Meta não respondeu por completo. Clique em Buscar de novo antes de fechar.')
   assert.equal(BLOQUEIO_FECHAMENTO_TRAFEGO, 'O custo de tráfego não veio completo da Meta. Busque de novo antes de confirmar o fechamento.')
   assert.equal(AVISO_DRE_META_INCOMPLETA, 'A Meta não respondeu por completo. O valor de Meta Ads pode estar menor do que o real. Atualize a página.')
+})
+
+// Ordem das respostas no Fechamento (revisao Codex t6): resposta de busca
+// superada (nova busca ou ultimo termo removido) nunca e aplicada.
+test('sequencia: busca nova supera a antiga', () => {
+  const seq = criarSequenciaDeBusca()
+  const b1 = seq.iniciar()
+  const b2 = seq.iniciar()
+  assert.equal(seq.vigente(b1), false)
+  assert.equal(seq.vigente(b2), true)
+})
+test('sequencia: remover o ultimo termo invalida a busca em andamento', () => {
+  const seq = criarSequenciaDeBusca()
+  const b1 = seq.iniciar()
+  seq.invalidar()
+  assert.equal(seq.vigente(b1), false)
+})
+test('sequencia: buscar, remover o ultimo termo, readicionar e buscar de novo: so a ultima vale', () => {
+  const seq = criarSequenciaDeBusca()
+  const b1 = seq.iniciar()
+  seq.invalidar()
+  const b2 = seq.iniciar()
+  assert.equal(seq.vigente(b1), false)
+  assert.equal(seq.vigente(b2), true)
+})
+test('sequencia: sequencias independentes nao se misturam', () => {
+  const a = criarSequenciaDeBusca(), b = criarSequenciaDeBusca()
+  const na = a.iniciar(); b.iniciar(); b.iniciar()
+  assert.equal(a.vigente(na), true)
 })

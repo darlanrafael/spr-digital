@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { podeConfirmarTrafego, respostaMetaCompleta, ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO } from '@/lib/trafego-do-fechamento'
+import { podeConfirmarTrafego, respostaMetaCompleta, criarSequenciaDeBusca, ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO } from '@/lib/trafego-do-fechamento'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Copy, Download, Hash, Loader2, Search, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
@@ -233,7 +233,7 @@ function FechamentosContent() {
     buscaCompleta: null,
   })
   // Número da busca de tráfego mais recente: resposta de busca superada é ignorada.
-  const buscaTrafegoSeq = useRef(0)
+  const buscaTrafegoSeq = useRef(criarSequenciaDeBusca())
   // Trava do "Confirmar fechamento" (dono 10/11/2026): o custo de tráfego só vai
   // para o fechamento se veio de uma busca completa, terminada, com os mesmos
   // termos e datas da tela. Ver lib/trafego-do-fechamento.ts.
@@ -309,7 +309,7 @@ function FechamentosContent() {
 
   function removeTermoTrafego(termo: string) {
     // Tirou o último termo: sem tráfego. Invalida a busca em andamento e zera tudo.
-    if (trafego.termos.every(x => x === termo)) buscaTrafegoSeq.current++
+    if (trafego.termos.every(x => x === termo)) buscaTrafegoSeq.current.invalidar()
     setTrafego(t => {
       const termos = t.termos.filter(x => x !== termo)
       if (termos.length > 0) return { ...t, termos }
@@ -327,7 +327,7 @@ function FechamentosContent() {
       setTrafego(t => ({ ...t, erro: 'Data de início posterior à data de fim' }))
       return
     }
-    const seq = ++buscaTrafegoSeq.current
+    const seq = buscaTrafegoSeq.current.iniciar()
     const pedido = { termos: [...trafego.termos], inicio: trafego.periodo.inicio, fim: trafego.periodo.fim }
     setTrafego(t => ({ ...t, loading: true, erro: null, buscaCompleta: null }))
     try {
@@ -335,7 +335,7 @@ function FechamentosContent() {
       pedido.termos.forEach(termo => params.append('termos', termo))
       const res = await fetch(`/api/meta/custo-trafego?${params.toString()}`, { cache: 'no-store' })
       const data = await res.json().catch(() => null) as { total?: number; campanhas?: { name: string; spend: number; accountId: string }[]; erro?: string; error?: string; incompleto?: boolean } | null
-      if (seq !== buscaTrafegoSeq.current) return // busca superada por outra
+      if (!buscaTrafegoSeq.current.vigente(seq)) return // busca superada por outra
       if (!respostaMetaCompleta({ ok: res.ok, corpo: data })) {
         // Incompleta (conta da Meta com erro, sessão expirada, corpo quebrado):
         // nada de valor parcial na tela; pede nova busca.
@@ -353,8 +353,8 @@ function FechamentosContent() {
       }))
       setTrafegoPage(1)
     } catch {
-      if (seq !== buscaTrafegoSeq.current) return
-      setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: 'Falha ao buscar custo de tráfego', buscaCompleta: null }))
+      if (!buscaTrafegoSeq.current.vigente(seq)) return
+      setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: ERRO_TRAFEGO_INCOMPLETO, buscaCompleta: null }))
     }
   }
 
