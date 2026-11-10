@@ -8008,3 +8008,23 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   lancamento e o agendamento calculam comissao por percentual; venda em dobro do Gerson (`w3m4xj`) segue
   no banco; queda com reserva recem-devolvida pode deixar bloqueio orfao na agenda; evento do Google criado
   sem o id salvo fica sem vinculo.
+
+# 144. Conferencia das vendas da Hubla de 01/11/2026 (janela do bloqueio do item 141) - 2 vendas faltando
+
+- Planilha exportada pelo dono da Hubla (aba "01-11-2026 - 02-11-2026", 15 faturas pagas, horarios em BRT)
+  comparada pelo ID da fatura com `sales.order_id` (formato `<fatura>-<produto>`), conferido rodando em 08/11.
+- 13 de 15 estao no banco. **Faltam as 2 que cairam no bloqueio (19:01 a 21:53 BRT):**
+  - `6af299eb-206c-49a2-a746-63ef8926e78e`: Douglas Ayalas, 21:01 BRT, PIX, R$ 438,90 (liquido R$ 422,09),
+    COMBO - OS PRIMEIROS PASSOS DA RESTAURACAO - CSP + order bumps COMO SER PERDOADO e ACESSO VITALICIO - CSP (3 itens).
+  - `8ec40d7f-6069-42d3-8a29-661a78b83e86`: Luiz Henrique Westphal, criada 21:32 e paga 21:40 BRT, PIX,
+    R$ 297,00 (liquido R$ 285,14), COMO SER PERDOADO.
+- Nenhuma das duas aparece por order_id, nome ou e-mail. Confirma que webhook que falhou no bloqueio NAO foi
+  reenviado sozinho pela Hubla.
+- Kiwify: o dono confirmou em 08/11 que nao houve venda na Kiwify em 01/11. Banco coerente: 27 vendas em 31/10, zero em 01/11 e 02/11, 39 em 03/11. Kiwify fechada.
+- **RESOLVIDO 08/11/2026 ~18:11 BRT:** o dono achou os 4 eventos com "500 ERR" no painel da Hubla (Integracoes >
+  Automacoes > Webhook > Historico, filtro 01/11 + Status "Erros internos (5xx)") e reprocessou. Conferido no banco:
+  4 `webhook_events` `invoice.payment_succeeded` -> `sale_created`; Douglas em 3 linhas (Acesso Vitalicio 97 + Como Ser
+  Perdoado 297 + Combo 44,90 = R$ 438,90; liquido 422,08 contra 422,09 da planilha, 1 centavo de arredondamento),
+  Luiz R$ 297 (liquido 285,14). `data_hora` = hora da criacao da fatura (21:01:35 e 21:32:49 BRT), dia 01/11 certo.
+- Licao: o historico de webhook da Hubla guarda o que falhou e permite reprocessar; o nosso webhook ignora duplicata por
+  order_id, entao reprocessar e seguro. Para a proxima queda: filtrar o dia + "Erros internos (5xx)" e reprocessar tudo.
