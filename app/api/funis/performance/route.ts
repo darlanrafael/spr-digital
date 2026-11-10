@@ -12,6 +12,7 @@ import {
 import { FUNIS, funilDaVenda, ehProdutoPrincipal, DATA_CORTE_FUNIS } from '@/lib/funis/funis-config'
 import { aplicarCorte } from '@/lib/funis/corte-funil'
 import { agregarEsteira } from '@/lib/funis/esteira-do-funil'
+import { produtoDesligavelDoFunil, semProdutosDesligaveis, marcarForaDaConta } from '@/lib/funis/produto-desligavel'
 import { agregarVendasDoFunil } from '@/lib/funis/vendas-do-funil'
 import { resultadoDoFunil } from '@/lib/funis/resultado-do-funil'
 import { montarCriativos, type CriativoMeta } from '@/lib/funis/criativos-do-funil'
@@ -44,6 +45,11 @@ export async function GET(req: NextRequest) {
     const periodo = `${dateStart}|${dateEnd}`
     // Botão "Atualizar" da tela: pula o cache e busca o dado daquele momento.
     const bust = sp.get('nocache') === '1'
+    // Botão "Contar O Resgate - CSP" (dono 10/11/2026): semResgate=1 tira as vendas
+    // do produto desligável. Funil sem esse produto (Imersão) ignora o parâmetro.
+    // O filtro roda DEPOIS do cache: o cache guarda sempre a lista inteira.
+    const desligavel = funilId ? produtoDesligavelDoFunil(funilId) : null
+    const excluir = sp.get('semResgate') === '1' && (!funilId || desligavel !== null)
 
     const metaDisponivel = !!process.env.META_ACCESS_TOKEN
     const aviso = metaDisponivel ? null : 'Os dados da Meta estão indisponíveis no momento. Verifique a conexão/token.'
@@ -82,10 +88,11 @@ export async function GET(req: NextRequest) {
             return { ...m, ativo: (d.effective_status as string) === 'ACTIVE' }
           })
         }, bust)
-      const [vendas, adsBase] = await Promise.all([
+      const [vendasTodas, adsBase] = await Promise.all([
         cacheCurto.get(`vendas|${periodo}`, async () => getSalesParaFunil(dateStart, dateEnd, ['aprovada']), bust),
         adsEntregues,
       ])
+      const vendas = excluir ? semProdutosDesligaveis(vendasTodas) : vendasTodas
       // Só anúncios que GASTARAM no período (>0). Marcado (padrão): só os ATIVOS
       // agora. Desmarcado (todos): ativos + pausados, desde que tenham gasto.
       const ads = adsBase.filter(a => a.spend > 0 && (todos || a.ativo))
@@ -101,16 +108,19 @@ export async function GET(req: NextRequest) {
       const criativos = montarCriativos(adsMeta, vendasDoFunil.map((v: Sale) => ({
         utm_content: v.utm_content, valor_pago_cliente: v.valor_pago_cliente, ehPrincipal: ehProdutoPrincipal(v, funil.id),
       })))
-      return NextResponse.json({ criativos: criativos.linhas, naoAtribuido: criativos.naoAtribuido })
+      return NextResponse.json({ criativos: criativos.linhas, naoAtribuido: criativos.naoAtribuido, desligavel, contandoDesligavel: !excluir })
     }
 
     // RESUMO / VISÃO GERAL: as 4 buscas EM PARALELO (antes eram em série).
-    const [vendas, reembolsos, campanhas, diariosCamp] = await Promise.all([
+    const [vendasTodas, reembolsosTodos, campanhas, diariosCamp] = await Promise.all([
       cacheCurto.get(`vendas|${periodo}`, async () => getSalesParaFunil(dateStart, dateEnd, ['aprovada']), bust),
       cacheCurto.get(`reemb|${periodo}`, async () => getReembolsosParaFunil(dateStart, dateEnd), bust),
       cacheCurto.get(`camps|${periodo}`, async () => semMeta ? [] as AdInsight[] : (await Promise.all(contas.map(a => getCampanhaInsights(a, dateStart, dateEnd)))).flat().map(normalizarInsight) as AdInsight[], bust),
       cacheCurto.get(`campdia|${periodo}`, async () => semMeta ? [] : (await Promise.all(contas.map(a => getCampanhaInsightsDiario(a, dateStart, dateEnd)))).flat(), bust),
     ])
+
+    const vendas = excluir ? semProdutosDesligaveis(vendasTodas) : vendasTodas
+    const reembolsos = excluir ? semProdutosDesligaveis(reembolsosTodos) : reembolsosTodos
 
     // ---- Visão geral (sem funilId): um resumo por funil ----
     if (!funilId) {
@@ -180,7 +190,9 @@ export async function GET(req: NextRequest) {
     // ESTEIRA (funil de produtos / value ladder): estagios FIXOS do config,
     // montados SEMPRE (zerados quando nao ha venda no periodo). Boca = principal;
     // order bumps numa linha so; upsell; backend. Ver item 119 do spr-digital.md.
-    const esteira = agregarEsteira(vendasDoFunil, funil.id)
+    // Com o botão desligado, a esteira continua com TODAS as vendas e só marca o
+    // degrau do produto desligável como "fora da conta".
+    const esteira = marcarForaDaConta(agregarEsteira(vendasTodas, funil.id), funil.id, excluir)
 
     return NextResponse.json({
       funil: { id: funil.id, nome: funil.nome, produtoLabel: funil.produtoLabel, impostoRate: funil.impostoRate },
@@ -195,6 +207,8 @@ export async function GET(req: NextRequest) {
       vendasLista,
       reembolsosLista,
       esteira,
+      desligavel,
+      contandoDesligavel: !excluir,
       periodo: { de: dateStart, ate: dateEnd },
       aviso,
     })
