@@ -85,8 +85,22 @@ test('marcarForaDaConta devolve a esteira inteira (ordem, rotulos, numeros) nos 
     { rotulo: 'Mentoria em grupo', vendas: 0, faturamento: 0, foraDaConta: false },
     { rotulo: 'O Resgate - CSP', vendas: 1, faturamento: 197, foraDaConta: true },
   ])
-  assert.deepEqual(marcarForaDaConta(base, csp, false), base.map(e => ({ ...e, foraDaConta: false })))
-  const baseImersao = agregarEsteira([v({ produto: 'Imersão - A reaproximação', produto_id: 'd7tvBd7toCPnVZnOWUaZ' })], imersao)
-  assert.equal(baseImersao.length, 2)
-  assert.deepEqual(marcarForaDaConta(baseImersao, imersao, true), baseImersao.map(e => ({ ...e, foraDaConta: false })))
+  assert.deepEqual(marcarForaDaConta(base, csp, false), [
+    { rotulo: 'Como Ser Perdoado', vendas: 1, faturamento: 100, foraDaConta: false },
+    { rotulo: 'Order bumps', vendas: 1, faturamento: 50, foraDaConta: false },
+    { rotulo: 'Mentoria em grupo', vendas: 0, faturamento: 0, foraDaConta: false },
+    { rotulo: 'O Resgate - CSP', vendas: 1, faturamento: 197, foraDaConta: false },
+  ])
+  const baseImersao = agregarEsteira([v({ produto: 'Imersão - A reaproximação', produto_id: 'd7tvBd7toCPnVZnOWUaZ', valor_pago_cliente: 297 })], imersao)
+  assert.deepEqual(marcarForaDaConta(baseImersao, imersao, true), [
+    { rotulo: 'Imersão - A reaproximação', vendas: 1, faturamento: 297, foraDaConta: false },
+    { rotulo: 'Order bumps', vendas: 0, faturamento: 0, foraDaConta: false },
+  ])
+  // a entrada nao e alterada
+  assert.deepEqual(base, [
+    { rotulo: 'Como Ser Perdoado', vendas: 1, faturamento: 100 },
+    { rotulo: 'Order bumps', vendas: 1, faturamento: 50 },
+    { rotulo: 'Mentoria em grupo', vendas: 0, faturamento: 0 },
+    { rotulo: 'O Resgate - CSP', vendas: 1, faturamento: 197 },
+  ])
 })
