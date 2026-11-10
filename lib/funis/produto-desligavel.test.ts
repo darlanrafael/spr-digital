@@ -65,3 +65,28 @@ test('marcarForaDaConta marca so o degrau do Resgate, so com excluir, e preserva
   assert.ok(marcarForaDaConta(agregarEsteira(vendas, csp), csp, false).every(e => e.foraDaConta === false))
   assert.ok(marcarForaDaConta(agregarEsteira([], imersao), imersao, true).every(e => e.foraDaConta === false))
 })
+
+test('semProdutosDesligaveis: nome com caixa/espacos sai; id do Resgate em outra plataforma fica', () => {
+  const nomeSujo = v({ produto: '  o resgate - csp ', produto_id: null })
+  const idNaKiwify = v({ plataforma: 'kiwify', produto: 'X', produto_id: '4c7FpX4SdlqVQT0WJfOv' })
+  assert.deepEqual(semProdutosDesligaveis([nomeSujo, idNaKiwify]), [idNaKiwify])
+})
+
+test('marcarForaDaConta devolve a esteira inteira (ordem, rotulos, numeros) nos tres ramos', () => {
+  const vendas = [
+    v({}),
+    v({ produto: 'ALIANÇA SAGRADA - CSP', produto_id: 'eNsZ824PsAgz2DrvKYxw', valor_pago_cliente: 50 }),
+    v({ produto: 'O RESGATE - CSP', produto_id: '4c7FpX4SdlqVQT0WJfOv', valor_pago_cliente: 197 }),
+  ]
+  const base = agregarEsteira(vendas, csp)
+  assert.deepEqual(marcarForaDaConta(base, csp, true), [
+    { rotulo: 'Como Ser Perdoado', vendas: 1, faturamento: 100, foraDaConta: false },
+    { rotulo: 'Order bumps', vendas: 1, faturamento: 50, foraDaConta: false },
+    { rotulo: 'Mentoria em grupo', vendas: 0, faturamento: 0, foraDaConta: false },
+    { rotulo: 'O Resgate - CSP', vendas: 1, faturamento: 197, foraDaConta: true },
+  ])
+  assert.deepEqual(marcarForaDaConta(base, csp, false), base.map(e => ({ ...e, foraDaConta: false })))
+  const baseImersao = agregarEsteira([v({ produto: 'Imersão - A reaproximação', produto_id: 'd7tvBd7toCPnVZnOWUaZ' })], imersao)
+  assert.equal(baseImersao.length, 2)
+  assert.deepEqual(marcarForaDaConta(baseImersao, imersao, true), baseImersao.map(e => ({ ...e, foraDaConta: false })))
+})
