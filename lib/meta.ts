@@ -413,7 +413,7 @@ export async function getAdsCreativeDetails(
         map.set(id, detail as Record<string, unknown>)
         cache.set(id, { t: agora(), detail: detail as Record<string, unknown> })
       }
-      if (ruins > 0) { console.error('[Meta API] ids sem detalhe (creative details):', ruins); falhou(opts.relato) }
+      if (ruins > 0) { console.error('[Meta API] ids sem detalhe (creative details):', ruins); if (opts.relato) opts.relato.falhas += ruins }
     } catch (err) { if (res.ok) falhou(opts.relato); console.error('[Meta API] parse (creative details):', err); return }
   }
 

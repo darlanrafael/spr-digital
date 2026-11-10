@@ -60,20 +60,20 @@ for (const [nome, chamar] of funcoes) {
   test(`${nome}: tudo ok conta 0 e traz as linhas`, async () => {
     roteiro = () => ok({ data: [linhaA, linhaB] })
     const relato: RelatoMeta = { falhas: 0 }
-    assert.equal((await chamar(relato)).length, 2)
+    assert.deepEqual(await chamar(relato), [linhaA, linhaB])
     assert.equal(relato.falhas, 0)
   })
 
   test(`${nome}: pagina 1 ok e pagina 2 em 500 traz a pagina 1 e conta 1 falha`, async () => {
     roteiro = url => (url === PAG2 ? http500 : ok({ data: [linhaA], paging: { next: PAG2 } }))
     const relato: RelatoMeta = { falhas: 0 }
-    assert.equal((await chamar(relato)).length, 1)
+    assert.deepEqual(await chamar(relato), [linhaA])
     assert.equal(relato.falhas, 1)
   })
 
   test(`${nome}: sem relato, erro nao lanca e as linhas sao as de antes`, async () => {
     roteiro = url => (url === PAG2 ? http500 : ok({ data: [linhaA], paging: { next: PAG2 } }))
-    assert.equal((await chamar()).length, 1)
+    assert.deepEqual(await chamar(), [linhaA])
   })
 }
 
@@ -122,6 +122,14 @@ for (const [caso, valorDeA] of [['{ error }', { error: { message: 'x' } }], ['fa
     assert.ok(m2.has('a') && m2.has('b'))
   })
 }
+
+test('getAdsCreativeDetails: dois ids ruins no mesmo lote contam 2 falhas', async () => {
+  roteiro = () => ok({ a: null, b: false, c: detalhe('c') })
+  const relato: RelatoMeta = { falhas: 0 }
+  const m = await getAdsCreativeDetails(['a', 'b', 'c'], 6, { cache: novoCache(), relato })
+  assert.equal(relato.falhas, 2)
+  assert.deepEqual([...m.keys()], ['c'])
+})
 
 test('getAdsCreativeDetails: id pedido ausente na resposta conta falha e fica fora', async () => {
   roteiro = () => ok({ b: detalhe('b') })
