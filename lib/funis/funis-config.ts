@@ -38,6 +38,13 @@ export type ProdutoDoFunil = {
    * FunilConfig.esteira. Produto sem estagio nao aparece na esteira. Ver item 119.
    */
   estagio?: string
+  /**
+   * O dono pode tirar este produto da conta do funil com um botao na tela
+   * Performance de Funis (dono 10/11/2026: "Contar O Resgate - CSP"). Desligado,
+   * as vendas dele somem de todos os numeros; a esteira so marca o degrau como
+   * "fora da conta". Ver lib/funis/produto-desligavel.ts.
+   */
+  desligavel?: boolean
 }
 
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
@@ -103,7 +110,7 @@ export const FUNIS: FunilConfig[] = [
       { plataforma: 'hubla', produto_id: 'HYscfyfSoG2CrsS6JpSe', nome: 'ACESSO VITALÍCIO - CSP', estagio: 'Order bumps' },
       // produto_id CONFIRMADO no payload cru do webhook (compra de teste 21/10):
       // event.product.id = 4c7FpX4SdlqVQT0WJfOv (bate com o link hub.la/g/4c7F...).
-      { plataforma: 'hubla', produto_id: '4c7FpX4SdlqVQT0WJfOv', nome: 'O RESGATE - CSP', estagio: 'O Resgate - CSP' },
+      { plataforma: 'hubla', produto_id: '4c7FpX4SdlqVQT0WJfOv', nome: 'O RESGATE - CSP', estagio: 'O Resgate - CSP', desligavel: true },
       // Upsell/backend do funil CSP (dono 22/10/2026): nao e o principal, e um
       // agregado. Vende nas duas plataformas (nomes diferentes). So entra no
       // "com agregados", nao na "venda unica".
