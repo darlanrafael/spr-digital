@@ -18,6 +18,12 @@
 - Casamento de produto pela regra existente (nome normalizado ou `produto_id`, mesma plataforma): reusar `funilDaVenda` / `produtoDoFunil`, nunca uma regra nova.
 - "O RESGATE" sem CSP (Hubla `t4ytLBgwp69xubk1irZK`) e "🥝 O Resgate" (Kiwify) não são do funil e não são tocados.
 - Textos exatos: botão `Contar O Resgate - CSP`; aviso `O Resgate - CSP está fora da conta. Os números mostram o funil sem ele.`; marca `fora da conta`.
+- Texto exato do aviso de Meta incompleta no resumo: `A Meta não respondeu por completo. O Investido, o ROAS e os anúncios podem estar menores do que o real. Clique em Atualizar.`
+- Texto exato do aviso de Meta incompleta nos criativos: `A Meta não respondeu por completo. Alguns anúncios podem estar faltando. Clique em Atualizar.`
+- Outras telas que usam `lib/meta.ts` não mudam de comportamento na Task 5: o relato de falha é um parâmetro opcional. DRE, início e Fechamentos mudam só na Task 6.
+- Texto exato do erro do tráfego no Fechamento: `A Meta não respondeu por completo. Clique em Buscar de novo antes de fechar.`
+- Texto exato do bloqueio ao fechar: `O custo de tráfego não veio completo da Meta. Busque de novo antes de confirmar o fechamento.`
+- Texto exato do aviso no DRE e no card de Meta Ads do início: `A Meta não respondeu por completo. O valor de Meta Ads pode estar menor do que o real. Atualize a página.`
 - Texto exato do erro dos criativos: `Não foi possível carregar os anúncios da Meta. Clique em Atualizar para tentar de novo.`
 - Sem travessão em texto da tela. Sem commit de credencial. Push só com pedido explícito do dono.
 
@@ -31,7 +37,7 @@ Codex atacante + Codex auditor + Gemini. Achados aceitos e já incorporados abai
 - **Estado do botão amarrado ao funil (Gemini 2):** guarda-se o funil em que o botão foi desligado; em outro funil ele já vale "contando" no mesmo render, sem efeito de reset e sem buscas extras.
 - **Faixa da esteira por recorte (auditor 2, Gemini 3):** a faixa é desenhada duas vezes com `clipPath`: fora da coluna do Resgate como hoje, e dentro dela com opacidade reduzida. Nenhum retângulo por cima do card.
 - **Prova com os mesmos filtros da rota (auditor 1):** o script usa as próprias funções `janelaDoPeriodo`, `aplicarCorte`, `getSalesParaFunil` e `getReembolsosParaFunil`.
-- **Fica para um item separado (atacante 1, ALTO, já existia):** `lib/meta.ts` engole erro da Meta e devolve lista vazia ou parcial com HTTP 200. Isso faz sumir anúncio e também pode baixar o "Investido" sem aviso. Não é deste botão e mexe na base da Meta usada por outras telas; vai como pendência para o dono decidir.
+- **Erro da Meta escondido (atacante 1, ALTO, já existia):** o dono aprovou resolver agora na tela de Funis (10/11/2026): Task 5. O mesmo acontece no caminho do DRE/Fechamentos (`fetchAccountPages`, usado por `getProjectInvestment`); o dono aprovou também (10/11/2026): Task 6. Contexto dele: confere todo fechamento contra a Meta pela nomenclatura e sempre bateu; a Task 6 é uma segunda proteção, não correção de fechamento antigo.
 
 ## Review Focus
 
@@ -135,4 +141,73 @@ Codex atacante + Codex auditor + Gemini. Achados aceitos e já incorporados abai
 - [ ] **Step 3: Prévia no localhost (junto da Task 3, Step 4):** período/filtro em que "Somente ativos" não traz anúncio mas há venda orgânica → aparece "Nenhum anúncio no período." e, embaixo, a linha do não atribuído com o valor; tirar a internet do navegador (DevTools, Offline) e clicar em Atualizar → aparece o erro vermelho dos criativos, não "Nenhum anúncio no período."
 
 - [ ] **Step 4: Commit** `fix(funis): criativos mostram o nao atribuido sem anuncio e o erro da busca` e completar o item 145 do `spr-digital.md`.
+
+### Task 5: Erro da Meta deixa de ser escondido na tela de Funis
+
+Hoje `fetchInsights`, `getCampanhaInsightsDiario` e `getAdsCreativeDetails` (`lib/meta.ts`) param a conta/lote que deu erro (rede, HTTP, `json.error`, corpo que não é JSON), registram no log e devolvem o que tinham, sem avisar. Na tela de Funis isso baixa o Investido (ROAS inflado) ou some com anúncios, com HTTP 200, e o resultado incompleto fica 2 min no cache.
+
+**Files:**
+- Modify: `lib/meta.ts`, `lib/funis/cache-curto.ts`, `app/api/funis/performance/route.ts`, `app/performance-funis/dashboard/page.tsx`
+- Test: `lib/meta-relato-falha.test.ts` (novo, fetch simulado como em `lib/meta-creative-details.test.ts`), `lib/funis/cache-curto.test.ts`
+
+**Interfaces:**
+- Produces:
+  - `export type RelatoMeta = { falhas: number }` em `lib/meta.ts`.
+  - Parâmetro opcional `relato?: RelatoMeta` no FIM de `getCampanhaInsights(accountId, dateStart, dateEnd, datePreset?, relato?)`, `getAdInsightsPorTermos(accountId, dateStart, dateEnd, termos, datePreset?, relato?)`, `getCampanhaInsightsDiario(accountId, dateStart, dateEnd, datePreset?, relato?)`; em `getAdsCreativeDetails`, `opts.relato`. Cada parada por erro (os mesmos pontos que hoje fazem `console.error` + `break`/`return`) soma 1 em `relato.falhas`. Sem `relato`, comportamento idêntico ao de hoje.
+  - `criarCacheCurto(...).get(key, fn, bust?, guardar?: (v: T) => boolean)`: com `guardar` devolvendo false, o valor é devolvido mas NÃO fica no cache (e não apaga um valor bom já guardado).
+  - Resposta do resumo: `metaIncompleta: boolean`; resposta de `criativos=1`: `metaIncompleta: boolean`.
+
+- [ ] **Step 1: Write the failing tests**
+  - `lib/meta-relato-falha.test.ts`: para `getCampanhaInsights`, `getAdInsightsPorTermos` e `getCampanhaInsightsDiario`: resposta HTTP 500 → `relato.falhas === 1` e lista vazia; `fetch` que lança (rede) → 1; `{ error: { message } }` → 1; corpo não-JSON → 1; tudo ok → 0 e as linhas vêm; primeira página ok e segunda com 500 → linhas da primeira e `falhas === 1`; sem `relato` → mesmas linhas de hoje e nenhum erro lançado. `getAdsCreativeDetails` com um lote em 500 e `opts.relato` → `falhas === 1` e os outros lotes no mapa.
+  - `lib/funis/cache-curto.test.ts`: `guardar: () => false` → a próxima chamada sem bust reexecuta; com um valor bom guardado antes, `guardar` false numa chamada com bust não apaga o bom; `guardar` ausente → comportamento atual.
+
+- [ ] **Step 2: Run** `npx tsx --test lib/meta-relato-falha.test.ts lib/funis/cache-curto.test.ts` → FAIL.
+
+- [ ] **Step 3: Implement** em `lib/meta.ts` e `lib/funis/cache-curto.ts` conforme as Interfaces.
+
+- [ ] **Step 4: Run** `npx tsx --test lib/meta-relato-falha.test.ts lib/funis/cache-curto.test.ts lib/meta-creative-details.test.ts` → PASS; `npm test` → tudo passa.
+
+- [ ] **Step 5: Implement a rota:** cada busca da Meta dentro do `cacheCurto.get` cria o seu `RelatoMeta`, passa às chamadas e devolve `{ linhas, falhou: relato.falhas > 0 }`, com `guardar: v => !v.falhou`. Resumo: `metaIncompleta` = campanhas OU tráfego diário falhou; se true, `aviso` passa a ser o texto exato do resumo (se já houver o aviso do token, os dois juntos, separados por um espaço). Visão geral (sem `funilId`): mesmo `aviso`. Criativos: `metaIncompleta` = insights de anúncio OU detalhes falharam (com detalhes faltando, o anúncio é tratado como não ativo hoje: por isso precisa avisar).
+
+- [ ] **Step 6: Implement a página:** o resumo já mostra `d.aviso` no aviso âmbar existente (nada novo). Nos criativos, com `metaIncompleta` da resposta, mostrar o texto exato dos criativos com as MESMAS classes do aviso âmbar, no topo da seção.
+
+- [ ] **Step 7: Run** `npx tsc --noEmit` e `npm test` → sem erro. Conferir com `grep -n "getProjectInvestment\|getAllAccountsInvestment\|getAdAccountCampaigns" app lib -r` que nenhuma chamada fora de Funis mudou.
+
+- [ ] **Step 8: Prévia no localhost (junto da Task 3):** sem como forçar erro da Meta de verdade, a prova do aviso é o teste da Step 1; na tela, conferir que com a Meta normal NÃO aparece aviso nenhum (sem falso alarme) nos dois funis.
+
+- [ ] **Step 9: Commit** `fix(funis): avisa quando a Meta responde incompleta e nao guarda no cache` e completar o item 145 do `spr-digital.md`.
+
+### Task 6: Erro da Meta deixa de ser escondido no DRE, no início e no Fechamento
+
+`fetchAccountPages` (`lib/meta.ts`) tem o mesmo "registra no log e segue" da Task 5. `getProjectInvestment` alimenta `/api/meta/custo-trafego` (botão de buscar tráfego do Fechamento, `app/fechamentos/page.tsx:305-329`, valor gravado em `custos_trafego_total`, `page.tsx:910`) e `/api/meta/insights` (linha Meta Ads do DRE, `app/dre/page.tsx:72-90`, e o card de Meta Ads do início, `app/page.tsx:28-140`).
+
+**Files:**
+- Modify: `lib/meta.ts`, `app/api/meta/custo-trafego/route.ts`, `app/api/meta/insights/route.ts`, `app/fechamentos/page.tsx`, `app/dre/page.tsx`, `app/page.tsx`
+- Test: `lib/meta-relato-falha.test.ts` (o mesmo da Task 5)
+
+**Interfaces:**
+- Consumes: `RelatoMeta` da Task 5.
+- Produces: `getProjectInvestment(nomenclaturas, dateStart, dateEnd, datePreset?, relato?)`, `getAdAccountCampaigns(accountId, dateStart, dateEnd, nomenclaturas?, datePreset?, relato?)`, `fetchAccountPages(accountId, dateParam, token, relato?)`. `getAllAccountsInvestment` não muda (ninguém de fora a chama com relato). Respostas: `/api/meta/custo-trafego` com falha → `{ total: 0, campanhas: [], erro: <texto do erro do tráfego>, incompleto: true }`; `/api/meta/insights` com falha → mesma resposta de hoje + `incompleto: true` e `aviso: <texto do DRE>`.
+
+- [ ] **Step 1: Write the failing tests** em `lib/meta-relato-falha.test.ts`: `getProjectInvestment` com 5 contas e uma delas em HTTP 500 → `relato.falhas === 1` e o total só das outras 4; segunda página de uma conta em erro → `falhas === 1`; `json.error` → 1; corpo não-JSON → 1; tudo ok → 0; sem `relato` → mesmo total de hoje.
+  - Corpo não-JSON hoje NÃO é tratado em `fetchAccountPages` (o `res.json()` lança e derruba a chamada inteira): passa a contar falha e seguir como as outras, sem derrubar as outras contas.
+
+- [ ] **Step 2: Run** `npx tsx --test lib/meta-relato-falha.test.ts` → FAIL nos casos novos.
+
+- [ ] **Step 3: Implement** `relato` em `fetchAccountPages` / `getAdAccountCampaigns` / `getProjectInvestment` (os mesmos pontos de `console.error` + `break`, mais o parse).
+
+- [ ] **Step 4: Run** `npx tsx --test lib/meta-relato-falha.test.ts` → PASS; `npm test` → tudo passa.
+
+- [ ] **Step 5: Implement as rotas** conforme Produces. Em `/api/meta/custo-trafego`, com falha o total volta 0 de propósito: valor incompleto não chega à tela.
+
+- [ ] **Step 6: Implement as telas:**
+  - **Fechamento:** com `incompleto` (ou qualquer `erro`) na resposta, `trafego.erro` recebe o texto e aparece no lugar que já existe (`page.tsx:1235-1236`, vermelho). Em `handleConfirm` (`page.tsx:860`), se `trafego.erro` estiver preenchido e houver termos de tráfego, não fecha e mostra o texto exato do bloqueio no mesmo lugar dos outros avisos da tela. Sem termos de tráfego, fecha como hoje.
+  - **DRE:** cada mês que vier com `incompleto` marca a tela; a linha `(-) Meta Ads` (`app/dre/page.tsx:186`) ganha, abaixo da tabela, o texto exato do aviso do DRE em âmbar, no estilo de aviso que a própria tela do DRE já usa (sem criar componente novo de visual).
+  - **Início (`MetaAdsCard`):** com `incompleto`, o card mostra o valor e, abaixo, o texto exato do aviso em âmbar, no tamanho do texto pequeno que o card já usa.
+
+- [ ] **Step 7: Run** `npx tsc --noEmit`, `npm test` e `npx next build` → sem erro.
+
+- [ ] **Step 8: Prévia no localhost:** com a Meta normal, DRE, início e Fechamento iguais a hoje, sem aviso nenhum; buscar tráfego no Fechamento por uma nomenclatura conhecida dá o mesmo total que antes (o dono confere com a Meta, como faz sempre). Somente leitura: NÃO confirmar fechamento no localhost (banco de produção).
+
+- [ ] **Step 9: Commit** `fix(meta): DRE, inicio e fechamento avisam quando a Meta responde incompleta` e completar o item 145 do `spr-digital.md`.
 
