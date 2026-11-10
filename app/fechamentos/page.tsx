@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { podeConfirmarTrafego, respostaMetaCompleta, ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO } from '@/lib/trafego-do-fechamento'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Copy, Download, Hash, Loader2, Search, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
@@ -219,6 +220,8 @@ function FechamentosContent() {
     erro: string | null
     total: number
     campanhas: { name: string; spend: number; accountId: string }[]
+    /** A última busca que veio COMPLETA da Meta (termos e datas dela). null = não pode fechar com tráfego. */
+    buscaCompleta: { termos: string[]; inicio: string; fim: string } | null
   }>({
     periodo: { inicio: '', fim: '' },
     termos: [],
@@ -227,6 +230,16 @@ function FechamentosContent() {
     erro: null,
     total: 0,
     campanhas: [],
+    buscaCompleta: null,
+  })
+  // Número da busca de tráfego mais recente: resposta de busca superada é ignorada.
+  const buscaTrafegoSeq = useRef(0)
+  // Trava do "Confirmar fechamento" (dono 10/11/2026): o custo de tráfego só vai
+  // para o fechamento se veio de uma busca completa, terminada, com os mesmos
+  // termos e datas da tela. Ver lib/trafego-do-fechamento.ts.
+  const trafegoLiberado = podeConfirmarTrafego({
+    termos: trafego.termos, periodo: trafego.periodo, loading: trafego.loading,
+    erro: trafego.erro, total: trafego.total, buscaCompleta: trafego.buscaCompleta,
   })
 
   const TRAFEGO_PAGE_SIZE = 8
@@ -295,7 +308,13 @@ function FechamentosContent() {
   }
 
   function removeTermoTrafego(termo: string) {
-    setTrafego(t => ({ ...t, termos: t.termos.filter(x => x !== termo) }))
+    // Tirou o último termo: sem tráfego. Invalida a busca em andamento e zera tudo.
+    if (trafego.termos.every(x => x === termo)) buscaTrafegoSeq.current++
+    setTrafego(t => {
+      const termos = t.termos.filter(x => x !== termo)
+      if (termos.length > 0) return { ...t, termos }
+      return { ...t, termos, total: 0, campanhas: [], erro: null, loading: false, buscaCompleta: null }
+    })
   }
 
   // Datas em YYYY-MM-DD comparam certo como string, sem precisar de Date.
@@ -308,23 +327,34 @@ function FechamentosContent() {
       setTrafego(t => ({ ...t, erro: 'Data de início posterior à data de fim' }))
       return
     }
-    setTrafego(t => ({ ...t, loading: true, erro: null }))
+    const seq = ++buscaTrafegoSeq.current
+    const pedido = { termos: [...trafego.termos], inicio: trafego.periodo.inicio, fim: trafego.periodo.fim }
+    setTrafego(t => ({ ...t, loading: true, erro: null, buscaCompleta: null }))
     try {
-      const params = new URLSearchParams({ dateStart: trafego.periodo.inicio, dateEnd: trafego.periodo.fim })
-      trafego.termos.forEach(termo => params.append('termos', termo))
+      const params = new URLSearchParams({ dateStart: pedido.inicio, dateEnd: pedido.fim })
+      pedido.termos.forEach(termo => params.append('termos', termo))
       const res = await fetch(`/api/meta/custo-trafego?${params.toString()}`, { cache: 'no-store' })
-      const data = await res.json() as { total?: number; campanhas?: { name: string; spend: number; accountId: string }[]; erro?: string }
-      const totalBruto = typeof data.total === 'number' ? data.total : 0
+      const data = await res.json().catch(() => null) as { total?: number; campanhas?: { name: string; spend: number; accountId: string }[]; erro?: string; error?: string; incompleto?: boolean } | null
+      if (seq !== buscaTrafegoSeq.current) return // busca superada por outra
+      if (!respostaMetaCompleta({ ok: res.ok, corpo: data })) {
+        // Incompleta (conta da Meta com erro, sessão expirada, corpo quebrado):
+        // nada de valor parcial na tela; pede nova busca.
+        setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: ERRO_TRAFEGO_INCOMPLETO, buscaCompleta: null }))
+        return
+      }
+      const totalBruto = typeof data?.total === 'number' ? data.total : 0
       setTrafego(t => ({
         ...t,
         loading: false,
         total: totalBruto * 1.1385, // acrescenta 13,85% sobre o gasto bruto de tráfego
-        campanhas: data.campanhas ?? [],
-        erro: data.erro ?? null,
+        campanhas: data?.campanhas ?? [],
+        erro: null,
+        buscaCompleta: pedido,
       }))
       setTrafegoPage(1)
     } catch {
-      setTrafego(t => ({ ...t, loading: false, erro: 'Falha ao buscar custo de tráfego' }))
+      if (seq !== buscaTrafegoSeq.current) return
+      setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: 'Falha ao buscar custo de tráfego', buscaCompleta: null }))
     }
   }
 
@@ -859,6 +889,7 @@ function FechamentosContent() {
 
   async function handleConfirm() {
     if (!canEdit) return
+    if (!trafegoLiberado) return // defesa: o botão já fica desativado
     const buyers: ClosingBuyer[] = periodSales.map(s => ({
       id: s.id,
       nome: s.nome,
@@ -2421,8 +2452,11 @@ function FechamentosContent() {
                         className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-4 py-2 rounded-lg transition-colors">
                         Voltar
                       </button>
+                      {canEdit && !trafegoLiberado && (
+                        <p className="self-center text-xs text-red-400">{BLOQUEIO_FECHAMENTO_TRAFEGO}</p>
+                      )}
                       {canEdit && (
-                        <button onClick={handleConfirm} disabled={periodSales.length === 0 || conferencia.naoConvertidas.length > 0 || reembolsoComVendaNaoCarregada}
+                        <button onClick={handleConfirm} disabled={periodSales.length === 0 || conferencia.naoConvertidas.length > 0 || reembolsoComVendaNaoCarregada || !trafegoLiberado}
                           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors font-semibold">
                           <CheckCircle className="w-4 h-4" /> ✓ Confirmar fechamento
                         </button>

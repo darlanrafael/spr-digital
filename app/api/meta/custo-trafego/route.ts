@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getProjectInvestment } from '@/lib/meta'
+import { getProjectInvestment, type RelatoMeta } from '@/lib/meta'
+import { ERRO_TRAFEGO_INCOMPLETO } from '@/lib/trafego-do-fechamento'
 import { lerIdentidade } from '@/lib/identidade-da-chamada'
 
 export const revalidate = 0
@@ -19,11 +20,18 @@ export async function GET(req: NextRequest) {
   }
 
   if (!process.env.META_ACCESS_TOKEN) {
-    return NextResponse.json({ total: 0, campanhas: [], erro: 'Token não configurado' })
+    return NextResponse.json({ total: 0, campanhas: [], erro: 'Token não configurado', incompleto: true })
   }
 
   try {
-    const result = await getProjectInvestment(termos, dateStart, dateEnd)
+    const relato: RelatoMeta = { falhas: 0 }
+    const result = await getProjectInvestment(termos, dateStart, dateEnd, undefined, relato)
+    // Uma conta da Meta falhou: o total viria MENOR sem erro e iria para o
+    // fechamento. Volta 0 de propósito com o erro, para a tela pedir nova busca
+    // (dono 10/11/2026, Task 6).
+    if (relato.falhas > 0) {
+      return NextResponse.json({ total: 0, campanhas: [], erro: ERRO_TRAFEGO_INCOMPLETO, incompleto: true })
+    }
 
     const totalFormatado = new Intl.NumberFormat('pt-BR', {
       style: 'currency',
@@ -39,6 +47,6 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[Meta API] Erro ao buscar custo de tráfego:', msg)
-    return NextResponse.json({ total: 0, campanhas: [], erro: msg })
+    return NextResponse.json({ total: 0, campanhas: [], erro: msg, incompleto: true })
   }
 }

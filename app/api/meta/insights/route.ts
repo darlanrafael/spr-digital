@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getProjectInvestment } from '@/lib/meta'
+import { getProjectInvestment, type RelatoMeta } from '@/lib/meta'
+import { AVISO_DRE_META_INCOMPLETA } from '@/lib/trafego-do-fechamento'
 import { nomenclaturasDoProjeto } from '@/lib/nomenclaturas-trafego'
 import { lerIdentidade } from '@/lib/identidade-da-chamada'
 
-export const revalidate = 300
+// Sem cache do Next aqui (10/11/2026): com revalidate, os fetch da Meta dentro
+// da rota podiam ficar guardados 5 min e o "Atualize a página" do aviso traria
+// o mesmo valor incompleto.
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const quem = lerIdentidade(req)
@@ -22,17 +26,19 @@ export async function GET(req: NextRequest) {
   }
 
   if (!process.env.META_ACCESS_TOKEN) {
-    return NextResponse.json({ total: 0, campanhas: [], erro: 'Token não configurado' })
+    return NextResponse.json({ total: 0, campanhas: [], erro: 'Token não configurado', incompleto: true, aviso: AVISO_DRE_META_INCOMPLETA })
   }
 
   const nomenclaturas = nomenclaturasDoProjeto(projectId)
 
   try {
+    const relato: RelatoMeta = { falhas: 0 }
     const result = await getProjectInvestment(
       nomenclaturas,
       dateStart,
       dateEnd,
       datePreset || undefined,
+      relato,
     )
 
     const totalFormatado = new Intl.NumberFormat('pt-BR', {
@@ -46,10 +52,11 @@ export async function GET(req: NextRequest) {
       totalFormatado,
       campanhas: result.campanhas,
       periodo: datePreset ? { datePreset } : { dateStart, dateEnd },
+      ...(relato.falhas > 0 ? { incompleto: true, aviso: AVISO_DRE_META_INCOMPLETA } : {}),
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[Meta API] Erro ao buscar insights:', msg)
-    return NextResponse.json({ total: 0, campanhas: [], erro: msg })
+    return NextResponse.json({ total: 0, campanhas: [], erro: msg, incompleto: true, aviso: AVISO_DRE_META_INCOMPLETA })
   }
 }

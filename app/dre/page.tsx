@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { respostaMetaCompleta, AVISO_DRE_META_INCOMPLETA } from '@/lib/trafego-do-fechamento'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Pencil, Check, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
@@ -57,6 +58,8 @@ function DREContent() {
   // que ficava desatualizado/zerado sempre que ninguém preenchia.
   const [metaAdsLive, setMetaAdsLive] = useState<Record<string, number>>({})
   const [metaAdsLoading, setMetaAdsLoading] = useState(false)
+  // Algum mês veio incompleto da Meta (conta com erro): avisa abaixo da tabela.
+  const [metaAdsIncompleto, setMetaAdsIncompleto] = useState(false)
 
   const canEdit = user?.role === 'admin' || user?.role === 'financeiro'
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
@@ -78,14 +81,16 @@ function DREContent() {
       const dateEnd = `${month}-${String(ultimoDia).padStart(2, '0')}`
       try {
         const res = await fetch(`/api/meta/insights?dateStart=${dateStart}&dateEnd=${dateEnd}&projectId=${projectIdForApis}`, { cache: 'no-store' })
-        const data = await res.json() as { total?: number }
-        return [month, typeof data.total === 'number' ? data.total : 0] as const
+        const data = await res.json().catch(() => null) as { total?: number; erro?: string; error?: string; incompleto?: boolean } | null
+        const completo = respostaMetaCompleta({ ok: res.ok, corpo: data })
+        return [month, typeof data?.total === 'number' ? data.total : 0, completo] as const
       } catch {
-        return [month, 0] as const
+        return [month, 0, false] as const
       }
-    })).then(pairs => {
+    })).then(trios => {
       if (cancelled) return
-      setMetaAdsLive(Object.fromEntries(pairs))
+      setMetaAdsLive(Object.fromEntries(trios.map(([m, v]) => [m, v])))
+      setMetaAdsIncompleto(trios.some(([, , completo]) => !completo))
     }).finally(() => { if (!cancelled) setMetaAdsLoading(false) })
     return () => { cancelled = true }
   }, [months, projectIdForApis])
@@ -237,6 +242,9 @@ function DREContent() {
                 </tbody>
               </table>
             </div>
+            {metaAdsIncompleto && !metaAdsLoading && (
+              <p className="border-t border-white/10 px-4 py-3 text-xs text-amber-300">{AVISO_DRE_META_INCOMPLETA}</p>
+            )}
           </div>
         ) : (
           <div className="bg-gray-900 rounded-xl border border-white/10 overflow-hidden">

@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { podeConfirmarTrafego, respostaMetaCompleta } from './trafego-do-fechamento'
+import {
+  podeConfirmarTrafego, respostaMetaCompleta,
+  ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO, AVISO_DRE_META_INCOMPLETA,
+} from './trafego-do-fechamento'
 
 // Trava do "Confirmar fechamento" (dono 10/11/2026, Task 6 do plano
 // docs/superpowers/plans/2026-11-10-botao-resgate-funis.md): o custo de trafego
@@ -38,3 +41,9 @@ test('respostaMetaCompleta: { erro } = incompleta', () => assert.equal(respostaM
 test('respostaMetaCompleta: { incompleto: true } = incompleta', () => assert.equal(respostaMetaCompleta({ ok: true, corpo: { incompleto: true } }), false))
 test('respostaMetaCompleta: resposta normal = completa', () =>
   assert.equal(respostaMetaCompleta({ ok: true, corpo: { total: 10, campanhas: [] } as never }), true))
+
+test('textos exatos (dono 10/11/2026)', () => {
+  assert.equal(ERRO_TRAFEGO_INCOMPLETO, 'A Meta não respondeu por completo. Clique em Buscar de novo antes de fechar.')
+  assert.equal(BLOQUEIO_FECHAMENTO_TRAFEGO, 'O custo de tráfego não veio completo da Meta. Busque de novo antes de confirmar o fechamento.')
+  assert.equal(AVISO_DRE_META_INCOMPLETA, 'A Meta não respondeu por completo. O valor de Meta Ads pode estar menor do que o real. Atualize a página.')
+})

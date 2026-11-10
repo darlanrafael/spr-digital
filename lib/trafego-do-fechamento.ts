@@ -39,3 +39,8 @@ export function respostaMetaCompleta(o: {
   if (!o.ok || !o.corpo) return false
   return !o.corpo.erro && !o.corpo.error && !o.corpo.incompleto
 }
+
+// Textos exatos aprovados pelo dono (10/11/2026).
+export const ERRO_TRAFEGO_INCOMPLETO = 'A Meta não respondeu por completo. Clique em Buscar de novo antes de fechar.'
+export const BLOQUEIO_FECHAMENTO_TRAFEGO = 'O custo de tráfego não veio completo da Meta. Busque de novo antes de confirmar o fechamento.'
+export const AVISO_DRE_META_INCOMPLETA = 'A Meta não respondeu por completo. O valor de Meta Ads pode estar menor do que o real. Atualize a página.'

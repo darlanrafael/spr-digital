@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { respostaMetaCompleta, AVISO_DRE_META_INCOMPLETA } from '@/lib/trafego-do-fechamento'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, RotateCcw } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
@@ -45,6 +46,8 @@ function MetaAdsCard({
   const [campanhas, setCampanhas] = useState<MetaCampanha[]>([])
   const [expanded, setExpanded] = useState(false)
   const [erro, setErro] = useState(false)
+  // A Meta respondeu pela metade (alguma conta com erro): valor pode estar menor.
+  const [incompleto, setIncompleto] = useState(false)
   // refreshKey força nova busca manual mantendo as mesmas datas
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -58,19 +61,21 @@ function MetaAdsCard({
     const run = async () => {
       setLoading(true)
       setErro(false)
+      setIncompleto(false)
 
       try {
         const url = isCustom
           ? `/api/meta/insights?dateStart=${customDateStart}&dateEnd=${customDateEnd}&projectId=${projectId}`
           : `/api/meta/insights?datePreset=${datePreset}&projectId=${projectId}`
         const res = await fetch(url, { cache: 'no-store' })
-        const data = await res.json() as { total?: number; campanhas?: MetaCampanha[]; erro?: string }
-        console.log('[MetaAdsCard] total:', data.total, '| campanhas:', data.campanhas?.length)
+        const data = await res.json().catch(() => null) as { total?: number; campanhas?: MetaCampanha[]; erro?: string; error?: string; incompleto?: boolean } | null
+        console.log('[MetaAdsCard] total:', data?.total, '| campanhas:', data?.campanhas?.length)
 
         if (!cancelled) {
-          const t = typeof data.total === 'number' ? data.total : 0
+          const t = typeof data?.total === 'number' ? data.total : 0
           setTotal(t)
-          setCampanhas(data.campanhas ?? [])
+          setCampanhas(data?.campanhas ?? [])
+          setIncompleto(!respostaMetaCompleta({ ok: res.ok, corpo: data }))
           onTotalChange(t)
         }
       } catch (err) {
@@ -155,6 +160,9 @@ function MetaAdsCard({
           >
             {ativasFiltradas.length} campanha{ativasFiltradas.length !== 1 ? 's' : ''} · {expanded ? 'ocultar ▲' : 'ver detalhes ▼'}
           </button>
+          {incompleto && (
+            <p style={{ fontSize: '11px', color: '#FCD34D', margin: '6px 0 0' }}>{AVISO_DRE_META_INCOMPLETA}</p>
+          )}
           {expanded && ativasFiltradas.length > 0 && (
             <div style={{ marginTop: '8px', maxHeight: '160px', overflowY: 'auto' }}>
               {ativasFiltradas.map((c, i) => (
