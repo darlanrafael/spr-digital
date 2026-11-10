@@ -40,7 +40,11 @@ type Detalhe = {
   totalReembolso: number
   vendasLista: VendaLinha[]
   reembolsosLista: VendaLinha[]
-  esteira: { rotulo: string; vendas: number; faturamento: number }[]
+  esteira: { rotulo: string; vendas: number; faturamento: number; foraDaConta: boolean }[]
+  /** Produto que o botão "Contar ..." pode tirar da conta (null = funil sem botão). */
+  desligavel: string | null
+  /** A resposta veio contando o produto desligável? (o aviso e a esteira saem daqui) */
+  contandoDesligavel: boolean
   periodo: { de: string; ate: string }
   aviso: string | null
 }
@@ -122,6 +126,17 @@ function Conteudo() {
   const [abaInterna, setAbaInterna] = useState<'geral' | 'vendas'>('geral')
   const [subVendas, setSubVendas] = useState<'aprovadas' | 'reembolsos'>('aprovadas')
   const [pagVendas, setPagVendas] = useState(0)
+  // Botão "Contar O Resgate - CSP" (dono 10/11/2026): guarda o funil em que foi
+  // DESLIGADO. Em outro funil já vale "contando" no mesmo render; não é salvo em
+  // lugar nenhum (recarregar ou sair e voltar = contando).
+  const [desligadoNoFunil, setDesligadoNoFunil] = useState<string | null>(null)
+  if (desligadoNoFunil !== null && desligadoNoFunil !== funilId) setDesligadoNoFunil(null)
+  const contarDesligavel = desligadoNoFunil !== funilId
+  const semResgate = contarDesligavel ? '' : '&semResgate=1'
+  // Para qual pedido (funil|período|botão) veio o resumo na tela. Se não for o
+  // pedido atual (busca em andamento ou que falhou), os números ficam esmaecidos.
+  const chaveAtual = `${funilId}|${query}|${contarDesligavel}`
+  const [chaveDoD, setChaveDoD] = useState('')
 
   // Lista de funis (abas) - do config no código, instantâneo.
   useEffect(() => {
@@ -152,13 +167,15 @@ function Conteudo() {
     if (!funilId) return
     let cancelado = false
     setCarregando(true); setErro(null); setPagina(0)
-    fetch(`/api/funis/performance?funilId=${funilId}&${query}${noCache}`)
+    const chave = `${funilId}|${query}|${contarDesligavel}`
+    fetch(`/api/funis/performance?funilId=${funilId}&${query}${semResgate}${noCache}`)
       .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Falha ao carregar'); return j })
-      .then((j: Detalhe) => { if (!cancelado) setD(j) })
+      .then((j: Detalhe) => { if (!cancelado) { setD(j); setChaveDoD(chave) } })
       .catch(e => { if (!cancelado) setErro(e instanceof Error ? e.message : 'Falha ao carregar') })
       .finally(() => { if (!cancelado) setCarregando(false) })
     return () => { cancelado = true }
-  }, [funilId, query, refresh])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [funilId, query, refresh, contarDesligavel])
 
   // Criativos num efeito à parte: recarrega também quando liga/desliga "Somente
   // ativos" (ativos = só os que gastaram no período, busca rápida; todos = pesada).
@@ -166,7 +183,7 @@ function Conteudo() {
     if (!funilId) return
     let cancelado = false
     setCriativos([]); setNaoAtribuido({ vendas: 0, faturamento: 0 }); setCarregandoCriativos(true); setPagina(0)
-    fetch(`/api/funis/performance?funilId=${funilId}&${query}&criativos=1${somenteAtivos ? '' : '&todos=1'}${noCache}`)
+    fetch(`/api/funis/performance?funilId=${funilId}&${query}&criativos=1${somenteAtivos ? '' : '&todos=1'}${semResgate}${noCache}`)
       .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Falha'); return j })
       .then((j: { criativos: Criativo[]; naoAtribuido: { vendas: number; faturamento: number } }) => {
         if (cancelado) return
@@ -176,7 +193,8 @@ function Conteudo() {
       .catch(() => {})
       .finally(() => { if (!cancelado) setCarregandoCriativos(false) })
     return () => { cancelado = true }
-  }, [funilId, query, somenteAtivos, refresh])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [funilId, query, somenteAtivos, refresh, contarDesligavel])
 
   // Navegar (funil/período/data) volta a usar o cache: zera o refresh.
   function selecionar(id: string) { setRefresh(0); router.push(`/performance-funis/dashboard?funilId=${id}&${query}`) }
@@ -207,6 +225,8 @@ function Conteudo() {
   const listaVendas = !d ? [] : (subVendas === 'aprovadas' ? d.vendasLista : d.reembolsosLista)
   const totalPagVendas = Math.max(1, Math.ceil(listaVendas.length / VENDAS_POR_PAGINA))
   const pagVendasSegura = Math.min(pagVendas, totalPagVendas - 1)
+  const resumoDesatualizado = !!d && chaveDoD !== chaveAtual
+  function alternarDesligavel() { setDesligadoNoFunil(contarDesligavel ? funilId : null); setRefresh(0); setPagVendas(0) }
   const vendasVisiveis = listaVendas.slice(pagVendasSegura * VENDAS_POR_PAGINA, pagVendasSegura * VENDAS_POR_PAGINA + VENDAS_POR_PAGINA)
 
   return (
@@ -271,17 +291,29 @@ function Conteudo() {
                 </button>
               ))}
             </div>
+            {d?.desligavel && (
+              <button onClick={alternarDesligavel} aria-pressed={contarDesligavel}
+                className={`flex items-center gap-2 rounded-full border px-1 py-1 pl-2.5 text-xs font-medium transition-colors ${contarDesligavel ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-[#181A20] text-[#9CA3AF] hover:text-white hover:border-white/20'}`}>
+                {`Contar ${d.desligavel}`}
+                <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${contarDesligavel ? 'bg-emerald-500' : 'bg-white/15'}`}>
+                  <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${contarDesligavel ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                </span>
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {d?.aviso && <div className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">{d.aviso}</div>}
+      {d && d.desligavel && !d.contandoDesligavel && (
+        <div className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">O Resgate - CSP está fora da conta. Os números mostram o funil sem ele.</div>
+      )}
       {erro && <div className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{erro}</div>}
 
       {!funilId ? null : (!d && carregando) ? (
         <div className={`${CARD} mt-6 p-10 text-center text-sm text-[#9CA3AF]`}>Carregando os dados...</div>
       ) : !d ? null : (
-        <div className={`transition-opacity duration-200 ${carregando ? 'opacity-50' : 'opacity-100'}`}>
+        <div className={`transition-opacity duration-200 ${carregando || resumoDesatualizado ? 'opacity-50' : 'opacity-100'}`}>
           {abaInterna === 'geral' && (<>
           {/* V2: fileira de cards de métrica no topo (estrutura do vídeo) */}
           <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -563,7 +595,7 @@ function Conteudo() {
                 <div className="mt-5 flex justify-between border-t border-white/10 pt-3 text-sm text-[#9CA3AF]">
                   <span>Soma da esteira</span>
                   <span className="font-semibold text-white">
-                    {int(d.esteira.reduce((s, e) => s + e.vendas, 0))} vendas · {brl(d.esteira.reduce((s, e) => s + e.faturamento, 0))}
+                    {int(d.esteira.reduce((s, e) => s + (e.foraDaConta ? 0 : e.vendas), 0))} vendas · {brl(d.esteira.reduce((s, e) => s + (e.foraDaConta ? 0 : e.faturamento), 0))}
                   </span>
                 </div>
               </div>
@@ -661,7 +693,7 @@ function spline(pts: { x: number; y: number }[]): string {
 // afunila da esquerda (boca = principal) pra direita; gradiente azul->rosa; % no
 // meio (relativo à boca), nº de vendas e faturamento embaixo. Estágios FIXOS -
 // renderiza sempre, zerado quando não há venda (banda com altura mínima visível).
-function FunilEsteira({ esteira }: { esteira: { rotulo: string; vendas: number; faturamento: number }[] }) {
+function FunilEsteira({ esteira }: { esteira: { rotulo: string; vendas: number; faturamento: number; foraDaConta?: boolean }[] }) {
   const n = esteira.length
   if (n === 0) return null
   const W = 1000, H = 300, mid = H / 2
@@ -676,11 +708,18 @@ function FunilEsteira({ esteira }: { esteira: { rotulo: string; vendas: number; 
   const d = `${topo} ${baseInf} Z`
   const pct = (v: number) => (base > 0 ? `${(v / base * 100).toFixed(1).replace('.', ',')}%` : '0%')
   const cols = { display: 'grid', gridTemplateColumns: `repeat(${n}, 1fr)` } as const
+  // Degrau "fora da conta" (botão Contar ... desligado): texto e faixa apagados
+  // só na coluna dele; a marca fica em âmbar a 100%.
+  const iFora = esteira.findIndex(e => e.foraDaConta)
+  const apaga = (i: number) => (i === iFora ? 'opacity-40' : '')
   return (
     <div className="mt-6">
       <div style={cols} className="gap-1">
         {esteira.map((e, i) => (
-          <div key={i} className="truncate px-1 text-center text-[11px] font-medium text-[#C9CED8]" title={e.rotulo}>{e.rotulo}</div>
+          <div key={i} className="px-1 text-center">
+            <div className={`truncate text-[11px] font-medium text-[#C9CED8] ${apaga(i)}`} title={e.rotulo}>{e.rotulo}</div>
+            {e.foraDaConta && <div className="text-[10px] font-semibold text-amber-300">fora da conta</div>}
+          </div>
         ))}
       </div>
       <div className="relative mt-1">
@@ -691,21 +730,35 @@ function FunilEsteira({ esteira }: { esteira: { rotulo: string; vendas: number; 
               <stop offset="55%" stopColor="#8B5CF6" />
               <stop offset="100%" stopColor="#EC4899" />
             </linearGradient>
+            {iFora >= 0 && (<>
+              <clipPath id="esteira-fora-da-coluna">
+                <rect x="0" y="0" width={colW * iFora} height={H} />
+                <rect x={colW * (iFora + 1)} y="0" width={W - colW * (iFora + 1)} height={H} />
+              </clipPath>
+              <clipPath id="esteira-coluna-fora">
+                <rect x={colW * iFora} y="0" width={colW} height={H} />
+              </clipPath>
+            </>)}
           </defs>
           {esteira.slice(1).map((_, i) => (
             <line key={i} x1={colW * (i + 1)} y1="0" x2={colW * (i + 1)} y2={H} stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
           ))}
-          <path d={d} fill="url(#esteira-grad)" />
+          {iFora < 0 ? (
+            <path d={d} fill="url(#esteira-grad)" />
+          ) : (<>
+            <path d={d} fill="url(#esteira-grad)" clipPath="url(#esteira-fora-da-coluna)" />
+            <path d={d} fill="url(#esteira-grad)" clipPath="url(#esteira-coluna-fora)" opacity={0.35} />
+          </>)}
         </svg>
         <div style={cols} className="pointer-events-none absolute inset-0 items-center">
           {esteira.map((e, i) => (
-            <div key={i} className="text-center text-sm font-bold text-white drop-shadow">{pct(e.vendas)}</div>
+            <div key={i} className={`text-center text-sm font-bold text-white drop-shadow ${apaga(i)}`}>{pct(e.vendas)}</div>
           ))}
         </div>
       </div>
       <div style={cols} className="mt-2 gap-1">
         {esteira.map((e, i) => (
-          <div key={i} className="px-1 text-center">
+          <div key={i} className={`px-1 text-center ${apaga(i)}`}>
             <div className={`${display.className} text-base font-bold text-white`}>{int(e.vendas)}</div>
             <div className="text-[11px] text-[#9CA3AF]">{brlCompact(e.faturamento)}</div>
           </div>
