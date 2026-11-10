@@ -113,6 +113,8 @@ function Conteudo() {
   const [criativos, setCriativos] = useState<Criativo[]>([])
   const [naoAtribuido, setNaoAtribuido] = useState<{ vendas: number; faturamento: number }>({ vendas: 0, faturamento: 0 })
   const [carregandoCriativos, setCarregandoCriativos] = useState(false)
+  // Falha da busca dos criativos (antes caía em "Nenhum anúncio no período").
+  const [erroCriativos, setErroCriativos] = useState<string | null>(null)
   const [somenteAtivos, setSomenteAtivos] = useState(true)
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -182,7 +184,7 @@ function Conteudo() {
   useEffect(() => {
     if (!funilId) return
     let cancelado = false
-    setCriativos([]); setNaoAtribuido({ vendas: 0, faturamento: 0 }); setCarregandoCriativos(true); setPagina(0)
+    setCriativos([]); setNaoAtribuido({ vendas: 0, faturamento: 0 }); setCarregandoCriativos(true); setPagina(0); setErroCriativos(null)
     fetch(`/api/funis/performance?funilId=${funilId}&${query}&criativos=1${somenteAtivos ? '' : '&todos=1'}${semResgate}${noCache}`)
       .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Falha'); return j })
       .then((j: { criativos: Criativo[]; naoAtribuido: { vendas: number; faturamento: number } }) => {
@@ -190,7 +192,7 @@ function Conteudo() {
         setCriativos(j.criativos || [])
         setNaoAtribuido(j.naoAtribuido || { vendas: 0, faturamento: 0 })
       })
-      .catch(() => {})
+      .catch(() => { if (!cancelado) setErroCriativos('Não foi possível carregar os anúncios da Meta. Clique em Atualizar para tentar de novo.') })
       .finally(() => { if (!cancelado) setCarregandoCriativos(false) })
     return () => { cancelado = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -227,6 +229,12 @@ function Conteudo() {
   const pagVendasSegura = Math.min(pagVendas, totalPagVendas - 1)
   const resumoDesatualizado = !!d && chaveDoD !== chaveAtual
   function alternarDesligavel() { setDesligadoNoFunil(contarDesligavel ? funilId : null); setRefresh(0); setPagVendas(0) }
+  // Vendas sem anúncio na UTM: aparece com ou sem anúncio na lista.
+  const linhaNaoAtribuido = naoAtribuido.vendas > 0 && (
+    <div className="mt-3 text-[11px] text-[#8A90A0]">
+      + {int(naoAtribuido.vendas)} venda(s) sem anúncio identificável na UTM (orgânico / link na bio): {brl(naoAtribuido.faturamento)}.
+    </div>
+  )
   const vendasVisiveis = listaVendas.slice(pagVendasSegura * VENDAS_POR_PAGINA, pagVendasSegura * VENDAS_POR_PAGINA + VENDAS_POR_PAGINA)
 
   return (
@@ -444,7 +452,12 @@ function Conteudo() {
                 Carregando os anúncios da Meta...
               </div>
             ) : criativos.length === 0 ? (
-              <div className="mt-4 text-sm text-[#9CA3AF]">Nenhum anúncio no período.</div>
+              erroCriativos ? (
+                <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{erroCriativos}</div>
+              ) : (<>
+                <div className="mt-4 text-sm text-[#9CA3AF]">Nenhum anúncio no período.</div>
+                {linhaNaoAtribuido}
+              </>)
             ) : (
               <div className="mt-5 overflow-x-auto">
                 <table className="w-full text-sm">
@@ -526,11 +539,7 @@ function Conteudo() {
                     })}
                   </tbody>
                 </table>
-                {naoAtribuido.vendas > 0 && (
-                  <div className="mt-3 text-[11px] text-[#8A90A0]">
-                    + {int(naoAtribuido.vendas)} venda(s) sem anúncio identificável na UTM (orgânico / link na bio): {brl(naoAtribuido.faturamento)}.
-                  </div>
-                )}
+                {linhaNaoAtribuido}
                 {totalPaginas > 1 && (
                   <div className="mt-4 flex items-center justify-between">
                     <span className="text-[11px] text-[#8A90A0]">
