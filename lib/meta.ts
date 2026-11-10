@@ -32,6 +32,7 @@ async function fetchAccountPages(
   accountId: string,
   dateParam: string,  // "date_preset=today" ou "time_range=<encoded-json>"
   token: string,
+  relato?: RelatoMeta,
 ): Promise<RawCampaign[]> {
   // A Meta API ignora time_range e date_preset como params separados para insights inline.
   // A forma correta é aplicar o modificador diretamente no campo: insights.date_preset(x){spend}
@@ -62,23 +63,31 @@ async function fetchAccountPages(
       res = await fetch(nextUrl)
     } catch (err) {
       console.error('[Meta API] Erro de rede na conta:', accountId, err)
+      falhou(relato)
       break
     }
 
     if (!res.ok) {
-      const body = await res.text()
+      falhou(relato)
+      const body = await res.text().catch(() => '')
       console.error('[Meta API] Erro HTTP na conta:', accountId, res.status, body.slice(0, 300))
       break
     }
 
-    const json = await res.json() as {
-      data?: RawCampaign[]
-      paging?: { next?: string }
-      error?: { message: string }
+    // Corpo nao-JSON (pagina de erro HTML, corpo cortado) conta como falha desta
+    // conta e segue; antes derrubava a busca inteira (10/11/2026).
+    let json: { data?: RawCampaign[]; paging?: { next?: string }; error?: { message: string } }
+    try {
+      json = await res.json()
+    } catch (err) {
+      console.error('[Meta API] parse na conta:', accountId, err)
+      falhou(relato)
+      break
     }
 
-    if (json.error) {
-      console.error('[Meta API] Erro na conta:', accountId, json.error.message)
+    if (!json || json.error) {
+      console.error('[Meta API] Erro na conta:', accountId, json?.error?.message)
+      falhou(relato)
       break
     }
 
@@ -98,6 +107,7 @@ export async function getAdAccountCampaigns(
   dateEnd: string,
   _nomenclaturas?: string[],
   datePreset?: string,
+  relato?: RelatoMeta,
 ): Promise<{ name: string; spend: number }[]> {
   const token = getToken()
   if (!token) return []
@@ -107,7 +117,7 @@ export async function getAdAccountCampaigns(
     : `time_range=${encodeURIComponent(JSON.stringify({ since: dateStart, until: dateEnd }))}`
 
   // Always fetch all campaigns without API-side name filter — filter locally in getProjectInvestment
-  const rawCampaigns = await fetchAccountPages(accountId, dateParam, token)
+  const rawCampaigns = await fetchAccountPages(accountId, dateParam, token, relato)
 
   return rawCampaigns.map(c => ({
     name: c.name,
@@ -120,12 +130,13 @@ export async function getProjectInvestment(
   dateStart: string,
   dateEnd: string,
   datePreset?: string,
+  relato?: RelatoMeta,
 ): Promise<{ total: number; campanhas: MetaCampanha[] }> {
   const accountIds = getAccountIds()
 
   const resultados = await Promise.all(
     accountIds.map(async (accountId) => {
-      const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd, nomenclaturas, datePreset)
+      const campaigns = await getAdAccountCampaigns(accountId, dateStart, dateEnd, nomenclaturas, datePreset, relato)
       const filtered = campaigns.filter(c =>
         nomenclaturas.some(n => c.name.toLowerCase().includes(n.toLowerCase()))
       )

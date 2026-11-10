@@ -2,7 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   getCampanhaInsights, getAdInsightsPorTermos, getCampanhaInsightsDiario, getAdsCreativeDetails,
-  type RelatoMeta,
+  getProjectInvestment, type RelatoMeta,
 } from './meta'
 
 // Erro da Meta deixa de ser escondido (dono 10/11/2026, Task 5 do plano
@@ -11,7 +11,7 @@ import {
 // Fetch simulado - nao vai na Meta.
 
 const fetchOriginal = globalThis.fetch
-type Resposta = { ok: boolean; status?: number; json?: unknown; naoJson?: boolean; lanca?: boolean }
+type Resposta = { ok: boolean; status?: number; json?: unknown; naoJson?: boolean; lanca?: boolean; textoLanca?: boolean }
 let roteiro: (url: string) => Resposta
 let chamadas: string[] = []
 
@@ -31,7 +31,7 @@ beforeEach(() => {
     return {
       ok: r.ok, status: r.status ?? 200,
       json: async () => { if (r.naoJson) throw new SyntaxError('Unexpected token <'); return r.json },
-      text: async () => (r.naoJson ? '<html>' : JSON.stringify(r.json ?? 'erro')),
+      text: async () => { if (r.textoLanca) throw new Error('corpo cortado'); return r.naoJson ? '<html>' : JSON.stringify(r.json ?? 'erro') },
     } as unknown as Response
   }) as typeof fetch
 })
@@ -154,3 +154,53 @@ test('getAdsCreativeDetails: tudo ok conta 0', async () => {
   assert.equal(relato.falhas, 0)
   assert.equal(m.size, 2)
 })
+
+// ---- getProjectInvestment (Fechamento, DRE, inicio) - Task 6 ----
+
+const contaDaUrl = (url: string) => /act_(\w+)\//.exec(url)?.[1] ?? ''
+const gasto: Record<string, string> = { A: '5000', B: '6000', C: '8000', D: '7000', E: '4000' }
+const campanhaDaConta = (conta: string) => ({ name: `CSP - ${conta}`, insights: { data: [{ spend: gasto[conta] }] } })
+const contasOk = (url: string) => ok({ data: [campanhaDaConta(contaDaUrl(url))] })
+
+function comContas<T>(fn: () => Promise<T>): Promise<T> {
+  const antes = process.env.META_AD_ACCOUNT_IDS
+  process.env.META_AD_ACCOUNT_IDS = 'A,B,C,D,E'
+  return fn().finally(() => { if (antes === undefined) delete process.env.META_AD_ACCOUNT_IDS; else process.env.META_AD_ACCOUNT_IDS = antes })
+}
+
+test('getProjectInvestment: tudo ok soma as 5 contas e conta 0', () => comContas(async () => {
+  roteiro = contasOk
+  const relato: RelatoMeta = { falhas: 0 }
+  const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+  assert.equal(r.total, 30000)
+  assert.equal(relato.falhas, 0)
+}))
+
+for (const [caso, resp] of [['HTTP 500', http500], ['rede', rede], ['json.error', erroMeta], ['corpo nao-JSON', naoJson], ['res.text() que rejeita', { ok: false, status: 502, textoLanca: true } as Resposta]] as const) {
+  test(`getProjectInvestment: conta C com ${caso} conta 1 falha e soma so as outras 4`, () => comContas(async () => {
+    roteiro = url => (contaDaUrl(url) === 'C' ? resp : contasOk(url))
+    const relato: RelatoMeta = { falhas: 0 }
+    const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+    assert.equal(r.total, 22000)
+    assert.equal(relato.falhas, 1)
+    assert.deepEqual(r.campanhas.map(c => c.accountId).sort(), ['A', 'B', 'D', 'E'])
+  }))
+}
+
+test('getProjectInvestment: segunda pagina de uma conta em erro conta 1 falha', () => comContas(async () => {
+  roteiro = url => {
+    if (url === PAG2) return http500
+    const conta = contaDaUrl(url)
+    return conta === 'A' ? ok({ data: [campanhaDaConta('A')], paging: { next: PAG2 } }) : contasOk(url)
+  }
+  const relato: RelatoMeta = { falhas: 0 }
+  const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+  assert.equal(r.total, 30000)
+  assert.equal(relato.falhas, 1)
+}))
+
+test('getProjectInvestment: sem relato, falha nao lanca e o total e o de antes', () => comContas(async () => {
+  roteiro = url => (contaDaUrl(url) === 'C' ? http500 : contasOk(url))
+  const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31')
+  assert.equal(r.total, 22000)
+}))
