@@ -58,3 +58,10 @@ export function criarSequenciaDeBusca() {
     vigente: (n: number) => n === atual,
   }
 }
+
+/** Texto do erro da busca de trafego: falha das contas da Meta usa o texto aprovado; outro motivo (sessao, token) aparece como veio. */
+export function mensagemDoErroDoTrafego(corpo: { erro?: string; error?: string; incompleto?: boolean; total?: number; campanhas?: unknown[] } | null): string {
+  if (!corpo) return ERRO_TRAFEGO_INCOMPLETO
+  if (corpo.erro === ERRO_TRAFEGO_INCOMPLETO) return ERRO_TRAFEGO_INCOMPLETO
+  return corpo.error || corpo.erro || ERRO_TRAFEGO_INCOMPLETO
+}

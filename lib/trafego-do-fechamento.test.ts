@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   podeConfirmarTrafego, respostaMetaCompleta,
-  ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO, AVISO_DRE_META_INCOMPLETA, criarSequenciaDeBusca,
+  ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO, AVISO_DRE_META_INCOMPLETA, criarSequenciaDeBusca, mensagemDoErroDoTrafego,
 } from './trafego-do-fechamento'
 
 // Trava do "Confirmar fechamento" (dono 10/11/2026, Task 6 do plano
@@ -79,3 +79,14 @@ test('sequencia: sequencias independentes nao se misturam', () => {
   const na = a.iniciar(); b.iniciar(); b.iniciar()
   assert.equal(a.vigente(na), true)
 })
+
+// Revisao Gemini (13/11): sessao expirada ou token faltando mostram o motivo
+// real; so a falha das contas da Meta mostra o texto de "nao respondeu".
+test('mensagem: falha das contas da Meta = texto aprovado', () =>
+  assert.equal(mensagemDoErroDoTrafego({ total: 0, campanhas: [], erro: ERRO_TRAFEGO_INCOMPLETO, incompleto: true }), ERRO_TRAFEGO_INCOMPLETO))
+test('mensagem: sessao expirada (401) mostra o motivo da rota', () =>
+  assert.equal(mensagemDoErroDoTrafego({ error: 'Você precisa entrar no sistema.' }), 'Você precisa entrar no sistema.'))
+test('mensagem: token nao configurado mostra o motivo', () =>
+  assert.equal(mensagemDoErroDoTrafego({ total: 0, campanhas: [], erro: 'Token não configurado' }), 'Token não configurado'))
+test('mensagem: corpo quebrado cai no texto aprovado', () =>
+  assert.equal(mensagemDoErroDoTrafego(null), ERRO_TRAFEGO_INCOMPLETO))

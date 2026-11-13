@@ -47,6 +47,6 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[Meta API] Erro ao buscar custo de tráfego:', msg)
-    return NextResponse.json({ total: 0, campanhas: [], erro: msg, incompleto: true })
+    return NextResponse.json({ total: 0, campanhas: [], erro: ERRO_TRAFEGO_INCOMPLETO, incompleto: true })
   }
 }

@@ -60,7 +60,7 @@ async function fetchAccountPages(
   while (nextUrl) {
     let res: Response
     try {
-      res = await fetch(nextUrl)
+      res = await fetch(nextUrl, { cache: 'no-store' })
     } catch (err) {
       console.error('[Meta API] Erro de rede na conta:', accountId, err)
       falhou(relato)
@@ -85,8 +85,9 @@ async function fetchAccountPages(
       break
     }
 
-    if (!json || json.error) {
-      console.error('[Meta API] Erro na conta:', accountId, json?.error?.message)
+    // Resposta sem lista (ex.: {}) nao e "zero gasto": e falha desta conta.
+    if (!json || json.error || !Array.isArray(json.data)) {
+      console.error('[Meta API] Erro na conta:', accountId, json?.error?.message ?? 'resposta sem lista de campanhas')
       falhou(relato)
       break
     }
@@ -110,7 +111,7 @@ export async function getAdAccountCampaigns(
   relato?: RelatoMeta,
 ): Promise<{ name: string; spend: number }[]> {
   const token = getToken()
-  if (!token) return []
+  if (!token) { falhou(relato); return [] }
 
   const dateParam = datePreset
     ? `date_preset=${datePreset}`
@@ -133,6 +134,8 @@ export async function getProjectInvestment(
   relato?: RelatoMeta,
 ): Promise<{ total: number; campanhas: MetaCampanha[] }> {
   const accountIds = getAccountIds()
+  // Nenhuma conta configurada nao e "periodo sem gasto": e busca que nao rodou.
+  if (accountIds.length === 0) falhou(relato)
 
   const resultados = await Promise.all(
     accountIds.map(async (accountId) => {

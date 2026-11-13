@@ -8114,3 +8114,11 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   repasse a terapeutas (R$ 10.410,19 em outubro); 13,85% da Meta (R$ 25.310,95 em outubro). Meta do DRE so com os
   termos [F01-IRM, [PF01_RC e CSP. Fluxo de Caixa: entra o bruto e nao tira taxas nem "Outros"; saldo inicial 0.
 - Revisoes: scratchpad aliquota/codex-dre.txt e gemini-dre.txt. Aguardando decisao do dono sobre escopo.
+
+- **145.5 Revisao do Gemini no codigo da trava (13/11/2026), corrigido:** nenhuma conta configurada ou sem token
+  agora conta falha (antes dava R$ 0 "completo" e liberava); conta que responde 200 sem lista de campanhas conta
+  falha; fetch da Meta com `cache: 'no-store'`; tirar qualquer termo invalida a busca em andamento e zera o custo (antes
+  tirar termos durante a busca podia travar o botao sem saida); datas invertidas invalidam a busca e zeram; sessao
+  expirada e token faltando mostram o motivo real (`mensagemDoErroDoTrafego`), so a falha das contas mostra "A Meta nao
+  respondeu por completo..."; excecao na rota devolve o texto aprovado; o aviso vermelho da trava nao aparece enquanto
+  a busca roda. Aceito: a trava e so na tela (a gravacao confia no total enviado).

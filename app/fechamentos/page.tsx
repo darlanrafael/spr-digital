@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { podeConfirmarTrafego, respostaMetaCompleta, criarSequenciaDeBusca, ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO } from '@/lib/trafego-do-fechamento'
+import { podeConfirmarTrafego, respostaMetaCompleta, criarSequenciaDeBusca, mensagemDoErroDoTrafego, BLOQUEIO_FECHAMENTO_TRAFEGO } from '@/lib/trafego-do-fechamento'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Copy, Download, Hash, Loader2, Search, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
@@ -308,13 +308,11 @@ function FechamentosContent() {
   }
 
   function removeTermoTrafego(termo: string) {
-    // Tirou o último termo: sem tráfego. Invalida a busca em andamento e zera tudo.
-    if (trafego.termos.every(x => x === termo)) buscaTrafegoSeq.current.invalidar()
-    setTrafego(t => {
-      const termos = t.termos.filter(x => x !== termo)
-      if (termos.length > 0) return { ...t, termos }
-      return { ...t, termos, total: 0, campanhas: [], erro: null, loading: false, buscaCompleta: null }
-    })
+    // Tirar qualquer termo muda a busca: invalida a que estiver em andamento e
+    // zera o custo (sem termo nenhum, libera com zero; com termos, pede nova
+    // busca). Revisao Gemini 13/11: tirar termos durante a busca travava o botao.
+    buscaTrafegoSeq.current.invalidar()
+    setTrafego(t => ({ ...t, termos: t.termos.filter(x => x !== termo), total: 0, campanhas: [], erro: null, loading: false, buscaCompleta: null }))
   }
 
   // Datas em YYYY-MM-DD comparam certo como string, sem precisar de Date.
@@ -324,7 +322,8 @@ function FechamentosContent() {
   async function buscarTrafego() {
     if (!trafego.periodo.inicio || !trafego.periodo.fim || trafego.termos.length === 0) return
     if (trafego.periodo.inicio > trafego.periodo.fim) {
-      setTrafego(t => ({ ...t, erro: 'Data de início posterior à data de fim' }))
+      buscaTrafegoSeq.current.invalidar()
+      setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], buscaCompleta: null, erro: 'Data de início posterior à data de fim' }))
       return
     }
     const seq = buscaTrafegoSeq.current.iniciar()
@@ -339,7 +338,7 @@ function FechamentosContent() {
       if (!respostaMetaCompleta({ ok: res.ok, corpo: data })) {
         // Incompleta (conta da Meta com erro, sessão expirada, corpo quebrado):
         // nada de valor parcial na tela; pede nova busca.
-        setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: ERRO_TRAFEGO_INCOMPLETO, buscaCompleta: null }))
+        setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: mensagemDoErroDoTrafego(data), buscaCompleta: null }))
         return
       }
       const totalBruto = typeof data?.total === 'number' ? data.total : 0
@@ -354,7 +353,7 @@ function FechamentosContent() {
       setTrafegoPage(1)
     } catch {
       if (!buscaTrafegoSeq.current.vigente(seq)) return
-      setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: ERRO_TRAFEGO_INCOMPLETO, buscaCompleta: null }))
+      setTrafego(t => ({ ...t, loading: false, total: 0, campanhas: [], erro: mensagemDoErroDoTrafego(null), buscaCompleta: null }))
     }
   }
 
@@ -2452,7 +2451,7 @@ function FechamentosContent() {
                         className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-4 py-2 rounded-lg transition-colors">
                         Voltar
                       </button>
-                      {canEdit && !trafegoLiberado && (
+                      {canEdit && !trafegoLiberado && !trafego.loading && (
                         <p className="self-center text-xs text-red-400">{BLOQUEIO_FECHAMENTO_TRAFEGO}</p>
                       )}
                       {canEdit && (

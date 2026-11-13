@@ -212,3 +212,36 @@ test('getProjectInvestment: sem relato, falha nao lanca e o total e o de antes',
   const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31')
   assert.equal(r.total, 22000)
 }))
+
+// Revisao Gemini da trava (13/11/2026): conta vazia e resposta sem lista nao
+// podem passar como "busca completa com gasto zero".
+test('getProjectInvestment: nenhuma conta configurada conta 1 falha', async () => {
+  const antes = process.env.META_AD_ACCOUNT_IDS
+  process.env.META_AD_ACCOUNT_IDS = ' , '
+  try {
+    roteiro = contasOk
+    const relato: RelatoMeta = { falhas: 0 }
+    const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+    assert.equal(r.total, 0)
+    assert.equal(relato.falhas, 1)
+  } finally {
+    if (antes === undefined) delete process.env.META_AD_ACCOUNT_IDS; else process.env.META_AD_ACCOUNT_IDS = antes
+  }
+})
+
+test('getProjectInvestment: sem token conta 1 falha', () => comContas(async () => {
+  delete process.env.META_ACCESS_TOKEN
+  roteiro = contasOk
+  const relato: RelatoMeta = { falhas: 0 }
+  const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+  assert.equal(r.total, 0)
+  assert.ok(relato.falhas >= 1)
+}))
+
+test('getProjectInvestment: conta que responde 200 sem lista de campanhas conta falha', () => comContas(async () => {
+  roteiro = url => (contaDaUrl(url) === 'C' ? ok({}) : contasOk(url))
+  const relato: RelatoMeta = { falhas: 0 }
+  const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+  assert.equal(r.total, 22000)
+  assert.equal(relato.falhas, 1)
+}))
