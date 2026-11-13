@@ -83,3 +83,12 @@ test('aceitacao: imposto da empresa na regra nova e repasse do terapeuta com a a
   perto(repasse, 231.45)
   perto(900 - imposto - repasse, 581.45)
 })
+
+test('marca diferente de nova-2026-11 nao conta como regra nova', () => {
+  assert.equal(fechamentoEhDaRegraNova({ byProduct: [{ regraImposto: 'antiga' }] }), false)
+  assert.deepEqual([...idsDaRegraAntiga([{ byProduct: [{ regraImposto: 'antiga' }], compradores: [{ id: 'z' }] }])], ['z'])
+})
+
+test('aliquota efetiva arredonda para baixo quando deve (7,0733 -> 7,07)', () => {
+  assert.deepEqual(aliquotaDaLinha([{ base: 100, aliquota: 3.8 }, { base: 200, aliquota: 8.71 }]), { aliquota: 7.07, efetiva: true })
+})

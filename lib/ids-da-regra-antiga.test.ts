@@ -52,6 +52,17 @@ test('erro da consulta: falha', async () => {
   await assert.rejects(() => buscarIdsDaRegraAntiga(client as never))
 })
 
+test('erro na segunda pagina: falha (nunca devolve so a primeira)', async () => {
+  const p1 = Array.from({ length: 1000 }, (_, i) => linha(i))
+  const { client } = clienteFalso([{ data: p1 }, { error: { message: 'caiu' } }])
+  await assert.rejects(() => buscarIdsDaRegraAntiga(client as never), { message: 'caiu' })
+})
+
+test('addClosing: erro do banco ao gravar falha', async () => {
+  const client = { from: () => ({ upsert: async () => ({ error: new Error('upsert falhou') }) }) }
+  await assert.rejects(() => addClosing({ periodo: {} } as Closing, 'proj_1', client as never), { message: 'upsert falhou' })
+})
+
 test('addClosing grava by_product inteiro, com o carimbo e a aliquota efetiva', async () => {
   let payload: Record<string, unknown> | null = null
   const client = { from: () => ({ upsert: async (p: Record<string, unknown>) => { payload = p; return { error: null } } }) }
@@ -59,12 +70,14 @@ test('addClosing grava by_product inteiro, com o carimbo e a aliquota efetiva', 
     id: 'close_1', data: '2026-11-13', periodo: { inicio: '2026-11-01', fim: '2026-11-13' },
     faturamentoBruto: 0, impostos: 0, taxasPlataforma: 0, faturamentoLiquido: 0, custosTotais: 0, lucroBruto: 0,
     reservaCaixa: 0, lucroReal: 0, socios: [], compradores: [], alertas: [],
-    byProduct: [{ nome: 'X', plataforma: 'hubla', qtd: 1, bruto: 100, taxas: 0, aliquota: 10.78, imposto: 1, liquido: 99, regraImposto: 'nova-2026-11', aliquotaEfetiva: true }],
+    byProduct: [
+      { nome: 'X', plataforma: 'hubla', qtd: 1, bruto: 100, taxas: 0, aliquota: 10.78, imposto: 1, liquido: 99, regraImposto: 'nova-2026-11', aliquotaEfetiva: true },
+      { nome: 'Y', plataforma: 'kiwify', qtd: 2, bruto: 50, taxas: 2, aliquota: 3.8, imposto: 1.9, liquido: 48, regraImposto: 'nova-2026-11' },
+    ],
   } as unknown as Closing
   await addClosing(fechamento, 'proj_1', client as never)
-  const bp = (payload as unknown as { by_product: { regraImposto?: string; aliquotaEfetiva?: boolean }[] }).by_product
-  assert.equal(bp[0].regraImposto, 'nova-2026-11')
-  assert.equal(bp[0].aliquotaEfetiva, true)
+  const bp = (payload as unknown as { by_product: unknown[] }).by_product
+  assert.deepEqual(bp, (fechamento as unknown as { byProduct: unknown[] }).byProduct)
 })
 
 test('addClosing sem cliente do banco: falha com a mensagem (antes voltava calado)', async () => {
