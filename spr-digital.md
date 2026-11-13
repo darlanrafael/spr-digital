@@ -8155,3 +8155,10 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   corrigidos (instante do corte, numeros zerados fora de pronto, agregacao quadratica, lacunas de teste). Aceito: fluxos
   de tela (gravacao rejeitada, reconsulta ao confirmar) sem teste automatizado (projeto nao tem teste de tela).
 - Pendente: `scripts/converter-venda-em-moeda-estrangeira.ts` ainda imprime simulacao com 12,85%. Etapa 2: item 147.
+- **148.1 Revisao final (revisor novo + Gemini, 13/11):** sem critico no revisor novo. Corrigido: repasse percentual
+  volta a ser base x % sem piso (comissao nao muda nem em base zero/negativa); clique duplo no Confirmar (trava
+  sincrona; botao so volta depois de custos e caixa); fechamento em dobro feito noutra aba (na confirmacao, se alguma
+  venda da tela ja esta em qualquer fechamento, para e pede para recarregar); nenhum fechamento lido = erro; leitura
+  paginada ate vir pagina vazia. Conferido: a chave da tela le os 21 fechamentos (sem limite de acesso). Ficam como
+  estao (ja existiam): gravacao de custos/caixa depois do fechamento nao e atomica; taxa negativa no DRE aparece em
+  vermelho. 1211 testes, tsc ok.
