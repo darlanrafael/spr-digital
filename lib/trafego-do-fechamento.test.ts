@@ -90,3 +90,14 @@ test('mensagem: token nao configurado mostra o motivo', () =>
   assert.equal(mensagemDoErroDoTrafego({ total: 0, campanhas: [], erro: 'Token não configurado' }), 'Token não configurado'))
 test('mensagem: corpo quebrado cai no texto aprovado', () =>
   assert.equal(mensagemDoErroDoTrafego(null), ERRO_TRAFEGO_INCOMPLETO))
+
+test('respostaMetaCompleta: corpo sem total numerico ou sem lista = incompleta', () => {
+  assert.equal(respostaMetaCompleta({ ok: true, corpo: {} }), false)
+  assert.equal(respostaMetaCompleta({ ok: true, corpo: { total: 10 } as never }), false)
+  assert.equal(respostaMetaCompleta({ ok: true, corpo: { total: Number.NaN, campanhas: [] } as never }), false)
+  assert.equal(respostaMetaCompleta({ ok: true, corpo: { total: '10', campanhas: [] } as never }), false)
+})
+test('mensagem: erro que nao e texto cai no texto aprovado (nao quebra a tela)', () => {
+  assert.equal(mensagemDoErroDoTrafego({ error: { code: 'x' } } as never), ERRO_TRAFEGO_INCOMPLETO)
+  assert.equal(mensagemDoErroDoTrafego({ erro: '   ' } as never), ERRO_TRAFEGO_INCOMPLETO)
+})

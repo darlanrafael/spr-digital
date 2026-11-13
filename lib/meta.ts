@@ -120,10 +120,15 @@ export async function getAdAccountCampaigns(
   // Always fetch all campaigns without API-side name filter — filter locally in getProjectInvestment
   const rawCampaigns = await fetchAccountPages(accountId, dateParam, token, relato)
 
-  return rawCampaigns.map(c => ({
-    name: c.name,
-    spend: parseFloat(c.insights?.data?.[0]?.spend ?? '0') || 0,
-  }))
+  // Sem insights no periodo = gasto zero legitimo. Gasto que veio e nao e
+  // numero conta falha (antes virava zero calado; revisao Codex 13/11).
+  return rawCampaigns.map(c => {
+    const bruto = c.insights?.data?.[0]?.spend
+    if (bruto === undefined || bruto === null) return { name: c.name, spend: 0 }
+    const spend = Number(bruto)
+    if (!Number.isFinite(spend)) { falhou(relato); return { name: c.name, spend: 0 } }
+    return { name: c.name, spend }
+  })
 }
 
 export async function getProjectInvestment(

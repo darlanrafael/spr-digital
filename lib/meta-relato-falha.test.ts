@@ -245,3 +245,20 @@ test('getProjectInvestment: conta que responde 200 sem lista de campanhas conta 
   assert.equal(r.total, 22000)
   assert.equal(relato.falhas, 1)
 }))
+
+test('getProjectInvestment: gasto invalido conta falha (nao vira zero calado)', () => comContas(async () => {
+  roteiro = url => (contaDaUrl(url) === 'C'
+    ? ok({ data: [{ name: 'CSP - C', insights: { data: [{ spend: 'invalido' }] } }] })
+    : contasOk(url))
+  const relato: RelatoMeta = { falhas: 0 }
+  await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+  assert.equal(relato.falhas, 1)
+}))
+
+test('getProjectInvestment: campanha sem gasto no periodo (sem insights) e zero legitimo', () => comContas(async () => {
+  roteiro = url => (contaDaUrl(url) === 'C' ? ok({ data: [{ name: 'CSP - C' }] }) : contasOk(url))
+  const relato: RelatoMeta = { falhas: 0 }
+  const r = await getProjectInvestment(['CSP'], '2026-10-01', '2026-10-31', undefined, relato)
+  assert.equal(r.total, 22000)
+  assert.equal(relato.falhas, 0)
+}))

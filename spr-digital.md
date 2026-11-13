@@ -8122,3 +8122,7 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   expirada e token faltando mostram o motivo real (`mensagemDoErroDoTrafego`), so a falha das contas mostra "A Meta nao
   respondeu por completo..."; excecao na rota devolve o texto aprovado; o aviso vermelho da trava nao aparece enquanto
   a busca roda. Aceito: a trava e so na tela (a gravacao confia no total enviado).
+- **145.6 Segunda passada (Codex + Gemini, 13/11):** confirmaram as correcoes acima sem furo novo. Fechados os residuais:
+  gasto da Meta que nao e numero conta falha (campanha sem insights continua zero legitimo); resposta sem `total`
+  numerico ou sem lista de campanhas nao conta como completa; erro que nao e texto nao quebra a tela. Fica como esta: o
+  texto vermelho da trava aparece tambem antes da primeira busca (texto unico aprovado pelo dono). 1178 testes, tsc ok.

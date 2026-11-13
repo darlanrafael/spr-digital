@@ -37,7 +37,10 @@ export function respostaMetaCompleta(o: {
   corpo: { erro?: string; error?: string; incompleto?: boolean } | null
 }): boolean {
   if (!o.ok || !o.corpo) return false
-  return !o.corpo.erro && !o.corpo.error && !o.corpo.incompleto
+  if (o.corpo.erro || o.corpo.error || o.corpo.incompleto) return false
+  // Precisa trazer o que a tela usa: total numerico e lista de campanhas.
+  const c = o.corpo as { total?: unknown; campanhas?: unknown }
+  return typeof c.total === 'number' && Number.isFinite(c.total) && Array.isArray(c.campanhas)
 }
 
 // Textos exatos aprovados pelo dono (10/11/2026).
@@ -60,8 +63,11 @@ export function criarSequenciaDeBusca() {
 }
 
 /** Texto do erro da busca de trafego: falha das contas da Meta usa o texto aprovado; outro motivo (sessao, token) aparece como veio. */
-export function mensagemDoErroDoTrafego(corpo: { erro?: string; error?: string; incompleto?: boolean; total?: number; campanhas?: unknown[] } | null): string {
-  if (!corpo) return ERRO_TRAFEGO_INCOMPLETO
-  if (corpo.erro === ERRO_TRAFEGO_INCOMPLETO) return ERRO_TRAFEGO_INCOMPLETO
-  return corpo.error || corpo.erro || ERRO_TRAFEGO_INCOMPLETO
+export function mensagemDoErroDoTrafego(corpo: unknown): string {
+  if (!corpo || typeof corpo !== 'object') return ERRO_TRAFEGO_INCOMPLETO
+  const { erro, error } = corpo as { erro?: unknown; error?: unknown }
+  if (erro === ERRO_TRAFEGO_INCOMPLETO) return ERRO_TRAFEGO_INCOMPLETO
+  if (typeof error === 'string' && error.trim()) return error
+  if (typeof erro === 'string' && erro.trim()) return erro
+  return ERRO_TRAFEGO_INCOMPLETO
 }
