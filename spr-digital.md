@@ -8097,3 +8097,20 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   vira "fechada" no proximo fechamento e voltaria para a regra antiga no DRE); (2) por data da venda >= 20/10.
   Descartada: fim do periodo de cada produto (perde as vendas de 19/10 depois da confirmacao e vira de regra depois).
 - Revisado 3 vezes e 3 passadas do Codex (fatos, ataque das opcoes, auditoria da mensagem). Aguardando decisao do dono.
+
+# 147. Avaliacao do DRE (pedido do dono 13/11/2026) - conferida por Codex e Gemini, NADA ALTERADO
+
+- Visao do dono: DRE independente dos fechamentos (vendas aprovadas do mes, investimento do mes, custos com mes de
+  referencia). Aliquota nova no DRE por data: vendas de 20/10/2026 em diante. No Fechamento: venda sem fechamento =
+  regra nova (item 146). Comissionamento dos terapeutas nao muda em lugar nenhum.
+- Hoje (`app/dre/page.tsx`, conferido): ja e independente dos fechamentos (vendas pela data, 6 meses); fixos e
+  variaveis sao os mesmos lancamentos do Fechamento, pela data/mes de referencia.
+- ERRO confirmado pelos dois revisores: o "Resultado liquido" nao desconta imposto (linha 112 subtrai o imposto das
+  taxas e a 113 soma de volta; taxas de out/2026 ficam -R$ 32.495,66). valor_liquido da Hubla (seller) e da Kiwify
+  (my_commission) nao tem imposto da empresa. So corrigindo a formula, out/2026 vai de R$ 212.931,90 para
+  R$ 161.587,29 (regra antiga, sem os demais custos).
+- Fora do DRE e dentro dos fechamentos: custos lancados so no Fechamento (V-TURB, UTMFY, comissoes comerciais,
+  agendamentos, ferramentas, reembolsos por fora; R$ 16.192,30 nos fechamentos de outubro, sem mes de referencia);
+  repasse a terapeutas (R$ 10.410,19 em outubro); 13,85% da Meta (R$ 25.310,95 em outubro). Meta do DRE so com os
+  termos [F01-IRM, [PF01_RC e CSP. Fluxo de Caixa: entra o bruto e nao tira taxas nem "Outros"; saldo inicial 0.
+- Revisoes: scratchpad aliquota/codex-dre.txt e gemini-dre.txt. Aguardando decisao do dono sobre escopo.
