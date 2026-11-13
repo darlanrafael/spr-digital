@@ -12,7 +12,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto } from '@/lib/formatters'
 import { aliquotaDaLinha, formatAliquota, REGRA_IMPOSTO_NOVA } from '@/lib/aliquota-imposto'
-import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista } from '@/lib/linha-do-fechamento'
+import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista, repassePercentual } from '@/lib/linha-do-fechamento'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
 import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados, buscarIdsDaRegraAntiga } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
@@ -658,10 +658,9 @@ function FechamentosContent() {
       // base desconta o imposto da regra antiga, nao o imposto real da empresa.
       if (terapeuta && terapeuta.percentual_comissao > 0) {
         row.terapeuta_nome = terapeuta.nome
-        if (row.base_do_repasse > 0) {
-          row.repasse_terapeuta = row.base_do_repasse * (terapeuta.percentual_comissao / 100)
-          row.repasse_detalhe = `${terapeuta.percentual_comissao}% sobre ${formatCurrency(row.base_do_repasse)} (imposto pela regra antiga)`
-        }
+        const { repasse, detalhe } = repassePercentual(row.base_do_repasse, terapeuta.percentual_comissao)
+        row.repasse_terapeuta = repasse
+        row.repasse_detalhe = detalhe
       }
     }
     return Object.values(map)

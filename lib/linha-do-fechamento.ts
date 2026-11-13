@@ -30,3 +30,15 @@ export function mesmaLista(a: ReadonlySet<string>, b: ReadonlySet<string>): bool
   for (const x of a) if (!b.has(x)) return false
   return true
 }
+
+/**
+ * Repasse percentual do terapeuta: a mesma conta de antes da aliquota nova
+ * (base x %, sem piso), com a base descontando o imposto da regra antiga.
+ */
+export function repassePercentual(baseDoRepasse: number, percentual: number): { repasse: number; detalhe: string } {
+  const base = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(baseDoRepasse)
+  return {
+    repasse: baseDoRepasse * (percentual / 100),
+    detalhe: `${percentual}% sobre ${base} (imposto pela regra antiga)`,
+  }
+}

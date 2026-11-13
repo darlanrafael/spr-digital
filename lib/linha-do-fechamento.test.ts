@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista } from './linha-do-fechamento'
+import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista, repassePercentual } from './linha-do-fechamento'
 
 // Imposto da venda no Fechamento (dono 13/11/2026): a empresa paga pela regra da
 // venda; o repasse do terapeuta continua com a base da regra antiga.
@@ -49,4 +49,14 @@ test('mesmaLista: ordem nao importa; um a mais muda', () => {
   assert.equal(mesmaLista(new Set(['a']), new Set(['a', 'b'])), false)
   assert.equal(mesmaLista(new Set(), new Set()), true)
   assert.equal(mesmaLista(new Set(['a', 'b']), new Set(['a', 'c'])), false, 'mesmo tamanho, ids diferentes')
+})
+
+// Comissao do terapeuta nao muda em lugar nenhum (dono 13/11): a conta e a de
+// antes, base x %, inclusive com base zero ou negativa (revisao final).
+test('repassePercentual: base x % como antes, com o texto da regra antiga', () => {
+  const r = repassePercentual(771.5, 30)
+  perto(r.repasse, 231.45)
+  assert.match(r.detalhe, /^30% sobre R\$\s?771,50 \(imposto pela regra antiga\)$/)
+  perto(repassePercentual(0, 30).repasse, 0)
+  perto(repassePercentual(-38.57, 30).repasse, -11.571)
 })
