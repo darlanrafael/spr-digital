@@ -926,6 +926,11 @@ function FechamentosContent() {
     if (!canEdit) return
     if (!trafegoLiberado) return // defesa: o botão já fica desativado
     if (!liberado) return
+    // O instante do corte e o do CLIQUE, antes de qualquer espera: as vendas que
+    // a tela mostra sao as que existiam ate aqui. Marcar depois da conferencia
+    // abaixo deixaria uma venda que chegasse nesses segundos fora do fechamento
+    // e, mesmo assim, "ja fechada" (revisao Codex 13/11).
+    const now = new Date()
     setErroConfirmacao(null)
     setConfirmando(true)
     // A lista da regra antiga e conferida de novo na hora: um fechamento feito
@@ -976,7 +981,6 @@ function FechamentosContent() {
       ? selectedProducts.map(id => productMap[id]?.nome ?? id)
       : byProduct.map(p => p.nome)
 
-    const now = new Date()
 
     const newClosing: Closing = {
       id: `close_${Date.now()}`,
@@ -1419,7 +1423,7 @@ function FechamentosContent() {
             )}
 
             {/* ── STEP 2 — Faturamento ── */}
-            {activeStep === 2 && (
+            {activeStep === 2 && regraAntiga.estado === 'pronto' && (
               <div className="space-y-4">
                 <div className="bg-gray-900 rounded-xl border border-white/10 p-4">
                   <h3 className="text-sm font-semibold text-white mb-4">Período do Fechamento</h3>
@@ -1909,7 +1913,7 @@ function FechamentosContent() {
             )}
 
             {/* ── STEP 3 — Repasse ── */}
-            {activeStep === 3 && (
+            {activeStep === 3 && regraAntiga.estado === 'pronto' && (
               <div className="space-y-4">
                 <div className="grid md:grid-cols-4 gap-4">
                   <div className="bg-gray-900 rounded-xl border border-white/10 p-4 text-center">
@@ -2303,7 +2307,7 @@ function FechamentosContent() {
             )}
 
             {/* ── STEP 4 — Confirmação ── */}
-            {activeStep === 4 && (
+            {activeStep === 4 && regraAntiga.estado === 'pronto' && (
               <div className="space-y-4">
                 {confirmed && confirmedClosing ? (
                   <div className="space-y-4">

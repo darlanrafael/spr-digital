@@ -38,3 +38,11 @@ test('Kiwify: bruto pelo preco_base, imposto pela base com juros', () => {
 test('mes sem venda: tudo zero', () => {
   assert.deepEqual(receitaDoMesNoDre([]), { receitaBruta: 0, impostos: 0, taxasPlataforma: 0, receitaLiquida: 0, liquidoPosImpostos: 0 })
 })
+
+test('Hubla com preco R$ 167 e pagamento R$ 180: faixa pelo preco (3,8%), bruto e base pelo pago', () => {
+  const r = receitaDoMesNoDre([hubla({ preco_base: 167, valor_pago_cliente: 180, valor_liquido: 160, data_hora: '2026-11-02T10:00:00' })])
+  perto(r.receitaBruta, 180)
+  perto(r.impostos, 6.84)
+  perto(r.taxasPlataforma, 20)
+  perto(r.receitaLiquida, 153.16)
+})

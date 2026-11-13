@@ -48,4 +48,5 @@ test('mesmaLista: ordem nao importa; um a mais muda', () => {
   assert.equal(mesmaLista(new Set(['a', 'b']), new Set(['b', 'a'])), true)
   assert.equal(mesmaLista(new Set(['a']), new Set(['a', 'b'])), false)
   assert.equal(mesmaLista(new Set(), new Set()), true)
+  assert.equal(mesmaLista(new Set(['a', 'b']), new Set(['a', 'c'])), false, 'mesmo tamanho, ids diferentes')
 })
