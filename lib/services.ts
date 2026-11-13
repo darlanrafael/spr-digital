@@ -557,19 +557,20 @@ export async function getAllCosts(projectId: string): Promise<CostsData> {
 // ─── Closings ────────────────────────────────────────────────────────────────
 
 /**
- * Ids das vendas que entraram em fechamento calculado pela REGRA ANTIGA de
- * imposto (sem o carimbo `regraImposto` no by_product). Le TODOS os fechamentos
- * de todos os projetos, em ordem por id, paginado. Falha alto: sem banco ou com
- * erro, lanca; nunca devolve lista vazia calada (lista vazia faria tudo ir para a
- * regra nova). Ver lib/aliquota-imposto.ts.
+ * Vendas que ja entraram em algum fechamento: `regraAntiga` = as de fechamento
+ * calculado pela regra antiga de imposto (sem carimbo); `todas` = de qualquer
+ * fechamento (usado para barrar fechamento em dobro feito noutra aba). Le TODOS
+ * os fechamentos de todos os projetos. Ver lib/aliquota-imposto.ts.
  */
-export async function buscarIdsDaRegraAntiga(
+export async function buscarVendasJaFechadas(
   clienteInjetado?: Pick<NonNullable<ReturnType<typeof getSupabaseClient>>, 'from'> | null,
-): Promise<Set<string>> {
+): Promise<{ regraAntiga: Set<string>; todas: Set<string> }> {
   const client = clienteInjetado === undefined ? getSupabaseClient() : clienteInjetado
   if (!client) throw new Error('Banco indisponível para ler os fechamentos.')
   const linhas: { by_product: unknown; compradores: unknown }[] = []
-  for (let i = 0; ; i += 1000) {
+  // Le ate vir pagina VAZIA (nao para so porque veio menos de 1000: o banco pode
+  // ter limite menor por pagina). Revisao Gemini 13/11.
+  for (let i = 0; ; ) {
     const { data, error } = await client
       .from('closings')
       .select('id,by_product,compradores')
@@ -577,13 +578,32 @@ export async function buscarIdsDaRegraAntiga(
       .range(i, i + 999)
     if (error) throw error
     const pagina = (data ?? []) as { by_product: unknown; compradores: unknown }[]
+    if (pagina.length === 0) break
     linhas.push(...pagina)
-    if (pagina.length < 1000) break
+    i += pagina.length
   }
-  return idsDaRegraAntiga(linhas.map(l => ({
+  // Em producao sempre ha fechamentos: vazio so pode ser falha de leitura, e
+  // tratar como "nenhum fechamento antigo" jogaria tudo na regra nova.
+  if (linhas.length === 0) throw new Error('Nenhum fechamento encontrado no banco. Recarregue a página.')
+  const fechamentos = linhas.map(l => ({
     byProduct: Array.isArray(l.by_product) ? l.by_product as { regraImposto?: string }[] : null,
     compradores: Array.isArray(l.compradores) ? l.compradores as { id?: string }[] : null,
-  })))
+  }))
+  const todas = new Set<string>()
+  for (const f of fechamentos) for (const b of f.compradores ?? []) if (b?.id) todas.add(b.id)
+  return { regraAntiga: idsDaRegraAntiga(fechamentos), todas }
+}
+
+/**
+ * Ids das vendas que entraram em fechamento calculado pela REGRA ANTIGA de
+ * imposto (sem o carimbo `regraImposto` no by_product). Le TODOS os fechamentos
+ * de todos os projetos, em ordem por id, paginado. Falha alto: sem banco, com
+ * erro ou sem nenhum fechamento, lanca; nunca devolve lista vazia calada.
+ */
+export async function buscarIdsDaRegraAntiga(
+  clienteInjetado?: Pick<NonNullable<ReturnType<typeof getSupabaseClient>>, 'from'> | null,
+): Promise<Set<string>> {
+  return (await buscarVendasJaFechadas(clienteInjetado)).regraAntiga
 }
 
 export async function getClosings(projectId: string): Promise<Closing[]> {

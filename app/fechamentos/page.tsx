@@ -14,7 +14,7 @@ import { formatCurrency, formatDate, formatDateTime, getSaleBruto } from '@/lib/
 import { aliquotaDaLinha, formatAliquota, REGRA_IMPOSTO_NOVA } from '@/lib/aliquota-imposto'
 import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista, repassePercentual } from '@/lib/linha-do-fechamento'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
-import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados, buscarIdsDaRegraAntiga } from '@/lib/services'
+import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados, buscarIdsDaRegraAntiga, buscarVendasJaFechadas } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
 import { calcularAlertasReembolsoParcial, chaveAlerta, type SolicitacaoReembolso } from '@/lib/alertas-reembolso-parcial'
 import { readequacoesDoPeriodo, type ReadequacaoProduto } from '@/lib/readequacoes-produto'
@@ -168,6 +168,8 @@ function FechamentosContent() {
   )
   const [tentativaRegra, setTentativaRegra] = useState(0)
   const [confirmando, setConfirmando] = useState(false)
+  // Trava sincrona contra clique duplo: o estado so atualiza no proximo render.
+  const confirmandoRef = useRef(false)
   const [erroConfirmacao, setErroConfirmacao] = useState<string | null>(null)
   useEffect(() => {
     let cancelado = false
@@ -925,6 +927,8 @@ function FechamentosContent() {
     if (!canEdit) return
     if (!trafegoLiberado) return // defesa: o botão já fica desativado
     if (!liberado) return
+    if (confirmandoRef.current) return
+    confirmandoRef.current = true
     // O instante do corte e o do CLIQUE, antes de qualquer espera: as vendas que
     // a tela mostra sao as que existiam ate aqui. Marcar depois da conferencia
     // abaixo deixaria uma venda que chegasse nesses segundos fora do fechamento
@@ -934,17 +938,22 @@ function FechamentosContent() {
     setConfirmando(true)
     // A lista da regra antiga e conferida de novo na hora: um fechamento feito
     // noutra aba desde que esta tela abriu muda o imposto de algumas vendas.
+    const parar = (msg: string) => { setErroConfirmacao(msg); setConfirmando(false); confirmandoRef.current = false }
     try {
-      const atual = await buscarIdsDaRegraAntiga()
+      const { regraAntiga: atual, todas } = await buscarVendasJaFechadas()
+      // Alguma venda desta tela ja entrou num fechamento feito noutra aba
+      // (qualquer regra): parar, senao o fechamento sai em dobro.
+      if (periodSales.some(s => todas.has(s.id))) {
+        parar('Algumas vendas deste período já entraram num fechamento feito em outra tela. Recarregue a página antes de fechar.')
+        return
+      }
       if (!mesmaLista(atual, regraAntiga.ids)) {
         setRegraAntiga({ estado: 'pronto', ids: atual })
-        setErroConfirmacao('A lista de vendas já fechadas mudou. Confira os números e confirme de novo.')
-        setConfirmando(false)
+        parar('A lista de vendas já fechadas mudou. Confira os números e confirme de novo.')
         return
       }
     } catch (e) {
-      setErroConfirmacao(e instanceof Error ? e.message : 'Falha ao ler os fechamentos.')
-      setConfirmando(false)
+      parar(e instanceof Error ? e.message : 'Falha ao ler os fechamentos.')
       return
     }
     const buyers: ClosingBuyer[] = periodSales.map(s => ({
@@ -1046,11 +1055,9 @@ function FechamentosContent() {
       await svcAddClosing(newClosing, selectedProject)
     } catch (e) {
       console.error(e)
-      setErroConfirmacao(`Não foi possível gravar o fechamento: ${e instanceof Error ? e.message : 'erro desconhecido'}. Nada foi salvo; tente de novo.`)
-      setConfirmando(false)
+      parar(`Não foi possível gravar o fechamento: ${e instanceof Error ? e.message : 'erro desconhecido'}. Nada foi salvo; tente de novo.`)
       return
     }
-    setConfirmando(false)
     setClosings(prev => [...prev, newClosing])
 
     // Marca os custos deste fechamento como pagos — não devem mais aparecer
@@ -1140,6 +1147,9 @@ function FechamentosContent() {
 
     setConfirmedClosing(newClosing)
     setConfirmed(true)
+    // So agora (fechamento, custos e caixa ja feitos) o botao volta a valer.
+    setConfirmando(false)
+    confirmandoRef.current = false
     setSuccessMsg(
       'Fechamento confirmado com sucesso!'
       + (reservaCaixa > 0

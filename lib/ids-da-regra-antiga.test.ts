@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buscarIdsDaRegraAntiga, addClosing } from './services'
+import { buscarIdsDaRegraAntiga, buscarVendasJaFechadas, addClosing } from './services'
 import type { Closing } from '@/types'
 
 // Lista das vendas da regra antiga (dono 13/11/2026): vem de TODOS os
@@ -37,9 +37,10 @@ test('le todas as paginas, em ordem por id, sem filtro de projeto, e tira os fec
   assert.deepEqual(chamadas.find(c => c.metodo === 'from')?.args, ['closings'])
   assert.deepEqual(chamadas.find(c => c.metodo === 'select')?.args, ['id,by_product,compradores'])
   const ordem = chamadas.filter(c => c.metodo === 'order' || c.metodo === 'range').map(c => c.metodo)
-  assert.deepEqual(ordem, ['order', 'range', 'order', 'range'])
+  assert.deepEqual(ordem, ['order', 'range', 'order', 'range', 'order', 'range'])
   assert.deepEqual(chamadas.find(c => c.metodo === 'order')?.args, ['id', { ascending: true }])
-  assert.deepEqual(chamadas.filter(c => c.metodo === 'range').map(c => c.args), [[0, 999], [1000, 1999]])
+  // continua ate vir pagina vazia (nao para so porque veio menos de 1000)
+  assert.deepEqual(chamadas.filter(c => c.metodo === 'range').map(c => c.args), [[0, 999], [1000, 1999], [1003, 2002]])
   assert.ok(!chamadas.some(c => c.metodo === 'eq'))
 })
 
@@ -82,4 +83,22 @@ test('addClosing grava by_product inteiro, com o carimbo e a aliquota efetiva', 
 
 test('addClosing sem cliente do banco: falha com a mensagem (antes voltava calado)', async () => {
   await assert.rejects(() => addClosing({} as Closing, 'proj_1', null), { message: 'Banco indisponível para gravar o fechamento.' })
+})
+
+test('banco devolve menos de 1000 por pagina (limite menor): continua lendo ate vir vazio', async () => {
+  const { client } = clienteFalso([{ data: [linha(1), linha(2)] }, { data: [linha(3)] }, { data: [] }])
+  const ids = await buscarIdsDaRegraAntiga(client as never)
+  assert.deepEqual([...ids].sort(), ['venda_1', 'venda_2', 'venda_3'])
+})
+
+test('nenhum fechamento no banco: falha (em producao vazio so pode ser erro)', async () => {
+  const { client } = clienteFalso([{ data: [] }])
+  await assert.rejects(() => buscarIdsDaRegraAntiga(client as never), { message: 'Nenhum fechamento encontrado no banco. Recarregue a página.' })
+})
+
+test('buscarVendasJaFechadas: separa as da regra antiga e devolve todas as ja fechadas (qualquer regra)', async () => {
+  const { client } = clienteFalso([{ data: [linha(1), linha(2, true)] }, { data: [] }])
+  const r = await buscarVendasJaFechadas(client as never)
+  assert.deepEqual([...r.regraAntiga], ['venda_1'])
+  assert.deepEqual([...r.todas].sort(), ['venda_1', 'venda_2'])
 })
