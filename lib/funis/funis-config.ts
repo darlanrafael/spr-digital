@@ -68,6 +68,9 @@ export type FunilConfig = {
   /**
    * Aliquota de imposto sobre o FATURAMENTO BRUTO deste funil (fracao). Por funil
    * (dono 21/10/2026): Como Ser Perdoado 12,85%; Imersao a Reaproximacao 3,85%.
+   * ALIQUOTA NOVA (dono 13/11/2026): Como Ser Perdoado 8,71%; Imersao 3,8%. Vale
+   * para tudo que o funil mostra porque ele so conta desde DATA_CORTE_FUNIS
+   * (23/10), depois do inicio da regra nova (20/10).
    */
   impostoRate: number
   /**
@@ -92,6 +95,9 @@ export const ACRESCIMO_TRAFEGO = 0.1385
  * por `null` (o dono pediu que fosse facil de remover). Ver item 120 do
  * spr-digital.md e lib/funis/corte-funil.ts.
  */
+// ATENCAO (13/11/2026): desligar esta trava faria vendas anteriores a 20/10/2026
+// aparecerem com a aliquota nova (8,71% / 3,8%), que so vale de 20/10 em diante.
+// Antes de desligar, a aliquota do funil precisa passar a depender da data.
 export const DATA_CORTE_FUNIS: string | null = '2026-10-23'
 
 export const FUNIS: FunilConfig[] = [
@@ -117,7 +123,7 @@ export const FUNIS: FunilConfig[] = [
       { plataforma: 'hubla',  produto_id: 'FL2Rs2rICpeVMCW77j6n',                 nome: 'MENTORIA EM GRUPO - PEDRO RONCADA', estagio: 'Mentoria em grupo' },
       { plataforma: 'kiwify', produto_id: 'b7dee3f0-5b82-11f1-bec6-3d073756b1c6', nome: 'Mentoria em grupo- Pedro Roncada', estagio: 'Mentoria em grupo' },
     ],
-    impostoRate: 0.1285,
+    impostoRate: 0.0871,
     // Esteira (dono 23/10/2026): boca = principal; depois order bumps (unificados
     // numa linha), upsell (mentoria) e o resgate por ultimo.
     esteira: ['Como Ser Perdoado', 'Order bumps', 'Mentoria em grupo', 'O Resgate - CSP'],
@@ -153,7 +159,7 @@ export const FUNIS: FunilConfig[] = [
       { plataforma: 'hubla',  produto_id: 'qSNHES80x9ut1fuo9qOv',                 nome: 'O Que fazer Após a traição?  OB', estagio: 'Order bumps' },
       { plataforma: 'kiwify', produto_id: '703507b0-ee85-11f0-8e0e-212248210abf', nome: '🥝 O Que fazer Após a traição?  OB - Imersão', estagio: 'Order bumps' },
     ],
-    impostoRate: 0.0385,
+    impostoRate: 0.038,
     // Esteira PADRAO (dono nao definiu p/ a Imersao - 23/10/2026): principal ->
     // order bumps (os 4 bumps juntos). Ajustar quando o dono passar a esteira dela.
     esteira: ['Imersão - A reaproximação', 'Order bumps'],

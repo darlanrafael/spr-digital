@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import { respostaMetaCompleta, AVISO_DRE_META_INCOMPLETA } from '@/lib/trafego-do-fechamento'
+import { aliquotaNoDre, aliquotaDaLinha, formatAliquota } from '@/lib/aliquota-imposto'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, TrendingUp, TrendingDown, DollarSign, Target, Pencil, Trash2, Check, X, RotateCcw } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
@@ -12,7 +13,7 @@ import Modal from '@/components/Modal'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import BestTimesComparison from '@/components/BestTimesPanel'
 import {
-  formatCurrency, formatDate, getSaleBruto, getAliquotaRegraAntiga, getImpostoBase,
+  formatCurrency, formatDate, getSaleBruto, getImpostoBase,
   getCurrentWeekRange,
 } from '@/lib/formatters'
 import {
@@ -308,10 +309,8 @@ function DashboardContent() {
     [periodSales]
   )
   const impostoTotal = useMemo(() => {
-    return periodSales.reduce((acc, s) => {
-      const aliquota = getAliquotaRegraAntiga(s.preco_base)
-      return acc + getImpostoBase(s) * (aliquota / 100)
-    }, 0)
+    // Aliquota pela data da venda, como no DRE (dono 13/11/2026): regra nova de 20/10/2026 em diante.
+    return periodSales.reduce((acc, s) => acc + getImpostoBase(s) * aliquotaNoDre(s) / 100, 0)
   }, [periodSales])
 
   const roas = metaAdsTotal > 0 ? faturamentoLiquido / metaAdsTotal : null
@@ -333,23 +332,31 @@ function DashboardContent() {
   const varCostsTotal = varCostsFiltered.reduce((a, c) => a + c.valor, 0)
 
   const byProduct = useMemo(() => {
-    const map: Record<string, { produto: string; plataforma: string; qtd: number; bruto: number; aliquota: number; imposto: number; liquido: number; liquido_pos_impostos: number }> = {}
+    const map: Record<string, { produto: string; plataforma: string; qtd: number; bruto: number; aliquota: number; aliquotaEfetiva: boolean; imposto: number; liquido: number; liquido_pos_impostos: number }> = {}
+    const aliquotasDaLinha: Record<string, { base: number; aliquota: number }[]> = {}
     for (const s of periodSales) {
       const prod = productMap[s.produto]
-      const aliquota = getAliquotaRegraAntiga(s.preco_base)
+      const aliquota = aliquotaNoDre(s)
+      const base = getImpostoBase(s)
       if (!map[s.produto]) {
         map[s.produto] = {
           produto: prod?.nome ?? s.produto,
           plataforma: s.plataforma,
-          qtd: 0, bruto: 0, aliquota, imposto: 0, liquido: 0, liquido_pos_impostos: 0,
+          qtd: 0, bruto: 0, aliquota, aliquotaEfetiva: false, imposto: 0, liquido: 0, liquido_pos_impostos: 0,
         }
       }
-      const impostoVenda = getImpostoBase(s) * (aliquota / 100)
+      aliquotasDaLinha[s.produto] = [...(aliquotasDaLinha[s.produto] ?? []), { base, aliquota }]
+      const impostoVenda = base * aliquota / 100
       map[s.produto].qtd++
       map[s.produto].bruto += getSaleBruto(s)
       map[s.produto].imposto += impostoVenda
       map[s.produto].liquido += s.valor_liquido
       map[s.produto].liquido_pos_impostos += s.valor_liquido - impostoVenda
+    }
+    for (const [produto, itens] of Object.entries(aliquotasDaLinha)) {
+      const { aliquota, efetiva } = aliquotaDaLinha(itens)
+      map[produto].aliquota = aliquota
+      map[produto].aliquotaEfetiva = efetiva
     }
     return Object.values(map)
   }, [periodSales, productMap])
@@ -602,7 +609,7 @@ function DashboardContent() {
                       <td className="px-4 py-3"><PlatformBadge platform={row.plataforma} /></td>
                       <td className="px-4 py-3 text-right text-gray-300">{row.qtd}</td>
                       <td className="px-4 py-3 text-right text-gray-300">{formatCurrency(row.bruto)}</td>
-                      <td className="px-4 py-3 text-right text-amber-400">{row.aliquota}%</td>
+                      <td className="px-4 py-3 text-right text-amber-400">{formatAliquota(row.aliquota, row.aliquotaEfetiva)}</td>
                       <td className="px-4 py-3 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                       <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(row.liquido)}</td>
                       <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(row.liquido_pos_impostos)}</td>

@@ -106,3 +106,12 @@ test('produtoDoFunil casa agregado (nao principal) e devolve null fora do funil'
   // produto de outro funil nao casa aqui
   assert.equal(produtoDoFunil({ plataforma: 'hubla', produto: 'Imersão - A reaproximação', produto_id: 'd7tvBd7toCPnVZnOWUaZ' }, 'como-ser-perdoado'), null)
 })
+
+// Aliquota nova (dono 13/11/2026): CSP 8,71% e Imersao 3,8%. Os Funis so contam
+// desde 23/10, depois de 20/10, entao a taxa nova vale para tudo que aparece.
+test('aliquota dos funis: CSP 8,71% e Imersao 3,8%; nenhum outro funil', async () => {
+  const { FUNIS } = await import('./funis-config')
+  assert.deepEqual(FUNIS.map(f => f.id), ['como-ser-perdoado', 'imersao-reaproximacao'])
+  assert.equal(FUNIS.find(f => f.id === 'como-ser-perdoado')!.impostoRate, 0.0871)
+  assert.equal(FUNIS.find(f => f.id === 'imersao-reaproximacao')!.impostoRate, 0.038)
+})
