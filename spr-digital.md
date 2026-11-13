@@ -8126,3 +8126,32 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   gasto da Meta que nao e numero conta falha (campanha sem insights continua zero legitimo); resposta sem `total`
   numerico ou sem lista de campanhas nao conta como completa; erro que nao e texto nao quebra a tela. Fica como esta: o
   texto vermelho da trava aparece tambem antes da primeira busca (texto unico aprovado pelo dono). 1178 testes, tsc ok.
+
+# 148. Aliquota de imposto nova, etapa 1 (13/11/2026) - CONSTRUIDA, AGUARDANDO PREVIA E DEPLOY
+
+- Decisoes do dono (itens 146-147): ate R$ 167 3,8% (antes 3%); acima 8,71% (antes 12,85%); Funis CSP 8,71% e
+  Imersao 3,8%; acrescimo da Meta 13,85% igual; comissao/repasse de terapeuta NAO muda em lugar nenhum.
+- Spec `docs/superpowers/specs/2026-11-13-aliquota-imposto-nova-design.md`; plano
+  `docs/superpowers/plans/2026-11-13-aliquota-imposto-nova.md` (revisados por Codex e Gemini). Branch
+  `feat/botao-resgate-funis` (em cima do Resgate, a pedido do dono: uma previa e um deploy so).
+- **Fechamento** (`app/fechamentos/page.tsx`, `lib/linha-do-fechamento.ts`): venda que nao entrou em fechamento
+  calculado pela regra antiga paga a regra nova. "Calculado pela regra antiga" = fechamento sem o carimbo
+  `regraImposto: 'nova-2026-11'` nos itens de `by_product` (todo fechamento novo grava). A lista vem de TODOS os
+  fechamentos (`buscarIdsDaRegraAntiga` em `lib/services.ts`, paginada por id, falha alto); sem ela a tela mostra
+  "Carregando a regra de imposto..." ou o erro com "Tentar de novo" e esconde os passos 2 a 4. Ao confirmar, a lista e
+  lida de novo; se mudou (fechamento noutra aba), a tela recalcula e pede nova confirmacao. Instante do corte = clique.
+  Repasse percentual do terapeuta com base propria na regra antiga ("N% sobre R$ X (imposto pela regra antiga)").
+  Gravar o fechamento que falha agora para tudo (antes seguia marcando custos e lancando caixa); `addClosing` lanca
+  sem banco. Coluna de aliquota: exata quando uniforme, efetiva com duas casas quando mista (`lib/aliquota-imposto.ts`).
+- **DRE** (`app/dre/page.tsx`, `lib/dre-do-mes.ts`): aliquota pela data da venda (20/10/2026 em diante = nova) e
+  CORRECAO: taxas = bruto - liquido (com sinal), receita liquida = liquido - imposto, resultado desconta o imposto.
+- **Inicio** (`app/page.tsx`): imposto e aliquota por produto pela mesma regra por data do DRE.
+- **Funis** (`lib/funis/funis-config.ts`): 0.0871 e 0.038; aviso em `DATA_CORTE_FUNIS`.
+- `getAliquotaByPreco` virou `getAliquotaRegraAntiga` (lib/formatters.ts). Modulo dos terapeutas intocado.
+- **Numeros de conferencia do DRE** (banco e Meta de 13/11; a Meta muda ao vivo): setembro imposto R$ 60.488,03,
+  resultado R$ 199.653,77; outubro imposto R$ 43.152,90, taxas R$ 18.848,95, resultado R$ 169.779,00; novembro
+  (ate 13/11) imposto R$ 9.579,40, resultado R$ 43.609,74.
+- Verificado: 1207 testes, tsc ok, next build ok. Revisao: 3 Codex por parte (atacante/testador/auditor); achados
+  corrigidos (instante do corte, numeros zerados fora de pronto, agregacao quadratica, lacunas de teste). Aceito: fluxos
+  de tela (gravacao rejeitada, reconsulta ao confirmar) sem teste automatizado (projeto nao tem teste de tela).
+- Pendente: `scripts/converter-venda-em-moeda-estrangeira.ts` ainda imprime simulacao com 12,85%. Etapa 2: item 147.
