@@ -12,7 +12,7 @@ import Modal from '@/components/Modal'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import BestTimesComparison from '@/components/BestTimesPanel'
 import {
-  formatCurrency, formatDate, getSaleBruto, getAliquotaByPreco, getImpostoBase,
+  formatCurrency, formatDate, getSaleBruto, getAliquotaRegraAntiga, getImpostoBase,
   getCurrentWeekRange,
 } from '@/lib/formatters'
 import {
@@ -309,7 +309,7 @@ function DashboardContent() {
   )
   const impostoTotal = useMemo(() => {
     return periodSales.reduce((acc, s) => {
-      const aliquota = getAliquotaByPreco(s.preco_base)
+      const aliquota = getAliquotaRegraAntiga(s.preco_base)
       return acc + getImpostoBase(s) * (aliquota / 100)
     }, 0)
   }, [periodSales])
@@ -336,7 +336,7 @@ function DashboardContent() {
     const map: Record<string, { produto: string; plataforma: string; qtd: number; bruto: number; aliquota: number; imposto: number; liquido: number; liquido_pos_impostos: number }> = {}
     for (const s of periodSales) {
       const prod = productMap[s.produto]
-      const aliquota = getAliquotaByPreco(s.preco_base)
+      const aliquota = getAliquotaRegraAntiga(s.preco_base)
       if (!map[s.produto]) {
         map[s.produto] = {
           produto: prod?.nome ?? s.produto,

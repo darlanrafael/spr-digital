@@ -1,14 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  getAliquotaByPreco, getSaleBruto, getImpostoBase,
+  getAliquotaRegraAntiga, getSaleBruto, getImpostoBase,
   formatCurrency, formatDate, formatDateTime, parseLocalDate, diffDays, isUTMBugged,
 } from './formatters'
 
 // `lib/formatters.ts` tinha ZERO testes ate 14/09/2026, e e o modulo com as
 // tres funcoes que decidem o dinheiro de TODO fechamento:
 //
-//   getAliquotaByPreco  -> a aliquota de imposto da venda
+//   getAliquotaRegraAntiga  -> a aliquota de imposto da venda
 //   getSaleBruto        -> o faturamento bruto da linha
 //   getImpostoBase      -> sobre quanto o imposto e calculado
 //
@@ -16,20 +16,20 @@ import {
 // cobria bem o que eu escrevi nas ultimas semanas e nao encostava no codigo
 // mais antigo e mais usado. Estes testes fecham isso.
 
-// ── getAliquotaByPreco ──────────────────────────────────────────────────────
+// ── getAliquotaRegraAntiga ──────────────────────────────────────────────────────
 test('a aliquota vira 12,85% acima de R$ 167, e a FRONTEIRA e exata', () => {
   // A fronteira e onde "3%" e "12,85%" se decidem. Uma venda de R$ 167 paga
   // R$ 5,01 de imposto; uma de R$ 167,01 paga R$ 21,46 - quatro vezes mais.
-  assert.equal(getAliquotaByPreco(166.99), 3)
-  assert.equal(getAliquotaByPreco(167), 3, 'exatamente 167 ainda e 3%')
-  assert.equal(getAliquotaByPreco(167.01), 12.85, 'um centavo acima ja e 12,85%')
-  assert.equal(getAliquotaByPreco(5000), 12.85)
+  assert.equal(getAliquotaRegraAntiga(166.99), 3)
+  assert.equal(getAliquotaRegraAntiga(167), 3, 'exatamente 167 ainda e 3%')
+  assert.equal(getAliquotaRegraAntiga(167.01), 12.85, 'um centavo acima ja e 12,85%')
+  assert.equal(getAliquotaRegraAntiga(5000), 12.85)
 })
 
 test('preco zero ou negativo cai na aliquota baixa, nao quebra', () => {
   // Venda com preco_base zero existe no banco (lancamento manual antigo).
-  assert.equal(getAliquotaByPreco(0), 3)
-  assert.equal(getAliquotaByPreco(-1), 3)
+  assert.equal(getAliquotaRegraAntiga(0), 3)
+  assert.equal(getAliquotaRegraAntiga(-1), 3)
 })
 
 // ── getSaleBruto ────────────────────────────────────────────────────────────

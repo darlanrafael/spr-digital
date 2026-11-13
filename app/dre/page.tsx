@@ -8,7 +8,7 @@ import { useApp } from '@/contexts/AppContext'
 import Header from '@/components/Header'
 import MobileNav from '@/components/MobileNav'
 import ProtectedRoute from '@/components/ProtectedRoute'
-import { formatCurrency, getMonthLabel, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
+import { formatCurrency, getMonthLabel, getSaleBruto, getAliquotaRegraAntiga, getImpostoBase } from '@/lib/formatters'
 import { getDreAjustes, upsertDreAjuste } from '@/lib/services'
 
 const DRE_TOGGLES = ['dre', 'fluxo'] as const
@@ -106,13 +106,13 @@ function DREContent() {
     const monthSales = getSalesForMonth(month)
     const receitaBruta = monthSales.reduce((a, s) => a + getSaleBruto(s), 0)
     const impostos = monthSales.reduce((a, s) => {
-      const aliquota = getAliquotaByPreco(s.preco_base)
+      const aliquota = getAliquotaRegraAntiga(s.preco_base)
       return a + getImpostoBase(s) * (aliquota / 100)
     }, 0)
     const taxasPlataforma = monthSales.reduce((a, s) => a + (getSaleBruto(s) - s.valor_liquido), 0) - impostos
     const receitaLiquida = receitaBruta - impostos - taxasPlataforma
     const liquidoPosImpostos = monthSales.reduce((a, s) => {
-      const aliquota = getAliquotaByPreco(s.preco_base)
+      const aliquota = getAliquotaRegraAntiga(s.preco_base)
       return a + s.valor_liquido - getImpostoBase(s) * (aliquota / 100)
     }, 0)
     const metaAds = metaAdsLive[month] ?? 0

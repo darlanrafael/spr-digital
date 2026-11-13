@@ -10,7 +10,7 @@ import MobileNav from '@/components/MobileNav'
 import PlatformBadge from '@/components/PlatformBadge'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import Pagination from '@/components/Pagination'
-import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaByPreco, getImpostoBase } from '@/lib/formatters'
+import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaRegraAntiga, getImpostoBase } from '@/lib/formatters'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
 import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
@@ -558,7 +558,7 @@ function FechamentosContent() {
     const vendasDaLinha: Record<string, Sale[]> = {}
     for (const s of periodSales) {
       const prod = productMap[s.produto]
-      const aliquota = getAliquotaByPreco(s.preco_base)
+      const aliquota = getAliquotaRegraAntiga(s.preco_base)
       if (!map[s.produto]) {
         map[s.produto] = { id: s.produto, nome: prod?.nome ?? s.produto, plataforma: s.plataforma, qtd: 0, bruto: 0, taxas: 0, aliquota, imposto: 0, liquido: 0, liquido_pos_impostos: 0, terapeuta_nome: null, repasse_terapeuta: 0 }
       }

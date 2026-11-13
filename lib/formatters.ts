@@ -56,12 +56,18 @@ export function isUTMBugged(value: string): boolean {
 }
 
 /** Aliquota automática por preço do produto */
-export function getAliquotaByPreco(preco: number): number {
+/**
+ * Aliquota da REGRA ANTIGA (3% ate R$ 167, 12,85% acima). Continua valendo para
+ * venda ja fechada pela regra antiga, para o DRE antes de 20/10/2026 e para a
+ * base do repasse do terapeuta, que nao muda (dono 13/11/2026). A regra nova e
+ * as decisoes por tela ficam em lib/aliquota-imposto.ts.
+ */
+export function getAliquotaRegraAntiga(preco: number): number {
   return preco <= 167 ? 3 : 12.85
 }
 
 /** Faturamento bruto da venda conforme plataforma */
-export function getSaleBruto(sale: Sale): number {
+export function getSaleBruto(sale: Pick<Sale, 'plataforma' | 'valor_pago_cliente' | 'preco_base'>): number {
   return sale.plataforma === 'hubla' ? sale.valor_pago_cliente : sale.preco_base
 }
 
@@ -75,7 +81,7 @@ export function getSaleBruto(sale: Sale): number {
  * faz o imposto sair menor que o que o cliente pagou. Venda sem o campo
  * (histórico) e cortesia (tudo zero) continuam caindo no valor pago / em zero.
  */
-export function getImpostoBase(sale: Sale): number {
+export function getImpostoBase(sale: Pick<Sale, 'valor_com_juros' | 'valor_pago_cliente'>): number {
   return Math.max(sale.valor_com_juros ?? 0, sale.valor_pago_cliente)
 }
 
