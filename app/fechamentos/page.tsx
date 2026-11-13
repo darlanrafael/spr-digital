@@ -10,9 +10,11 @@ import MobileNav from '@/components/MobileNav'
 import PlatformBadge from '@/components/PlatformBadge'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import Pagination from '@/components/Pagination'
-import { formatCurrency, formatDate, formatDateTime, getSaleBruto, getAliquotaRegraAntiga, getImpostoBase } from '@/lib/formatters'
+import { formatCurrency, formatDate, formatDateTime, getSaleBruto } from '@/lib/formatters'
+import { aliquotaDaLinha, formatAliquota, REGRA_IMPOSTO_NOVA } from '@/lib/aliquota-imposto'
+import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista } from '@/lib/linha-do-fechamento'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
-import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados } from '@/lib/services'
+import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados, buscarIdsDaRegraAntiga } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
 import { calcularAlertasReembolsoParcial, chaveAlerta, type SolicitacaoReembolso } from '@/lib/alertas-reembolso-parcial'
 import { readequacoesDoPeriodo, type ReadequacaoProduto } from '@/lib/readequacoes-produto'
@@ -158,6 +160,24 @@ function FechamentosContent() {
     router.replace(`/fechamentos?${next.toString()}`, { scroll: false })
   }
   const [activeStep, setActiveStep] = useState<Step>(1)
+  // Aliquota nova (dono 13/11/2026): venda que nao entrou em fechamento da regra
+  // antiga paga a regra nova. Sem a lista carregada, o Fechamento nao calcula
+  // imposto nem deixa confirmar (lista vazia nunca vira "tudo na regra nova").
+  const [regraAntiga, setRegraAntiga] = useState<{ estado: 'carregando' | 'pronto' | 'erro'; ids: Set<string>; erro?: string }>(
+    { estado: 'carregando', ids: new Set() },
+  )
+  const [tentativaRegra, setTentativaRegra] = useState(0)
+  const [confirmando, setConfirmando] = useState(false)
+  const [erroConfirmacao, setErroConfirmacao] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelado = false
+    buscarIdsDaRegraAntiga()
+      .then(ids => { if (!cancelado) setRegraAntiga({ estado: 'pronto', ids }) })
+      .catch(e => { if (!cancelado) setRegraAntiga({ estado: 'erro', ids: new Set(), erro: e instanceof Error ? e.message : 'Falha ao ler os fechamentos.' }) })
+    return () => { cancelado = true }
+  }, [tentativaRegra])
+  function tentarRegraDeNovo() { setRegraAntiga({ estado: 'carregando', ids: new Set() }); setTentativaRegra(n => n + 1) }
+  const liberado = fechamentoLiberado({ estadoRegra: regraAntiga.estado, confirmando })
   const [periodo, setPeriodo] = useState(() => {
     const d = new Date()
     const ano = d.getFullYear()
@@ -545,7 +565,9 @@ function FechamentosContent() {
   const byProduct = useMemo(() => {
     const map: Record<string, {
       id: string; nome: string; plataforma: string; qtd: number
-      bruto: number; taxas: number; aliquota: number; imposto: number; liquido: number; liquido_pos_impostos: number
+      bruto: number; taxas: number; aliquota: number; aliquotaEfetiva: boolean; imposto: number; liquido: number; liquido_pos_impostos: number
+      /** Liquido menos o imposto da REGRA ANTIGA: base do repasse percentual, que nao muda (dono 13/11/2026). */
+      base_do_repasse: number
       terapeuta_nome: string | null; repasse_terapeuta: number
       /**
        * Como o repasse foi calculado, quando NAO e o percentual padrao.
@@ -556,14 +578,18 @@ function FechamentosContent() {
       repasse_detalhe?: string
     }> = {}
     const vendasDaLinha: Record<string, Sale[]> = {}
+    const aliquotasDaLinha: Record<string, { base: number; aliquota: number }[]> = {}
+    // Sem a lista da regra antiga, nada de numero (ver regraAntiga acima).
+    if (regraAntiga.estado !== 'pronto') return []
     for (const s of periodSales) {
       const prod = productMap[s.produto]
-      const aliquota = getAliquotaRegraAntiga(s.preco_base)
+      const { base, aliquota, imposto: impostoVenda, impostoDoRepasse } = impostoDaVendaNoFechamento(s, regraAntiga.ids)
       if (!map[s.produto]) {
-        map[s.produto] = { id: s.produto, nome: prod?.nome ?? s.produto, plataforma: s.plataforma, qtd: 0, bruto: 0, taxas: 0, aliquota, imposto: 0, liquido: 0, liquido_pos_impostos: 0, terapeuta_nome: null, repasse_terapeuta: 0 }
+        map[s.produto] = { id: s.produto, nome: prod?.nome ?? s.produto, plataforma: s.plataforma, qtd: 0, bruto: 0, taxas: 0, aliquota, aliquotaEfetiva: false, imposto: 0, liquido: 0, liquido_pos_impostos: 0, base_do_repasse: 0, terapeuta_nome: null, repasse_terapeuta: 0 }
       }
+      aliquotasDaLinha[s.produto] = [...(aliquotasDaLinha[s.produto] ?? []), { base, aliquota }]
+      map[s.produto].base_do_repasse += s.valor_liquido - impostoDoRepasse
       const bruto = getSaleBruto(s)
-      const impostoVenda = getImpostoBase(s) * (aliquota / 100)
       // As vendas da linha precisam ficar guardadas: no Diagnostico o repasse e
       // por SESSAO, e a quantidade de sessoes sai da oferta de cada venda.
       vendasDaLinha[s.produto] = [...(vendasDaLinha[s.produto] ?? []), s]
@@ -573,6 +599,11 @@ function FechamentosContent() {
       map[s.produto].imposto += impostoVenda
       map[s.produto].liquido += s.valor_liquido
       map[s.produto].liquido_pos_impostos += s.valor_liquido - impostoVenda
+    }
+    for (const [produto, itens] of Object.entries(aliquotasDaLinha)) {
+      const { aliquota, efetiva } = aliquotaDaLinha(itens)
+      map[produto].aliquota = aliquota
+      map[produto].aliquotaEfetiva = efetiva
     }
     // Repasse à terapeuta: % dela sobre o líquido pós-impostos do produto que
     // leva o nome dela. "Mentoria Particular - Pedro Roncada" sozinho é dele
@@ -623,13 +654,18 @@ function FechamentosContent() {
         continue
       }
       const terapeuta = matchTerapeutaComissao(row.nome)
+      // O repasse percentual NAO muda com a aliquota nova (dono 13/11/2026): a
+      // base desconta o imposto da regra antiga, nao o imposto real da empresa.
       if (terapeuta && terapeuta.percentual_comissao > 0) {
         row.terapeuta_nome = terapeuta.nome
-        row.repasse_terapeuta = row.liquido_pos_impostos * (terapeuta.percentual_comissao / 100)
+        if (row.base_do_repasse > 0) {
+          row.repasse_terapeuta = row.base_do_repasse * (terapeuta.percentual_comissao / 100)
+          row.repasse_detalhe = `${terapeuta.percentual_comissao}% sobre ${formatCurrency(row.base_do_repasse)} (imposto pela regra antiga)`
+        }
       }
     }
     return Object.values(map)
-  }, [periodSales, productMap, terapeutasComissao])
+  }, [periodSales, productMap, terapeutasComissao, regraAntiga])
 
   const faturamentoBruto = byProduct.reduce((a, p) => a + p.bruto, 0)
   const impostoTotal = byProduct.reduce((a, p) => a + p.imposto, 0)
@@ -889,6 +925,24 @@ function FechamentosContent() {
   async function handleConfirm() {
     if (!canEdit) return
     if (!trafegoLiberado) return // defesa: o botão já fica desativado
+    if (!liberado) return
+    setErroConfirmacao(null)
+    setConfirmando(true)
+    // A lista da regra antiga e conferida de novo na hora: um fechamento feito
+    // noutra aba desde que esta tela abriu muda o imposto de algumas vendas.
+    try {
+      const atual = await buscarIdsDaRegraAntiga()
+      if (!mesmaLista(atual, regraAntiga.ids)) {
+        setRegraAntiga({ estado: 'pronto', ids: atual })
+        setErroConfirmacao('A lista de vendas já fechadas mudou. Confira os números e confirme de novo.')
+        setConfirmando(false)
+        return
+      }
+    } catch (e) {
+      setErroConfirmacao(e instanceof Error ? e.message : 'Falha ao ler os fechamentos.')
+      setConfirmando(false)
+      return
+    }
     const buyers: ClosingBuyer[] = periodSales.map(s => ({
       id: s.id,
       nome: s.nome,
@@ -973,6 +1027,8 @@ function FechamentosContent() {
         bruto: p.bruto,
         taxas: p.taxas,
         aliquota: p.aliquota,
+        aliquotaEfetiva: p.aliquotaEfetiva || undefined,
+        regraImposto: REGRA_IMPOSTO_NOVA,
         imposto: p.imposto,
         liquido: p.liquido,
         terapeuta_nome: p.terapeuta_nome ?? undefined,
@@ -982,7 +1038,16 @@ function FechamentosContent() {
         repasse_detalhe: p.repasse_detalhe,
       })),
     }
-    try { await svcAddClosing(newClosing, selectedProject) } catch (e) { console.error(e) }
+    // Gravar falhou: para aqui (sem marcar custos nem lancar caixa) e mostra o erro.
+    try {
+      await svcAddClosing(newClosing, selectedProject)
+    } catch (e) {
+      console.error(e)
+      setErroConfirmacao(`Não foi possível gravar o fechamento: ${e instanceof Error ? e.message : 'erro desconhecido'}. Nada foi salvo; tente de novo.`)
+      setConfirmando(false)
+      return
+    }
+    setConfirmando(false)
     setClosings(prev => [...prev, newClosing])
 
     // Marca os custos deste fechamento como pagos — não devem mais aparecer
@@ -1141,6 +1206,16 @@ function FechamentosContent() {
                 </div>
               ))}
             </div>
+
+            {regraAntiga.estado === 'carregando' && (
+              <p className="mb-4 text-sm text-gray-400">Carregando a regra de imposto...</p>
+            )}
+            {regraAntiga.estado === 'erro' && (
+              <div className="mb-4 flex items-center gap-3 text-sm text-red-400">
+                <span>Não foi possível carregar a regra de imposto: {regraAntiga.erro}</span>
+                <button onClick={tentarRegraDeNovo} className="rounded-md border border-red-500/40 px-2 py-1 text-xs hover:bg-red-500/10">Tentar de novo</button>
+              </div>
+            )}
 
             {/* ── STEP 1 — Custos ── */}
             {activeStep === 1 && (
@@ -1779,7 +1854,7 @@ function FechamentosContent() {
                               <td className="px-4 py-3 text-center text-gray-300">{row.qtd}</td>
                               <td className="px-4 py-3 text-right text-gray-300">{formatCurrency(row.bruto)}</td>
                               <td className="px-4 py-3 text-right text-red-400">-{formatCurrency(row.taxas)}</td>
-                              <td className="px-4 py-3 text-center text-amber-400">{row.aliquota}%</td>
+                              <td className="px-4 py-3 text-center text-amber-400">{formatAliquota(row.aliquota, row.aliquotaEfetiva)}</td>
                               <td className="px-4 py-3 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                               <td className="px-4 py-3 text-right text-emerald-400 font-semibold">{formatCurrency(row.liquido)}</td>
                               <td className="px-4 py-3 text-right font-semibold" style={{ color: '#22c55e' }}>{formatCurrency(row.liquido_pos_impostos)}</td>
@@ -2451,11 +2526,14 @@ function FechamentosContent() {
                         className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-4 py-2 rounded-lg transition-colors">
                         Voltar
                       </button>
+                      {canEdit && erroConfirmacao && (
+                        <p className="self-center text-xs text-red-400">{erroConfirmacao}</p>
+                      )}
                       {canEdit && !trafegoLiberado && !trafego.loading && (
                         <p className="self-center text-xs text-red-400">{BLOQUEIO_FECHAMENTO_TRAFEGO}</p>
                       )}
                       {canEdit && (
-                        <button onClick={handleConfirm} disabled={periodSales.length === 0 || conferencia.naoConvertidas.length > 0 || reembolsoComVendaNaoCarregada || !trafegoLiberado}
+                        <button onClick={handleConfirm} disabled={periodSales.length === 0 || conferencia.naoConvertidas.length > 0 || reembolsoComVendaNaoCarregada || !trafegoLiberado || !liberado}
                           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors font-semibold">
                           <CheckCircle className="w-4 h-4" /> ✓ Confirmar fechamento
                         </button>
@@ -3132,7 +3210,7 @@ function ClosingCard({ closing }: { closing: Closing }) {
                         <td className="px-4 py-2.5 text-center text-gray-400">{row.qtd}</td>
                         <td className="px-4 py-2.5 text-right text-gray-300">{formatCurrency(row.bruto)}</td>
                         <td className="px-4 py-2.5 text-right text-red-400">-{formatCurrency(row.taxas)}</td>
-                        <td className="px-4 py-2.5 text-center text-amber-400">{row.aliquota}%</td>
+                        <td className="px-4 py-2.5 text-center text-amber-400">{formatAliquota(row.aliquota, row.aliquotaEfetiva)}</td>
                         <td className="px-4 py-2.5 text-right text-red-400">-{formatCurrency(row.imposto)}</td>
                         <td className="px-4 py-2.5 text-right text-emerald-400 font-medium">{formatCurrency(row.liquido)}</td>
                         <td className="px-4 py-2.5 text-right text-orange-400">
