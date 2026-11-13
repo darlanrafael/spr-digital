@@ -345,7 +345,7 @@ function DashboardContent() {
           qtd: 0, bruto: 0, aliquota, aliquotaEfetiva: false, imposto: 0, liquido: 0, liquido_pos_impostos: 0,
         }
       }
-      aliquotasDaLinha[s.produto] = [...(aliquotasDaLinha[s.produto] ?? []), { base, aliquota }]
+      ;(aliquotasDaLinha[s.produto] ??= []).push({ base, aliquota })
       const impostoVenda = base * aliquota / 100
       map[s.produto].qtd++
       map[s.produto].bruto += getSaleBruto(s)

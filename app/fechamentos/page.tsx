@@ -587,7 +587,7 @@ function FechamentosContent() {
       if (!map[s.produto]) {
         map[s.produto] = { id: s.produto, nome: prod?.nome ?? s.produto, plataforma: s.plataforma, qtd: 0, bruto: 0, taxas: 0, aliquota, aliquotaEfetiva: false, imposto: 0, liquido: 0, liquido_pos_impostos: 0, base_do_repasse: 0, terapeuta_nome: null, repasse_terapeuta: 0 }
       }
-      aliquotasDaLinha[s.produto] = [...(aliquotasDaLinha[s.produto] ?? []), { base, aliquota }]
+      ;(aliquotasDaLinha[s.produto] ??= []).push({ base, aliquota })
       map[s.produto].base_do_repasse += s.valor_liquido - impostoDoRepasse
       const bruto = getSaleBruto(s)
       // As vendas da linha precisam ficar guardadas: no Diagnostico o repasse e
