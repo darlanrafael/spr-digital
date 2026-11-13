@@ -8076,3 +8076,24 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   cache sem `guardar`. Os 3 erros de eslint `set-state-in-effect` da pagina de Funis ja existiam antes.
 - **Falta:** previa no localhost com o dono (so leitura, NAO confirmar fechamento: banco de producao) e deploy
   quando ele pedir.
+
+# 146. Aliquota de imposto nova (pedido do dono 13/11/2026) - LEVANTAMENTO, NADA ALTERADO AINDA
+
+- Pedido: produto ate R$ 167 de 3% para 3,8%; acima de R$ 167 de 12,85% para 8,71%. Funis: CSP 12,85% -> 8,71%,
+  Imersao 3,85% -> 3,8%. Acrescimo da Meta 13,85% igual. Vale "para as vendas que ficaram fora do ultimo fechamento".
+- Onde a regra mora: `lib/formatters.ts:59` (Dashboard, DRE, Fechamento); copia em
+  `app/api/terapeutas/dashboard/route.ts:56`; comissao dos terapeutas com 12,85% fixo em `lib/terapeutas-auth.ts:201`
+  e `app/api/terapeutas/dashboard/route.ts:354`; texto `app/terapeutas/page.tsx:217`; funis em
+  `lib/funis/funis-config.ts`; script `scripts/converter-venda-em-moeda-estrangeira.ts:90`. Repasse percentual do
+  terapeuta no Fechamento sai do liquido pos-imposto (`app/fechamentos/page.tsx:629`). DRE recalcula 6 meses ao vivo
+  sem olhar fechamentos (`app/dre/page.tsx:104-116`). Fechamentos confirmados guardam o imposto e nao mudam.
+- Banco (so leitura, 13/11; 21 fechamentos; vendas desde 31/07 UTC sem `manual_*`): ultimo fim de periodo por produto:
+  CSP, Mentorias, Diagnosticos, O RESGATE e 🥝 O Resgate ate 19/10; Imersao ate 02/10; CCC ate 17/09 (Restauracao a
+  dois, Quando um so quer e Combo CCC ate 09/08). Nunca fechados: Acesso Vitalicio CCC, Formacao de Terapeutas,
+  Gravacao e Imersao Profissao Terapeutas, O RESGATE - CSP. Fora de fechamento e antes de 20/10: 1.504 vendas
+  (quase todas Imersao 03/10 a 19/10; 4 CSP de 19/10 entre 22:05 e 22:47 BRT, depois da confirmacao das 18:09:51);
+  imposto regra velha R$ 2.231,92 x nova R$ 2.564,60 (+R$ 332,69).
+- Opcoes estaveis: (1) por venda, com a lista das ja fechadas CONGELADA no dia da mudanca (sem congelar, a venda
+  vira "fechada" no proximo fechamento e voltaria para a regra antiga no DRE); (2) por data da venda >= 20/10.
+  Descartada: fim do periodo de cada produto (perde as vendas de 19/10 depois da confirmacao e vira de regra depois).
+- Revisado 3 vezes e 3 passadas do Codex (fatos, ataque das opcoes, auditoria da mensagem). Aguardando decisao do dono.
