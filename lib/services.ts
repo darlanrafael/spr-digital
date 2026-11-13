@@ -1,4 +1,5 @@
 import { getSupabaseClient } from './supabase'
+import { idsDaRegraAntiga } from './aliquota-imposto'
 import { normTs, brtDayRangeToUTC, kiwifyBrtRange } from './datas-da-plataforma'
 import { precisaConverter } from './moeda-da-venda'
 import type {
@@ -555,6 +556,36 @@ export async function getAllCosts(projectId: string): Promise<CostsData> {
 
 // ─── Closings ────────────────────────────────────────────────────────────────
 
+/**
+ * Ids das vendas que entraram em fechamento calculado pela REGRA ANTIGA de
+ * imposto (sem o carimbo `regraImposto` no by_product). Le TODOS os fechamentos
+ * de todos os projetos, em ordem por id, paginado. Falha alto: sem banco ou com
+ * erro, lanca; nunca devolve lista vazia calada (lista vazia faria tudo ir para a
+ * regra nova). Ver lib/aliquota-imposto.ts.
+ */
+export async function buscarIdsDaRegraAntiga(
+  clienteInjetado?: Pick<NonNullable<ReturnType<typeof getSupabaseClient>>, 'from'> | null,
+): Promise<Set<string>> {
+  const client = clienteInjetado === undefined ? getSupabaseClient() : clienteInjetado
+  if (!client) throw new Error('Banco indisponível para ler os fechamentos.')
+  const linhas: { by_product: unknown; compradores: unknown }[] = []
+  for (let i = 0; ; i += 1000) {
+    const { data, error } = await client
+      .from('closings')
+      .select('id,by_product,compradores')
+      .order('id', { ascending: true })
+      .range(i, i + 999)
+    if (error) throw error
+    const pagina = (data ?? []) as { by_product: unknown; compradores: unknown }[]
+    linhas.push(...pagina)
+    if (pagina.length < 1000) break
+  }
+  return idsDaRegraAntiga(linhas.map(l => ({
+    byProduct: Array.isArray(l.by_product) ? l.by_product as { regraImposto?: string }[] : null,
+    compradores: Array.isArray(l.compradores) ? l.compradores as { id?: string }[] : null,
+  })))
+}
+
 export async function getClosings(projectId: string): Promise<Closing[]> {
   const client = getSupabaseClient()
   if (!client) return []
@@ -599,9 +630,15 @@ export async function getClosings(projectId: string): Promise<Closing[]> {
   }))
 }
 
-export async function addClosing(closing: Closing, projectId: string): Promise<void> {
-  const client = getSupabaseClient()
-  if (!client) return
+export async function addClosing(
+  closing: Closing,
+  projectId: string,
+  clienteInjetado?: Pick<NonNullable<ReturnType<typeof getSupabaseClient>>, 'from'> | null,
+): Promise<void> {
+  // Falha ALTO sem banco (antes voltava calado e a tela seguia marcando custos e
+  // lancando caixa sem o fechamento gravado). Dono 13/11/2026, aliquota nova.
+  const client = clienteInjetado === undefined ? getSupabaseClient() : clienteInjetado
+  if (!client) throw new Error('Banco indisponível para gravar o fechamento.')
   const { error } = await client.from('closings').upsert({
     id: closing.id,
     project_id: projectId,

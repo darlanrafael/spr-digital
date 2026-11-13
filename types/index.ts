@@ -218,6 +218,10 @@ export interface ClosingProductRow {
    * seis meses divide pelo liquido, acha 13,6% e nao entende de onde saiu.
    */
   repasse_detalhe?: string
+  /** Carimbo do fechamento calculado pela regra nova de imposto (lib/aliquota-imposto.ts). */
+  regraImposto?: 'nova-2026-11'
+  /** A aliquota da linha e a efetiva (vendas com aliquotas diferentes): mostrar com duas casas. */
+  aliquotaEfetiva?: boolean
 }
 
 export interface Closing {
