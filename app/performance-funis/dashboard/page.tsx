@@ -233,7 +233,9 @@ function Conteudo() {
   const resumoDesatualizado = !!d && chaveDoD !== chaveAtual
   function alternarDesligavel() { setDesligadoNoFunil(contarDesligavel ? funilId : null); setRefresh(0); setPagVendas(0) }
   // Vendas sem anúncio na UTM: aparece com ou sem anúncio na lista.
-  const linhaNaoAtribuido = naoAtribuido.vendas > 0 && (
+  // Com a Meta incompleta, venda de anuncio que nao veio cairia como "organico":
+  // a linha fica escondida ate a busca vir completa (revisao final 13/11).
+  const linhaNaoAtribuido = naoAtribuido.vendas > 0 && !criativosIncompletos && (
     <div className="mt-3 text-[11px] text-[#8A90A0]">
       + {int(naoAtribuido.vendas)} venda(s) sem anúncio identificável na UTM (orgânico / link na bio): {brl(naoAtribuido.faturamento)}.
     </div>
@@ -461,7 +463,8 @@ function Conteudo() {
               erroCriativos ? (
                 <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{erroCriativos}</div>
               ) : (<>
-                <div className="mt-4 text-sm text-[#9CA3AF]">Nenhum anúncio no período.</div>
+                {/* Meta incompleta: o aviso ambar acima explica; "nenhum anuncio" seria falso. */}
+                {!criativosIncompletos && <div className="mt-4 text-sm text-[#9CA3AF]">Nenhum anúncio no período.</div>}
                 {linhaNaoAtribuido}
               </>)
             ) : (

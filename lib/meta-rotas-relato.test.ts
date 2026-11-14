@@ -61,7 +61,8 @@ test('custo-trafego: sem token marca incompleto', async () => {
 
 test('insights: tudo ok sem incompleto e sem aviso', async () => {
   const j = await (await insights(pedido(INSIGHTS))).json()
-  assert.equal(typeof j.total, 'number')
+  assert.equal(j.total, 30000)
+  assert.deepEqual(j.campanhas.map((c: { accountId: string }) => c.accountId), ['A', 'B', 'C', 'D', 'E'])
   assert.equal(j.incompleto, undefined)
   assert.equal(j.aviso, undefined)
 })
@@ -72,7 +73,9 @@ test('insights: uma conta falhando mantem o parcial e marca incompleto com o avi
   const j = await (await insights(pedido(INSIGHTS))).json()
   assert.equal(j.incompleto, true)
   assert.equal(j.aviso, AVISO_DRE_META_INCOMPLETA)
-  assert.ok(j.total < ok.total, 'o parcial e menor que o completo')
+  assert.equal(ok.total, 30000)
+  assert.equal(j.total, 22000, 'o parcial das 4 contas que responderam continua visivel')
+  assert.deepEqual(j.campanhas.map((c: { accountId: string }) => c.accountId), ['A', 'B', 'D', 'E'])
 })
 
 test('insights: sem token marca incompleto com o aviso', async () => {
