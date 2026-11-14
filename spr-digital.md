@@ -8198,3 +8198,5 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
     - Com termos e sem busca valida, o passo 4 mostra o texto "nao veio completo da Meta" (texto aprovado, igual ao
       de tirar termo).
   - 1233 testes, tsc ok; as 4 telas abrem no localhost. Commits 19ba3a5, 942b863, 01f500e.
+  - **No ar em 13/11/2026:** dono aprovou; `main` avancou por fast-forward 79297b8..cca394b (Resgate + trava do trafego +
+    aliquota nova etapa 1 + 148.2); 1233 testes e tsc ok na `main`; Vercel: success.
