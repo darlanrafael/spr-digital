@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  podeConfirmarTrafego, respostaMetaCompleta,
+  podeConfirmarTrafego, respostaMetaCompleta, semBuscaDeTrafego,
   ERRO_TRAFEGO_INCOMPLETO, BLOQUEIO_FECHAMENTO_TRAFEGO, AVISO_DRE_META_INCOMPLETA, criarSequenciaDeBusca, mensagemDoErroDoTrafego,
 } from './trafego-do-fechamento'
 
@@ -100,4 +100,22 @@ test('respostaMetaCompleta: corpo sem total numerico ou sem lista = incompleta',
 test('mensagem: erro que nao e texto cai no texto aprovado (nao quebra a tela)', () => {
   assert.equal(mensagemDoErroDoTrafego({ error: { code: 'x' } } as never), ERRO_TRAFEGO_INCOMPLETO)
   assert.equal(mensagemDoErroDoTrafego({ erro: '   ' } as never), ERRO_TRAFEGO_INCOMPLETO)
+})
+
+// Revisao final 13/11 (Gemini x2): adicionar termo ou mudar a data deixava o
+// custo da busca antiga na tela (lucro e socios com numero velho). Agora toda
+// mudanca da busca zera o custo e pede nova busca, igual a tirar termo.
+test('semBuscaDeTrafego zera custo, campanhas, erro e busca; mantem termos e datas', () => {
+  const antes = {
+    termos: ['CSP', 'IAR'], termoInput: 'x', periodo: { inicio: '2026-11-01', fim: '2026-11-13' },
+    total: 22770, campanhas: [{ name: 'CSP', spend: 20000, accountId: 'A' }], erro: 'falhou', loading: true,
+    buscaCompleta: { termos: ['CSP'], inicio: '2026-11-01', fim: '2026-11-10' },
+  }
+  const depois = semBuscaDeTrafego(antes)
+  assert.deepEqual(depois, {
+    termos: ['CSP', 'IAR'], termoInput: 'x', periodo: { inicio: '2026-11-01', fim: '2026-11-13' },
+    total: 0, campanhas: [], erro: null, loading: false, buscaCompleta: null,
+  })
+  assert.equal(antes.total, 22770, 'nao muda o estado recebido')
+  assert.equal(podeConfirmarTrafego(depois), false, 'com termos, pede nova busca')
 })

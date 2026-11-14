@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista, repassePercentual } from './linha-do-fechamento'
+import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista, repassePercentual, fechadaNoutraTela } from './linha-do-fechamento'
 
 // Imposto da venda no Fechamento (dono 13/11/2026): a empresa paga pela regra da
 // venda; o repasse do terapeuta continua com a base da regra antiga.
@@ -59,4 +59,21 @@ test('repassePercentual: base x % como antes, com o texto da regra antiga', () =
   assert.match(r.detalhe, /^30% sobre R\$\s?771,50 \(imposto pela regra antiga\)$/)
   perto(repassePercentual(0, 30).repasse, 0)
   perto(repassePercentual(-38.57, 30).repasse, -11.571)
+})
+
+// Revisao final 13/11 (Gemini x2): barrar TODA venda que esta nalgum fechamento
+// travava o botao para sempre quando a regra de "ja fechada" (produto, periodo,
+// horario) e a dos compradores discordam. So barra a venda que entrou num
+// fechamento DEPOIS que a tela abriu (outra aba).
+test('fechadaNoutraTela: venda que ja estava num fechamento na abertura nao trava', () => {
+  assert.equal(fechadaNoutraTela(['v1', 'v2'], new Set(['v1']), new Set(['v1'])), false)
+})
+
+test('fechadaNoutraTela: venda que entrou num fechamento depois da abertura barra', () => {
+  assert.equal(fechadaNoutraTela(['v1', 'v2'], new Set(['v1', 'v2']), new Set(['v1'])), true)
+})
+
+test('fechadaNoutraTela: fechamento novo de outras vendas nao barra', () => {
+  assert.equal(fechadaNoutraTela(['v1', 'v2'], new Set(['v9']), new Set()), false)
+  assert.equal(fechadaNoutraTela([], new Set(['v9']), new Set()), false)
 })

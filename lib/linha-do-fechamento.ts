@@ -42,3 +42,18 @@ export function repassePercentual(baseDoRepasse: number, percentual: number): { 
     detalhe: `${percentual}% sobre ${base} (imposto pela regra antiga)`,
   }
 }
+
+/**
+ * Alguma venda da tela entrou num fechamento DEPOIS que a tela abriu (outra aba)?
+ * A que ja estava num fechamento na abertura nao conta: quem decide "ja fechada"
+ * continua sendo produto, periodo e horario (spec da aliquota nova). Barrar essa
+ * travava o botao para sempre (revisao final 13/11).
+ */
+export function fechadaNoutraTela(
+  idsDaTela: Iterable<string>,
+  todasAgora: ReadonlySet<string>,
+  todasNaAbertura: ReadonlySet<string>,
+): boolean {
+  for (const id of idsDaTela) if (todasAgora.has(id) && !todasNaAbertura.has(id)) return true
+  return false
+}

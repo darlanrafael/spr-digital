@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { podeConfirmarTrafego, respostaMetaCompleta, criarSequenciaDeBusca, mensagemDoErroDoTrafego, BLOQUEIO_FECHAMENTO_TRAFEGO } from '@/lib/trafego-do-fechamento'
+import { podeConfirmarTrafego, respostaMetaCompleta, semBuscaDeTrafego, criarSequenciaDeBusca, mensagemDoErroDoTrafego, BLOQUEIO_FECHAMENTO_TRAFEGO } from '@/lib/trafego-do-fechamento'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, CheckCircle, ChevronRight, ChevronDown, ChevronUp, Clock, Copy, Download, Hash, Loader2, Search, X } from 'lucide-react'
 import { useApp } from '@/contexts/AppContext'
@@ -12,9 +12,9 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import Pagination from '@/components/Pagination'
 import { formatCurrency, formatDate, formatDateTime, getSaleBruto } from '@/lib/formatters'
 import { aliquotaDaLinha, formatAliquota, REGRA_IMPOSTO_NOVA } from '@/lib/aliquota-imposto'
-import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista, repassePercentual } from '@/lib/linha-do-fechamento'
+import { impostoDaVendaNoFechamento, fechamentoLiberado, mesmaLista, repassePercentual, fechadaNoutraTela } from '@/lib/linha-do-fechamento'
 import { Closing, ClosingBuyer, CashflowEntry, Sale } from '@/types'
-import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados, buscarIdsDaRegraAntiga, buscarVendasJaFechadas } from '@/lib/services'
+import { updateClosingEtiqueta, addClosing as svcAddClosing, addCashflowEntry as svcAddCashflow, marcarCustosComoFechados, buscarVendasJaFechadas } from '@/lib/services'
 import { calcularAlertasPendentes } from '@/lib/alertas-reembolso'
 import { calcularAlertasReembolsoParcial, chaveAlerta, type SolicitacaoReembolso } from '@/lib/alertas-reembolso-parcial'
 import { readequacoesDoPeriodo, type ReadequacaoProduto } from '@/lib/readequacoes-produto'
@@ -163,8 +163,10 @@ function FechamentosContent() {
   // Aliquota nova (dono 13/11/2026): venda que nao entrou em fechamento da regra
   // antiga paga a regra nova. Sem a lista carregada, o Fechamento nao calcula
   // imposto nem deixa confirmar (lista vazia nunca vira "tudo na regra nova").
-  const [regraAntiga, setRegraAntiga] = useState<{ estado: 'carregando' | 'pronto' | 'erro'; ids: Set<string>; erro?: string }>(
-    { estado: 'carregando', ids: new Set() },
+  // `todas` = vendas de qualquer fechamento quando a tela abriu: so a venda que
+  // entrar num fechamento depois disso (outra aba) barra a confirmacao.
+  const [regraAntiga, setRegraAntiga] = useState<{ estado: 'carregando' | 'pronto' | 'erro'; ids: Set<string>; todas: Set<string>; erro?: string }>(
+    { estado: 'carregando', ids: new Set(), todas: new Set() },
   )
   const [tentativaRegra, setTentativaRegra] = useState(0)
   const [confirmando, setConfirmando] = useState(false)
@@ -173,12 +175,12 @@ function FechamentosContent() {
   const [erroConfirmacao, setErroConfirmacao] = useState<string | null>(null)
   useEffect(() => {
     let cancelado = false
-    buscarIdsDaRegraAntiga()
-      .then(ids => { if (!cancelado) setRegraAntiga({ estado: 'pronto', ids }) })
-      .catch(e => { if (!cancelado) setRegraAntiga({ estado: 'erro', ids: new Set(), erro: e instanceof Error ? e.message : 'Falha ao ler os fechamentos.' }) })
+    buscarVendasJaFechadas()
+      .then(({ regraAntiga: ids, todas }) => { if (!cancelado) setRegraAntiga({ estado: 'pronto', ids, todas }) })
+      .catch(e => { if (!cancelado) setRegraAntiga({ estado: 'erro', ids: new Set(), todas: new Set(), erro: e instanceof Error ? e.message : 'Falha ao ler os fechamentos.' }) })
     return () => { cancelado = true }
   }, [tentativaRegra])
-  function tentarRegraDeNovo() { setRegraAntiga({ estado: 'carregando', ids: new Set() }); setTentativaRegra(n => n + 1) }
+  function tentarRegraDeNovo() { setRegraAntiga({ estado: 'carregando', ids: new Set(), todas: new Set() }); setTentativaRegra(n => n + 1) }
   const liberado = fechamentoLiberado({ estadoRegra: regraAntiga.estado, confirmando })
   const [periodo, setPeriodo] = useState(() => {
     const d = new Date()
@@ -326,7 +328,9 @@ function FechamentosContent() {
   function addTermoTrafego() {
     const termo = trafego.termoInput.trim()
     if (!termo || trafego.termos.includes(termo)) return
-    setTrafego(t => ({ ...t, termos: [...t.termos, termo], termoInput: '' }))
+    // Termo novo muda a busca: zera o custo antigo e pede nova busca (revisao final 13/11).
+    buscaTrafegoSeq.current.invalidar()
+    setTrafego(t => semBuscaDeTrafego({ ...t, termos: [...t.termos, termo], termoInput: '' }))
   }
 
   function removeTermoTrafego(termo: string) {
@@ -334,7 +338,13 @@ function FechamentosContent() {
     // zera o custo (sem termo nenhum, libera com zero; com termos, pede nova
     // busca). Revisao Gemini 13/11: tirar termos durante a busca travava o botao.
     buscaTrafegoSeq.current.invalidar()
-    setTrafego(t => ({ ...t, termos: t.termos.filter(x => x !== termo), total: 0, campanhas: [], erro: null, loading: false, buscaCompleta: null }))
+    setTrafego(t => semBuscaDeTrafego({ ...t, termos: t.termos.filter(x => x !== termo) }))
+  }
+
+  function mudarDataTrafego(campo: 'inicio' | 'fim', valor: string) {
+    // Data nova muda a busca: zera o custo antigo e pede nova busca (revisao final 13/11).
+    buscaTrafegoSeq.current.invalidar()
+    setTrafego(t => semBuscaDeTrafego({ ...t, periodo: { ...t.periodo, [campo]: valor } }))
   }
 
   // Datas em YYYY-MM-DD comparam certo como string, sem precisar de Date.
@@ -943,12 +953,13 @@ function FechamentosContent() {
       const { regraAntiga: atual, todas } = await buscarVendasJaFechadas()
       // Alguma venda desta tela ja entrou num fechamento feito noutra aba
       // (qualquer regra): parar, senao o fechamento sai em dobro.
-      if (periodSales.some(s => todas.has(s.id))) {
+      if (fechadaNoutraTela(periodSales.map(s => s.id), todas, regraAntiga.todas)) {
         parar('Algumas vendas deste período já entraram num fechamento feito em outra tela. Recarregue a página antes de fechar.')
         return
       }
       if (!mesmaLista(atual, regraAntiga.ids)) {
-        setRegraAntiga({ estado: 'pronto', ids: atual })
+        // `todas` fica a da abertura: a venda fechada noutra aba continua barrada.
+        setRegraAntiga(r => ({ ...r, estado: 'pronto', ids: atual }))
         parar('A lista de vendas já fechadas mudou. Confira os números e confirme de novo.')
         return
       }
@@ -1296,13 +1307,13 @@ function FechamentosContent() {
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Data início</label>
                       <input type="date" value={trafego.periodo.inicio}
-                        onChange={e => setTrafego(t => ({ ...t, periodo: { ...t.periodo, inicio: e.target.value } }))}
+                        onChange={e => mudarDataTrafego('inicio', e.target.value)}
                         className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Data fim</label>
                       <input type="date" value={trafego.periodo.fim}
-                        onChange={e => setTrafego(t => ({ ...t, periodo: { ...t.periodo, fim: e.target.value } }))}
+                        onChange={e => mudarDataTrafego('fim', e.target.value)}
                         className="bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500" />
                     </div>
                   </div>

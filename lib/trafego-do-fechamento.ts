@@ -71,3 +71,14 @@ export function mensagemDoErroDoTrafego(corpo: unknown): string {
   if (typeof erro === 'string' && erro.trim()) return erro
   return ERRO_TRAFEGO_INCOMPLETO
 }
+
+/**
+ * Estado do trafego depois de qualquer mudanca na busca (tirar ou adicionar
+ * termo, mudar data): custo zerado e nenhuma busca valida, ate clicar em Buscar.
+ * Quem chama tambem invalida a busca em andamento (revisao final 13/11).
+ */
+export function semBuscaDeTrafego<T extends object>(t: T): T & {
+  total: number; campanhas: never[]; erro: null; loading: false; buscaCompleta: null
+} {
+  return { ...t, total: 0, campanhas: [], erro: null, loading: false, buscaCompleta: null }
+}
