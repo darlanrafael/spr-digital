@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { criarCacheCurto } from './cache-curto'
-import { buscarMetaNoCache } from './busca-meta-funil'
+import { buscarMetaNoCache, emCadaConta } from './busca-meta-funil'
 import type { RelatoMeta } from '../meta'
 
 // A rota de Funis busca cada pedaco da Meta por aqui (Task 5, revisao Codex t5):
@@ -40,4 +40,30 @@ test('cada chamada recebe um relato novo, zerado', async () => {
   await buscarMetaNoCache(cache, 'k1', false, async (relato: RelatoMeta) => { vistos.push(relato.falhas); relato.falhas++; return [] })
   await buscarMetaNoCache(cache, 'k2', false, async (relato: RelatoMeta) => { vistos.push(relato.falhas); return [] })
   assert.deepEqual(vistos, [0, 0])
+})
+
+// Revisao final 13/11 (Codex + Gemini): META_AD_ACCOUNT_IDS vazio fazia os Funis
+// mostrarem investimento R$ 0,00 como completo, sem aviso e guardado no cache.
+test('emCadaConta: sem nenhuma conta conta 1 falha e nao busca', async () => {
+  const relato = { falhas: 0 }
+  let chamou = 0
+  assert.deepEqual(await emCadaConta([], relato, async () => { chamou++; return [1] }), [])
+  assert.equal(relato.falhas, 1)
+  assert.equal(chamou, 0)
+})
+
+test('emCadaConta: junta as linhas de cada conta na ordem e nao conta falha', async () => {
+  const relato = { falhas: 0 }
+  const linhas = await emCadaConta(['A', 'B'], relato, async c => [`${c}1`, `${c}2`])
+  assert.deepEqual(linhas, ['A1', 'A2', 'B1', 'B2'])
+  assert.equal(relato.falhas, 0)
+})
+
+test('emCadaConta: sem contas dentro de buscarMetaNoCache volta falhou e nao fica no cache', async () => {
+  const cache = criarCacheCurto(60_000, () => 0)
+  let buscas = 0
+  const buscar = (relato: { falhas: number }) => { buscas++; return emCadaConta([], relato, async () => [1]) }
+  assert.deepEqual(await buscarMetaNoCache(cache, 'k', false, buscar), { linhas: [], falhou: true })
+  await buscarMetaNoCache(cache, 'k', false, buscar)
+  assert.equal(buscas, 2)
 })

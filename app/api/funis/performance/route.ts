@@ -7,7 +7,7 @@ import {
   getAdInsightsPorTermos, getAdsCreativeDetails, type RelatoMeta,
 } from '@/lib/meta'
 import { avisoDoResumoMeta, AVISO_META_INCOMPLETA } from '@/lib/funis/aviso-meta'
-import { buscarMetaNoCache } from '@/lib/funis/busca-meta-funil'
+import { buscarMetaNoCache, emCadaConta } from '@/lib/funis/busca-meta-funil'
 import {
   normalizarAd, normalizarInsight, adsDoFunil, agregarFunil, metricasDoCriativo, type AdInsight,
 } from '@/lib/funis/meta-funil'
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
         : !metaDisponivel
           ? semAds(true) // sem token: não chama a Meta, não guarda e avisa
           : buscarMetaNoCache(cacheCurto, `adsEntregues|${funil.id}|${periodo}`, bust, async (relato: RelatoMeta) => {
-          const rows = (await Promise.all(contas.map(a => getAdInsightsPorTermos(a, dateStart, dateEnd, funil.termosCampanha, undefined, relato)))).flat()
+          const rows = await emCadaConta(contas, relato, a => getAdInsightsPorTermos(a, dateStart, dateEnd, funil.termosCampanha, undefined, relato))
           const ids = [...new Set(rows.map(r => String(r.ad_id)).filter(Boolean))]
           // bust = botao Atualizar (?nocache=1): fura tambem o cache por anuncio.
           const det = await getAdsCreativeDetails(ids, 6, { bust, relato })
@@ -124,9 +124,9 @@ export async function GET(req: NextRequest) {
       cacheCurto.get(`vendas|${periodo}`, async () => getSalesParaFunil(dateStart, dateEnd, ['aprovada']), bust),
       cacheCurto.get(`reemb|${periodo}`, async () => getReembolsosParaFunil(dateStart, dateEnd), bust),
       buscarMetaNoCache(cacheCurto, `camps|${periodo}`, bust, async (relato: RelatoMeta) => semMeta ? [] as AdInsight[]
-        : (await Promise.all(contas.map(a => getCampanhaInsights(a, dateStart, dateEnd, undefined, relato)))).flat().map(normalizarInsight) as AdInsight[]),
+        : (await emCadaConta(contas, relato, a => getCampanhaInsights(a, dateStart, dateEnd, undefined, relato))).map(normalizarInsight) as AdInsight[]),
       buscarMetaNoCache(cacheCurto, `campdia|${periodo}`, bust, async (relato: RelatoMeta) => semMeta ? []
-        : (await Promise.all(contas.map(a => getCampanhaInsightsDiario(a, dateStart, dateEnd, undefined, relato)))).flat()),
+        : emCadaConta(contas, relato, a => getCampanhaInsightsDiario(a, dateStart, dateEnd, undefined, relato))),
     ])
     const campanhas = campsRes.linhas
     const diariosCamp = diaRes.linhas

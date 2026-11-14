@@ -71,6 +71,31 @@ for (const [nome, chamar] of funcoes) {
     assert.equal(relato.falhas, 1)
   })
 
+  for (const [caso, corpo] of [['corpo {}', {}], ['data null', { data: null }], ['data objeto', { data: {} }]] as const) {
+    test(`${nome}: HTTP 200 com ${caso} conta 1 falha (nao vira zero calado)`, async () => {
+      roteiro = () => ok(corpo)
+      const relato: RelatoMeta = { falhas: 0 }
+      assert.deepEqual(await chamar(relato), [])
+      assert.equal(relato.falhas, 1)
+    })
+  }
+
+  test(`${nome}: data vazia e zero legitimo (0 falhas)`, async () => {
+    roteiro = () => ok({ data: [] })
+    const relato: RelatoMeta = { falhas: 0 }
+    assert.deepEqual(await chamar(relato), [])
+    assert.equal(relato.falhas, 0)
+  })
+
+  test(`${nome}: sem token conta 1 falha e nao chama a Meta`, async () => {
+    delete process.env.META_ACCESS_TOKEN
+    roteiro = () => ok({ data: [linhaA] })
+    const relato: RelatoMeta = { falhas: 0 }
+    assert.deepEqual(await chamar(relato), [])
+    assert.equal(relato.falhas, 1)
+    assert.equal(chamadas.length, 0)
+  })
+
   test(`${nome}: sem relato, erro nao lanca e as linhas sao as de antes`, async () => {
     roteiro = url => (url === PAG2 ? http500 : ok({ data: [linhaA], paging: { next: PAG2 } }))
     assert.deepEqual(await chamar(), [linhaA])

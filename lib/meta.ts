@@ -304,7 +304,9 @@ async function fetchInsights(
       if (!res.ok) { falhou(relato); console.error('[Meta API] Erro HTTP (insights):', accountId, res.status, (await res.text()).slice(0, 300)); break }
       const json = await res.json() as { data?: AdsRow[]; paging?: { next?: string }; error?: { message: string } }
       if (json.error) { console.error('[Meta API] Erro (insights):', accountId, json.error.message); falhou(relato); break }
-      all.push(...(json.data ?? []))
+      // 200 sem lista de dados nao e zero: e resposta quebrada (revisao final 13/11).
+      if (!Array.isArray(json.data)) { console.error('[Meta API] sem lista (insights):', accountId); falhou(relato); break }
+      all.push(...json.data)
       nextUrl = json.paging?.next ?? null
     } catch (err) { if (res.ok) falhou(relato); console.error('[Meta API] parse (insights):', accountId, err); break } // fail-open no parse (item 121)
   }
@@ -321,7 +323,7 @@ export async function getCampanhaInsights(
   relato?: RelatoMeta,
 ): Promise<Record<string, unknown>[]> {
   const token = getToken()
-  if (!token) return []
+  if (!token) { falhou(relato); return [] }
   const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
   return fetchInsights(accountId, 'campaign', `campaign_name,${INSIGHT_FIELDS}`, dateParam, token, undefined, relato)
 }
@@ -334,7 +336,7 @@ export async function getCampanhaInsights(
 export async function getAdInsightsPorTermos(
   accountId: string, dateStart: string, dateEnd: string, termos: string[], datePreset?: string, relato?: RelatoMeta,
 ): Promise<Record<string, unknown>[]> {
-  const token = getToken(); if (!token) return []
+  const token = getToken(); if (!token) { falhou(relato); return [] }
   const ts = (termos ?? []).map(t => t.trim()).filter(Boolean); if (ts.length === 0) return []
   const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
   const fields = `ad_id,ad_name,campaign_name,${INSIGHT_FIELDS}`
@@ -444,7 +446,7 @@ export async function getCampanhaInsightsDiario(
   relato?: RelatoMeta,
 ): Promise<{ campaign_name: string; date_start: string; spend: string; inline_link_clicks: string }[]> {
   const token = getToken()
-  if (!token) return []
+  if (!token) { falhou(relato); return [] }
   const dateParam = buildDateParam(dateStart, dateEnd, datePreset)
   let nextUrl: string | null =
     `${BASE_URL}/act_${accountId}/insights?level=campaign&fields=campaign_name,spend,inline_link_clicks&${dateParam}&time_increment=1&limit=500&access_token=${token}`
@@ -456,7 +458,8 @@ export async function getCampanhaInsightsDiario(
       if (!res.ok) { falhou(relato); console.error('[Meta API] HTTP (camp diário):', accountId, res.status, (await res.text()).slice(0, 200)); break }
       const json = await res.json() as { data?: typeof all; paging?: { next?: string }; error?: { message: string } }
       if (json.error) { console.error('[Meta API] erro (camp diário):', accountId, json.error.message); falhou(relato); break }
-      all.push(...(json.data ?? []))
+      if (!Array.isArray(json.data)) { console.error('[Meta API] sem lista (camp diário):', accountId); falhou(relato); break }
+      all.push(...json.data)
       nextUrl = json.paging?.next ?? null
     } catch (err) { if (res.ok) falhou(relato); console.error('[Meta API] parse (camp diário):', accountId, err); break } // fail-open no parse (item 121)
   }

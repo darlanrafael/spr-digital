@@ -17,3 +17,17 @@ export async function buscarMetaNoCache<T>(
     return { linhas, falhou: relato.falhas > 0 }
   }, bust, v => !v.falhou)
 }
+
+/**
+ * Roda a busca em cada conta da Meta e junta as linhas na ordem das contas.
+ * Nenhuma conta configurada (META_AD_ACCOUNT_IDS vazio) conta 1 falha: sem
+ * isso o funil mostrava investimento R$ 0,00 como completo (revisao final 13/11).
+ */
+export async function emCadaConta<T>(
+  contas: string[],
+  relato: RelatoMeta,
+  buscar: (conta: string) => Promise<T[]>,
+): Promise<T[]> {
+  if (contas.length === 0) { relato.falhas++; return [] }
+  return (await Promise.all(contas.map(buscar))).flat()
+}
