@@ -8162,3 +8162,39 @@ aprovacao depois nunca mais pagava. Reescrita: NAO zera; TRAVA.
   paginada ate vir pagina vazia. Conferido: a chave da tela le os 21 fechamentos (sem limite de acesso). Ficam como
   estao (ja existiam): gravacao de custos/caixa depois do fechamento nao e atomica; taxa negativa no DRE aparece em
   vermelho. 1211 testes, tsc ok.
+- **148.2 Revisao antes de subir (pedido do dono 13/11: mais 2 Gemini + 1 Codex com atacante, testador e auditor, sobre
+  a branch inteira 6fce92b..3f6a419; saidas em rev-final/ da pasta de rascunho da sessao).**
+  - Corrigido (teste falhando antes, passando depois):
+    1. Meta nos Funis: HTTP 200 sem lista de dados (`{}`, `data: null`) virava zero calado em `fetchInsights` e
+       `getCampanhaInsightsDiario`; agora conta falha. Sem token, `getCampanhaInsights`, `getAdInsightsPorTermos` e
+       `getCampanhaInsightsDiario` contam falha (antes o vazio ia para o cache como completo). `data: []` segue zero
+       legitimo. (os 5 revisores)
+    2. Funis com `META_AD_ACCOUNT_IDS` vazio mostrava investimento R$ 0,00 sem aviso: `emCadaConta`
+       (`lib/funis/busca-meta-funil.ts`) conta falha quando nao ha conta; resumo, diario e criativos usam. (Codex x2,
+       Gemini x2)
+    3. Fechamento: a protecao de 148.1 barrava QUALQUER venda que estivesse num fechamento, e travava o botao para
+       sempre se a regra de "ja fechada" (produto, periodo, horario) e a dos compradores discordassem (hoje nao
+       discordam, ver 146). Agora `fechadaNoutraTela` so barra venda que entrou num fechamento DEPOIS que a tela
+       abriu (a lista `todas` da abertura fica guardada; nao e trocada quando a lista da regra antiga muda). (Gemini x2)
+    4. Trafego do Fechamento: adicionar termo ou mudar data deixava o custo da busca antiga na tela (lucro e socios
+       com numero velho; o botao ja ficava travado). Agora, como ja era ao tirar termo, zera o custo e pede nova busca
+       (`semBuscaDeTrafego` + invalidar a busca em andamento). (Gemini x2)
+    5. Criativos com a Meta incompleta: nao mostra mais "Nenhum anuncio no periodo." e esconde a linha de venda sem
+       anuncio (organico), que contaria venda de anuncio que nao veio. O aviso ambar continua. Sem teste de tela
+       (projeto nao tem). (Gemini x2)
+    6. Testes do `/api/meta/insights` exigem os valores exatos (R$ 30.000 completo, R$ 22.000 parcial e as contas);
+       provado com mutante (total zerado na falha) que agora o teste pega. (Codex testador)
+  - Conferido e descartado (falso):
+    - "Esteira ignora o corte de 23/10" (Gemini x2): o corte e aplicado nas DATAS antes de buscar as vendas
+      (`aplicarCorte` em route.ts), entao `vendasTodas` ja comeca em 23/10. A troca de `vendasDoFunil` por
+      `vendasTodas` na esteira nao muda nada: rodado, nenhum produto pertence a dois funis.
+    - "Aviso da Meta preso no DRE ao trocar de projeto": a lista de meses e fixa (6), nao existe o retorno antecipado.
+    - "Projeto sem nomenclatura consulta a Meta": `nomenclaturasDoProjeto` cai no proj_1, nunca vem vazia.
+  - Fica para depois:
+    - Duas abas clicando Confirmar no mesmo segundo ainda podem gravar em dobro (Codex atacante). So resolve com
+      trava no banco (vinculo unico por venda, migracao). A conferencia do 148.1 cobre o caso comum.
+    - Teste da rota de Funis com `semResgate=1` ponta a ponta (precisa simular o banco).
+    - Erro 401/400 no DRE e no inicio aparece como o aviso de Meta incompleta.
+    - Com termos e sem busca valida, o passo 4 mostra o texto "nao veio completo da Meta" (texto aprovado, igual ao
+      de tirar termo).
+  - 1233 testes, tsc ok; as 4 telas abrem no localhost. Commits 19ba3a5, 942b863, 01f500e.
